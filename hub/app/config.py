@@ -64,7 +64,7 @@ class DiscordOAuth(BaseModel):
 
 
 class Settings(BaseModel):
-    timezone: str = "America/Chicago"
+    timezone: str = "America/New_York"
     parents: list[Parent] = Field(default_factory=list)
     kids: list[Kid] = Field(default_factory=list)
     decisions: Decisions = Decisions()

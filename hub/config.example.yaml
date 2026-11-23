@@ -2,7 +2,7 @@
 # Secrets below are placeholders: generate real ones with
 #   python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-timezone: America/Chicago          # GUESS: set to your local zone; "today" resets at midnight here
+timezone: America/New_York        # "today" resets at midnight here
 
 parents:
   # Parent dashboard logins. Passwords are stored as PBKDF2 hashes:
