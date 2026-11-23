@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "hubUrl": { "type": "string", "description": "Base URL of the hub, e.g. http://truenas.local:8080" },
+    "token":  { "type": "string", "description": "This PC's extension_token from hub config.yaml" }
+  }
+}

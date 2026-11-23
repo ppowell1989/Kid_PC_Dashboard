@@ -1,0 +1,18 @@
+# Public face of the stack: only friend voice pages and LiveKit signalling.
+# The parent dashboard is NOT routed here. It stays on http://<truenas>:8080 inside the house
+# (or over Tailscale if decisions.remote_access = tailscale).
+voice.example.com {                      # GUESS: your domain
+	@livekit path /rtc* /twirp*
+	handle @livekit {
+		reverse_proxy livekit:7880
+	}
+	@friend path /join/* /api/voice/join/* /static/app.css
+	handle @friend {
+		reverse_proxy hub:8080 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+}

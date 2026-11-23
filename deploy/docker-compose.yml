@@ -1,0 +1,44 @@
+# Kids PC stack for TrueNAS SCALE (install as a "Custom App" from YAML, or run with docker compose).
+# GUESS: paths under /mnt/tank/apps/kidspc. Change "tank" to your pool name.
+services:
+  hub:
+    build: ../hub
+    restart: unless-stopped
+    volumes:
+      - /mnt/tank/apps/kidspc/hub:/data          # config.yaml + hub.db live here
+    ports:
+      - "8080:8080"                              # parents' dashboard on the home network: http://truenas.local:8080
+    depends_on: [adguard, livekit]
+
+  adguard:
+    image: adguard/adguardhome:v0.107.55         # GUESS: pin to the current stable when you deploy
+    restart: unless-stopped
+    volumes:
+      - /mnt/tank/apps/kidspc/adguard/work:/opt/adguardhome/work
+      - /mnt/tank/apps/kidspc/adguard/conf:/opt/adguardhome/conf
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "3000:3000/tcp"                          # AdGuard admin UI (home network only)
+    # If TrueNAS already uses port 53, give AdGuard its own LAN IP with a macvlan network instead.
+
+  livekit:
+    image: livekit/livekit-server:v1.8.0         # GUESS: pin to the current stable when you deploy
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ../voice/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"                          # WebRTC over TCP fallback
+      - "7882:7882/udp"                          # WebRTC media (single UDP port). Forward this on the router.
+
+  caddy:
+    image: caddy:2.8                             # HTTPS for the public voice domain (automatic Let's Encrypt)
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /mnt/tank/apps/kidspc/caddy:/data
+    ports:
+      - "443:443/tcp"                            # Forward this on the router.
+      - "80:80/tcp"                              # Only needed for the certificate challenge.
+    depends_on: [hub, livekit]

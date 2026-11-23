@@ -1,0 +1,82 @@
+# Kids PC hub configuration. Copy to config.yaml and edit.
+# Secrets below are placeholders: generate real ones with
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+timezone: America/Chicago          # GUESS: set to your local zone; "today" resets at midnight here
+
+parents:
+  # Parent dashboard logins. Passwords are stored as PBKDF2 hashes:
+  #   python -m app.hashpw 'the-password'
+  - name: Patrick
+    password_hash: "CHANGE-ME"
+  - name: Barbara
+    password_hash: "CHANGE-ME"
+
+kids:
+  - id: adam
+    name: Adam
+    device_token: "CHANGE-ME-adam-device-token"     # admin helper on the PC only (stored admin-only)
+    extension_token: "CHANGE-ME-adam-extension-token"  # Chrome extension: may only report visits
+    adguard_client: adam-pc                         # client name in AdGuard Home
+    daily_minutes: { weekday: 90, weekend: 180 }
+    bedtime: { weekday: "20:30", weekend: "21:30" } # no play after this time
+  - id: barrett
+    name: Barrett
+    device_token: "CHANGE-ME-barrett-device-token"
+    extension_token: "CHANGE-ME-barrett-extension-token"
+    adguard_client: barrett-pc
+    daily_minutes: { weekday: 90, weekend: 180 }
+    bedtime: { weekday: "20:30", weekend: "21:30" }
+
+# ---------------------------------------------------------------------------
+# OPEN DECISIONS. Each is a switch so it can be settled later without code changes.
+# ---------------------------------------------------------------------------
+decisions:
+  # Chrome: "allowlist" = only sites in allowed_sites load.
+  #         "filtered"  = open web, with AdGuard blocklists + SafeSearch.
+  web_mode: filtered
+
+  # Game Pass needs a Microsoft account on each PC. false hides Game Pass titles
+  # from the catalogue and the shell never starts the Xbox app.
+  game_pass_enabled: false
+
+  # Friend sign-up: "none" = a parent creates the invite link and sends it.
+  #                 "discord_oauth" = the friend's parent must sign in with
+  #                 their own Discord account before the link works.
+  friend_verification: none
+
+  # Hub reachability: "lan_only" = refuse requests from outside the home network.
+  #                   "tailscale" = also allow the Tailscale range (100.64.0.0/10).
+  #                   "public"    = allow anything (put it behind HTTPS + a reverse proxy).
+  remote_access: lan_only
+
+lan_cidrs: ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.0/8"]
+
+# Sites always allowed when web_mode is allowlist (parents can add more in the dashboard)
+allowed_sites:
+  - google.com
+  - wikipedia.org
+  - khanacademy.org
+
+session_secret: "CHANGE-ME-session-secret"
+
+adguard:
+  enabled: true
+  url: http://adguard:3000        # inside docker-compose; GUESS on port
+  username: admin
+  password: "CHANGE-ME"
+  poll_seconds: 120
+
+livekit:
+  # The public wss URL friends' browsers connect to. Needs a real domain + HTTPS.
+  url: wss://voice.example.com    # GUESS: replace with your domain
+  api_url: http://livekit:7880    # hub -> LiveKit inside docker-compose
+  api_key: "CHANGE-ME"
+  api_secret: "CHANGE-ME-at-least-32-characters-long"
+  # Public base URL of the hub's /join pages (what goes in invite links)
+  public_join_base: https://voice.example.com
+
+discord_oauth:                    # only used when friend_verification = discord_oauth
+  client_id: ""
+  client_secret: ""
+  redirect_uri: https://voice.example.com/join/discord/callback

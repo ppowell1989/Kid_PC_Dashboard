@@ -1,0 +1,33 @@
+# Excerpt of AdGuardHome.yaml (AdGuard Home v0.107). Merge into conf/AdGuardHome.yaml with the container stopped.
+# GUESS: key names checked against v0.107 docs; verify against your file before merging.
+clients:
+  persistent:
+    - name: adam-pc
+      ids: [192.168.1.50]          # GUESS: your DHCP reservation
+      use_global_settings: false
+      filtering_enabled: true
+      parental_enabled: true
+      safebrowsing_enabled: true
+      safe_search:
+        enabled: true
+        bing: true
+        duckduckgo: true
+        google: true
+        pixabay: true
+        yandex: true
+        youtube: true
+      use_global_blocked_services: false
+      blocked_services:
+        ids: [tiktok, snapchat, instagram, facebook, discord, reddit, twitch, roblox, onlyfans, 4chan]
+      tags: [device_pc, user_child]
+    - name: barrett-pc
+      ids: [192.168.1.51]
+      use_global_settings: false
+      filtering_enabled: true
+      parental_enabled: true
+      safebrowsing_enabled: true
+      safe_search: { enabled: true, bing: true, duckduckgo: true, google: true, pixabay: true, yandex: true, youtube: true }
+      use_global_blocked_services: false
+      blocked_services:
+        ids: [tiktok, snapchat, instagram, facebook, discord, reddit, twitch, roblox, onlyfans, 4chan]
+      tags: [device_pc, user_child]

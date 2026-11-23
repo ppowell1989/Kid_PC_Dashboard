@@ -1,0 +1,12 @@
+# secrets and runtime data
+hub/config.yaml
+*.db
+*.db-wal
+*.db-shm
+# build output
+windows/publish/
+bin/
+obj/
+__pycache__/
+.pytest_cache/
+.venv/

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Chat</title>
+<link rel="stylesheet" href="/static/app.css">
+<!-- GUESS: pinned LiveKit browser client. Vendor this file into /static if you prefer no CDN. -->
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.7/dist/livekit-client.umd.min.js"></script>
+</head>
+<body>
+<main>
+  <h1 id="title">Voice chat</h1>
+  <div class="card">
+    <p id="status">Press Join to talk. Your browser will ask to use the microphone.</p>
+    <div class="actions">
+      <button id="join">Join</button>
+      <button id="mute" class="ghost" hidden>Mute</button>
+      <button id="leave" class="bad" hidden>Leave</button>
+    </div>
+  </div>
+  <ul id="people" class="list"></ul>
+  <p class="muted">Voice only. A parent created this link and can switch it off at any time.</p>
+</main>
+<script>
+const code = location.pathname.split("/").pop();
+const LK = window.LivekitClient;
+let room;
+const $ = (s) => document.querySelector(s);
+
+function renderPeople() {
+  if (!room) return;
+  const all = [room.localParticipant, ...room.remoteParticipants.values()];
+  $("#people").innerHTML = all.map((p) => `<li>${p.isSpeaking ? "🔊" : "🔈"} ${(p.name || p.identity).replace(/[<>&]/g, "")}${p === room.localParticipant ? " (you)" : ""}</li>`).join("");
+}
+
+$("#join").onclick = async () => {
+  $("#status").textContent = "Connecting…";
+  const r = await fetch(`/api/voice/join/${code}`, { method: "POST" });
+  const j = await r.json();
+  if (!r.ok) { $("#status").textContent = j.detail || "This link is not active."; return; }
+  $("#title").textContent = `Voice chat with ${j.kid_name}`;
+  room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+  room.on(LK.RoomEvent.TrackSubscribed, (track) => { if (track.kind === "audio") document.body.appendChild(track.attach()); })
+      .on(LK.RoomEvent.ParticipantConnected, renderPeople)
+      .on(LK.RoomEvent.ParticipantDisconnected, renderPeople)
+      .on(LK.RoomEvent.ActiveSpeakersChanged, renderPeople)
+      .on(LK.RoomEvent.Disconnected, () => { $("#status").textContent = "Disconnected."; $("#join").hidden = false; $("#mute").hidden = $("#leave").hidden = true; });
+  await room.connect(j.url, j.token);
+  await room.localParticipant.setMicrophoneEnabled(true);
+  $("#status").textContent = `Connected as ${j.friend_name}.`;
+  $("#join").hidden = true; $("#mute").hidden = $("#leave").hidden = false;
+  renderPeople();
+};
+$("#mute").onclick = async () => {
+  const on = room.localParticipant.isMicrophoneEnabled;
+  await room.localParticipant.setMicrophoneEnabled(!on);
+  $("#mute").textContent = on ? "Unmute" : "Mute";
+};
+$("#leave").onclick = () => room && room.disconnect();
+</script>
+</body>
+</html>
