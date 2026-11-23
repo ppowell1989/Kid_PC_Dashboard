@@ -3,7 +3,6 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <OutputType>Exe</OutputType>
     <AssemblyName>KidsPcHelper</AssemblyName>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>

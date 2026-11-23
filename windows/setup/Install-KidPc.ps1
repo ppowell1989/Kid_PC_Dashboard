@@ -7,7 +7,7 @@
 .EXAMPLE
   .\Install-KidPc.ps1 -KidUser adam -KidName Adam -HubUrl http://truenas.local:8080 `
      -DeviceToken (Read-Host "device token") -ExtensionToken (Read-Host "extension token") `
-     -BuildDir ..\publish
+     # -BuildDir defaults to the downloaded CI bundle this script sits in
 
 .NOTES
   Order on a new PC:
@@ -24,13 +24,18 @@ param(
   [string] $HubUrl = "http://truenas.local:8080",
   [string] $DeviceToken,
   [string] $ExtensionToken,
-  [string] $BuildDir = "$PSScriptRoot\..\publish",
+  [string] $BuildDir = "",              # default: the bundle folder this script sits in (CI download), else ..\publish\win-x64
   [string] $InstallDir = "C:\Program Files\KidsPc",
   [ValidateSet("allowlist", "filtered")] [string] $WebMode = "filtered",
   [string] $ExtensionId = "",          # set once the reporting extension has an id (see chrome\README.md)
   [switch] $ShellOnly
 )
 $ErrorActionPreference = "Stop"
+if (-not $BuildDir) {
+  $BuildDir = if (Test-Path "$PSScriptRoot\..\Shell") { "$PSScriptRoot\.." } else { "$PSScriptRoot\..\publish\win-x64" }
+}
+$chromeScript = @("$PSScriptRoot\..\chrome\policy\Set-ChromePolicy.ps1", "$PSScriptRoot\..\..\chrome\policy\Set-ChromePolicy.ps1") |
+  Where-Object { Test-Path $_ } | Select-Object -First 1
 
 function Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
@@ -74,7 +79,7 @@ if (-not $ShellOnly) {
   New-Item -Force "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" | Out-Null
   Set-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" DisableWindowsConsumerFeatures 1 -Type DWord
 
-  & "$PSScriptRoot\..\..\chrome\policy\Set-ChromePolicy.ps1" -HubUrl $HubUrl -ExtensionToken $ExtensionToken -ExtensionId $ExtensionId -WebMode $WebMode
+  & $chromeScript -HubUrl $HubUrl -ExtensionToken $ExtensionToken -ExtensionId $ExtensionId -WebMode $WebMode
 }
 
 # ------------------------------------------------------------------ per-user shell + lockdown (kid hive)
