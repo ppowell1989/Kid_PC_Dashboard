@@ -7,6 +7,13 @@
 param([Parameter(Mandatory)] [string] $BuildDir, [int] $Port = 8765)
 $ErrorActionPreference = "Stop"
 $fail = 0
+trap {
+  Write-Host "ERROR: $_" -ForegroundColor Red
+  foreach ($f in "helper.out.log", "helper.err.log", "hub.err.log") {
+    Write-Host "--- $f ---"; Get-Content (Join-Path $work $f) -ErrorAction SilentlyContinue | Select-Object -Last 40
+  }
+  exit 1
+}
 function Check($name, $cond, $detail = "") {
   if ($cond) { Write-Host "PASS  $name" -ForegroundColor Green }
   else { Write-Host "FAIL  $name $detail" -ForegroundColor Red; $script:fail++ }
@@ -64,6 +71,7 @@ function Pipe($obj) {
   $r = New-Object System.IO.StreamReader($c)
   $w.WriteLine(($obj | ConvertTo-Json -Compress))
   $line = $r.ReadLine(); $c.Dispose()
+  if (-not $line) { throw "helper closed the pipe without replying to $($obj.op)" }
   return $line | ConvertFrom-Json
 }
 

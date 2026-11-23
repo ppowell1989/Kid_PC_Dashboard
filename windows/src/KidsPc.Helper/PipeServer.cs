@@ -57,6 +57,8 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             res = new PipeResponse(false, ex.Message);
         }
         await writer.WriteLineAsync(JsonSerializer.Serialize(res, Json.Options));
+        // Without draining, closing the server end can discard the reply before the client reads it.
+        try { pipe.WaitForPipeDrain(); } catch (IOException) { /* client already gone */ }
     }
 
     private static PipeResponse Ok(object data) => new(true, null, JsonSerializer.SerializeToElement(data, Json.Options));
