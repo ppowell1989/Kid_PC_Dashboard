@@ -11,7 +11,7 @@ public sealed record AppStatus(string State, string Detail = "");
 /// Installs the launchers the hub says each PC should have (Steam, Chrome), silently and as SYSTEM,
 /// so nobody has to sit at the PC. Reports progress to the hub in every heartbeat.
 /// </summary>
-public sealed class AppInstaller(DeviceConfig cfg, ILogger<AppInstaller> log)
+public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<AppInstaller> log)
 {
     private sealed record AppDef(string Name, Func<string> InstalledPath, Func<string> DownloadUrl, string FileName, Func<string, ProcessStartInfo> Installer);
 
@@ -63,6 +63,14 @@ public sealed class AppInstaller(DeviceConfig cfg, ILogger<AppInstaller> log)
         }
     }
 
+    /// <summary>Parent pressed "install" on the dashboard: try now, ignoring the retry back-off.</summary>
+    public void InstallNow(string name)
+    {
+        _lastAttempt.TryRemove(name, out _);
+        if (_status.TryGetValue(name, out var cur) && cur.State == "failed") _status.TryRemove(name, out _);
+        Ensure([name]);
+    }
+
     private async Task InstallAsync(AppDef def)
     {
         var dir = Path.Combine(DeviceConfig.Dir, "downloads");
@@ -86,11 +94,13 @@ public sealed class AppInstaller(DeviceConfig cfg, ILogger<AppInstaller> log)
             _status[def.Name] = File.Exists(def.InstalledPath())
                 ? new("installed")
                 : new("failed", $"installer exited {p.ExitCode} but {Path.GetFileName(def.InstalledPath())} is missing");
+            events.Add(_status[def.Name].State == "installed" ? "app_installed" : "app_install_failed", def.Name);
         }
         catch (Exception ex)
         {
             log.LogWarning("install {App} failed: {Msg}", def.Name, ex.Message);
             _status[def.Name] = new("failed", ex.Message);
+            events.Add("app_install_failed", $"{def.Name}: {ex.Message}");
         }
         finally
         {

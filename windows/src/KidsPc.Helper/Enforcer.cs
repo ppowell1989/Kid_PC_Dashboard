@@ -6,7 +6,7 @@ namespace KidsPc.Helper;
 /// The hard edge of the time limit. The shell shows the lock screen; this makes sure games
 /// actually stop, even if a game is running full-screen over the shell.
 /// </summary>
-public sealed class Enforcer(ILogger<Enforcer> log)
+public sealed class Enforcer(EventQueue events, ILogger<Enforcer> log)
 {
     private readonly HashSet<int> _logged = [];
 
@@ -29,8 +29,11 @@ public sealed class Enforcer(ILogger<Enforcer> log)
             using var proc = Process.GetProcessById(p.Pid);
             proc.Kill(entireProcessTree: true);
             if (_logged.Add(p.Pid))
+            {
                 log.LogInformation("stopped {Path} ({Reason})", p.Path, reason);
-            // TODO: report to the hub as an event so parents see "tried to run X" on the dashboard.
+                var what = p.Approved?.Title ?? (p.Kind == "chrome" ? "Chrome" : Path.GetFileNameWithoutExtension(p.Path));
+                events.Add(reason == "time is up" ? "stopped_time_up" : "game_blocked", what);
+            }
         }
         catch (ArgumentException) { /* already exited */ }
         catch (Exception ex) { log.LogWarning("could not stop {Pid}: {Msg}", p.Pid, ex.Message); }

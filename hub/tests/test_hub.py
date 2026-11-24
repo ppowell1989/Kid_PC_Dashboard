@@ -140,3 +140,29 @@ def test_heartbeat_reports_managed_apps(parent):
     parent.post("/api/device/heartbeat", headers=ADAM, json={"apps": {"steam": {"state": "installed"}}})
     adam = next(k for k in parent.get("/api/parent/overview").json()["kids"] if k["id"] == "adam")
     assert {a["app"]: a["state"] for a in adam["apps"]} == {"chrome": "installed", "steam": "installed"}
+
+
+def test_pause_and_resume(parent):
+    st = parent.post("/api/parent/kids/adam/pause", json={"minutes": 30}).json()
+    assert st["locked"] and st["lock_reason"] == "paused"
+    assert parent.get("/api/device/rules", headers=ADAM).json()["time"]["locked"]
+    st = parent.delete("/api/parent/kids/adam/pause").json()
+    assert not st["locked"]
+
+
+def test_commands_round_trip(parent):
+    assert parent.post("/api/parent/kids/adam/commands", json={"kind": "message", "arg": " "}).status_code == 422
+    cid = parent.post("/api/parent/kids/adam/commands", json={"kind": "message", "arg": "Dinner in 5!"}).json()["id"]
+    pending = parent.get("/api/device/rules", headers=ADAM).json()["commands"]
+    assert [(c["id"], c["kind"], c["arg"]) for c in pending] == [(cid, "message", "Dinner in 5!")]
+    assert parent.get("/api/device/rules", headers={"Authorization": "Bearer tok-barrett"}).json()["commands"] == []
+    parent.post(f"/api/device/commands/{cid}", headers=ADAM, json={"ok": True, "result": "shown"})
+    assert parent.get("/api/device/rules", headers=ADAM).json()["commands"] == []
+    act = parent.get("/api/parent/kids/adam/activity").json()
+    assert act["commands"][0]["state"] == "done"
+
+
+def test_events_feed(parent):
+    r = parent.post("/api/device/events", headers=ADAM, json=[{"kind": "game_blocked", "detail": "Roblox", "at": "2026-11-24T01:00:00Z"}])
+    assert r.status_code == 204
+    assert parent.get("/api/parent/kids/adam/activity").json()["events"][0]["detail"] == "Roblox"

@@ -41,11 +41,12 @@ class TimeState:
     minutes_left: int
     minutes_to_bedtime: int
     locked: bool
-    lock_reason: str  # "", "time", "bedtime"
+    lock_reason: str  # "", "time", "bedtime", "paused"
     warn: bool
 
 
-def compute(kid: Kid, now: datetime, used: int, granted: int, late_until: datetime | None = None) -> TimeState:
+def compute(kid: Kid, now: datetime, used: int, granted: int, late_until: datetime | None = None,
+            paused_until: datetime | None = None) -> TimeState:
     """used/granted are today's minutes. late_until is set when a parent approved
     extra time after bedtime: play is allowed until then even though bedtime passed."""
     allowance = allowance_for(kid, now)
@@ -57,6 +58,8 @@ def compute(kid: Kid, now: datetime, used: int, granted: int, late_until: dateti
     to_bed = max(0, int((bed_dt - now).total_seconds() // 60))
     effective_left = min(left, to_bed)
     reason = "time" if left == 0 else ("bedtime" if to_bed == 0 else "")
+    if paused_until and paused_until > now:
+        reason = "paused"
     return TimeState(
         allowance=allowance,
         granted=granted,

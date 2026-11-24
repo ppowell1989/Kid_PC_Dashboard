@@ -69,7 +69,9 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     used = (db.one("SELECT minutes FROM usage WHERE kid_id=? AND day=?", (kid.id, day)) or {}).get("minutes", 0)
     g = db.one("SELECT COALESCE(SUM(minutes),0) AS m, MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, day))
     late_until = datetime.fromisoformat(g["u"]) if g and g["u"] else None
-    return rules.compute(kid, now, used, g["m"] if g else 0, late_until)
+    p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
+    paused_until = datetime.fromisoformat(p["until"]) if p else None
+    return rules.compute(kid, now, used, g["m"] if g else 0, late_until, paused_until)
 
 
 def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
@@ -128,6 +130,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings)},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": settings.managed_apps,
+        "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
         "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
     }
@@ -174,6 +177,33 @@ def device_visits(visits: list[Visit], kid: Kid = Depends(current_extension), db
             continue
         db.x("INSERT INTO visits(kid_id,source,domain,url,title,at) VALUES(?,?,?,?,?,?)",
              (kid.id, "chrome", host, v.url, v.title, v.at))
+    return Response(status_code=204)
+
+
+class CommandResult(BaseModel):
+    ok: bool
+    result: str = Field(default="", max_length=500)
+
+
+@app.post("/api/device/commands/{cid}")
+def device_command_done(cid: int, r: CommandResult, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
+    c = db.one("SELECT * FROM commands WHERE id=? AND kid_id=?", (cid, kid.id))
+    if not c:
+        raise HTTPException(404)
+    db.x("UPDATE commands SET state=?, result=?, done_at=datetime('now') WHERE id=?", ("done" if r.ok else "failed", r.result, cid))
+    return {}
+
+
+class Event(BaseModel):
+    kind: str = Field(min_length=1, max_length=40)
+    detail: str = Field(default="", max_length=300)
+    at: str
+
+
+@app.post("/api/device/events", status_code=204)
+def device_events(events: list[Event], kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
+    for e in events[:100]:
+        db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
 
 
@@ -293,6 +323,53 @@ def parent_grant(kid_id: str, g: Grant, parent: str = Depends(current_parent), d
     kid = kid_or_404(settings, kid_id)
     grant_time(db, settings, kid, g.minutes, parent)
     return today_state(db, settings, kid).__dict__
+
+
+# Remote control -------------------------------------------------------------
+
+class Pause(BaseModel):
+    minutes: int = Field(default=0, ge=0, le=24 * 60)   # 0 = until resumed (capped at end of day)
+
+
+@app.post("/api/parent/kids/{kid_id}/pause")
+def parent_pause(kid_id: str, p: Pause, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    now = rules.local_now(settings.timezone)
+    until = now + timedelta(minutes=p.minutes) if p.minutes else now.replace(hour=23, minute=59, second=59)
+    db.x("""INSERT INTO pauses(kid_id,until,by) VALUES(?,?,?)
+            ON CONFLICT(kid_id) DO UPDATE SET until=excluded.until, by=excluded.by""", (kid.id, until.isoformat(), parent))
+    return today_state(db, settings, kid).__dict__
+
+
+@app.delete("/api/parent/kids/{kid_id}/pause")
+def parent_resume(kid_id: str, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    db.x("DELETE FROM pauses WHERE kid_id=?", (kid.id,))
+    return today_state(db, settings, kid).__dict__
+
+
+class CommandIn(BaseModel):
+    kind: Literal["message", "restart", "shutdown", "install_app"]
+    arg: str = Field(default="", max_length=300)
+
+
+@app.post("/api/parent/kids/{kid_id}/commands", status_code=201)
+def parent_command(kid_id: str, c: CommandIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    if c.kind == "message" and not c.arg.strip():
+        raise HTTPException(422, "message is empty")
+    if c.kind == "install_app" and c.arg not in ("steam", "chrome", "battlenet"):
+        raise HTTPException(422, "unknown app")
+    cid = db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)", (kid.id, c.kind, c.arg.strip(), parent))
+    return {"id": cid}
+
+
+@app.get("/api/parent/kids/{kid_id}/activity")
+def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid_or_404(settings, kid_id)
+    events = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 500)))
+    cmds = db.q("SELECT kind, arg, state, result, created_by, created_at, done_at FROM commands WHERE kid_id=? ORDER BY id DESC LIMIT 20", (kid_id,))
+    return {"events": events, "commands": cmds}
 
 
 # Catalogue ------------------------------------------------------------------

@@ -82,6 +82,30 @@ CREATE TABLE IF NOT EXISTS device_apps (    -- what the helper reports about man
     at     TEXT NOT NULL,
     PRIMARY KEY (kid_id, app)
 );
+CREATE TABLE IF NOT EXISTS commands (       -- one-off actions a parent sends to a PC
+    id         INTEGER PRIMARY KEY,
+    kid_id     TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('message','restart','shutdown','install_app')),
+    arg        TEXT DEFAULT '',
+    state      TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','done','failed')),
+    result     TEXT DEFAULT '',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    done_at    TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS events (         -- things the PC reports: game stopped, unapproved game, app installed
+    id     INTEGER PRIMARY KEY,
+    kid_id TEXT NOT NULL,
+    kind   TEXT NOT NULL,
+    detail TEXT DEFAULT '',
+    at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_kid_at ON events(kid_id, at);
+CREATE TABLE IF NOT EXISTS pauses (         -- "pause now": locked until a parent resumes or the time passes
+    kid_id TEXT PRIMARY KEY,
+    until  TEXT NOT NULL,
+    by     TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
 

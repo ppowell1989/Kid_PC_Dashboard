@@ -51,15 +51,52 @@ async function refresh() {
       <div class="big">${fmtMin(t.minutes_left)} left</div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
-      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => `${esc(a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(a.state)}</span>`).join(" · ")}</div>` : ""}
+      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => `${esc(a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(a.state)}</span>${a.state === "failed" ? ` <button class="ghost" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : ""}`).join(" · ")}</div>` : ""}
       <div class="actions">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
       </div>
+      <div class="actions">
+        ${t.lock_reason === "paused"
+          ? `<button data-resume="${k.id}">Resume</button>`
+          : `<button class="ghost" data-pause="${k.id}">Pause now</button>`}
+        <button class="ghost" data-msg="${k.id}">Message</button>
+        <button class="ghost" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
+        <button class="ghost" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
+      </div>
+      <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
     </div>`;
   }).join("");
   document.querySelectorAll("[data-grant]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.grant}/grant`, { method: "POST", body: { minutes: +b.dataset.min } });
     refresh();
+  }));
+  document.querySelectorAll("[data-pause]").forEach((b) => (b.onclick = async () => {
+    await api(`/api/parent/kids/${b.dataset.pause}/pause`, { method: "POST", body: { minutes: 0 } }); refresh();
+  }));
+  document.querySelectorAll("[data-resume]").forEach((b) => (b.onclick = async () => {
+    await api(`/api/parent/kids/${b.dataset.resume}/pause`, { method: "DELETE" }); refresh();
+  }));
+  document.querySelectorAll("[data-msg]").forEach((b) => (b.onclick = async () => {
+    const text = prompt(`Message to show on ${kidName(b.dataset.msg)}'s screen:`);
+    if (text && text.trim()) { await api(`/api/parent/kids/${b.dataset.msg}/commands`, { method: "POST", body: { kind: "message", arg: text.trim() } }); b.textContent = "Sent"; }
+  }));
+  document.querySelectorAll("[data-cmd]").forEach((b) => (b.onclick = async () => {
+    const verb = b.dataset.cmd === "restart" ? "Restart" : "Shut down";
+    if (!confirm(`${verb} ${kidName(b.dataset.kid)}'s PC? He gets a 1-minute warning.`)) return;
+    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
+  }));
+  document.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
+    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
+  }));
+  document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
+    if (!d.open) return;
+    const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
+    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed" };
+    const rows = [
+      ...a.events.map((e) => ({ at: e.at, text: `${label[e.kind] || e.kind}: ${e.detail}` })),
+      ...a.commands.map((c) => ({ at: c.created_at.replace(" ", "T") + "Z", text: `${c.created_by} sent ${c.kind}${c.arg ? ` "${c.arg}"` : ""} (${c.state}${c.result ? ": " + c.result : ""})` })),
+    ].sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, 30);
+    d.querySelector("ul").innerHTML = rows.map((r) => `<li>${esc(r.text)}<div class="muted">${new Date(r.at).toLocaleString()}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   }));
   fillKidSelects();
 }

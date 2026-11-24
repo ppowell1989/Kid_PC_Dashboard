@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     private ShellState? _state;
     private bool _warnedToday;
     private VoiceWindow? _voice;
+    private readonly HashSet<int> _dismissed = [];
+    private int _shownMessage = -1;
 
     public MainWindow()
     {
@@ -53,20 +55,33 @@ public partial class MainWindow : Window
         {
             WarningText.Text = $"{t.MinutesLeft} minute{(t.MinutesLeft == 1 ? "" : "s")} left. Time to find a place to save.";
             WarningBanner.Visibility = Visibility.Visible;
-            if (!_warnedToday) { _warnedToday = true; Activate(); }   // pull the shell in front of the game once so the warning is seen
+            if (!_warnedToday) { _warnedToday = true; BringToFront(); }   // pull the shell in front of the game once so the warning is seen
         }
         if (!t.Warn) { WarningBanner.Visibility = Visibility.Collapsed; if (t.MinutesLeft > rules.WarningMinutes) _warnedToday = false; }
+
+        var msg = _state.Messages?.LastOrDefault(m => !_dismissed.Contains(m.Id));
+        if (msg is not null)
+        {
+            MessageText.Text = LockMessage.Text = $"{msg.From}: {msg.Text}";
+            MessageBanner.Visibility = LockMessage.Visibility = Visibility.Visible;
+            if (_shownMessage != msg.Id) { _shownMessage = msg.Id; BringToFront(); }   // bring the shell to the front once per message
+        }
+        else
+        {
+            MessageBanner.Visibility = LockMessage.Visibility = Visibility.Collapsed;
+        }
 
         if (_state.Locked)
         {
             var pending = rules.PendingRequests.Any(r => r.Kind == "time");
-            ShowLock(t.LockReason == "bedtime" ? "It's bedtime" : "Time's up for today",
-                     pending ? "Your request was sent. Waiting for Mom or Dad." : "You can ask for a little more time.");
+            var title = t.LockReason switch { "bedtime" => "It's bedtime", "paused" => "Mom or Dad paused the PC", _ => "Time's up for today" };
+            ShowLock(title, pending ? "Your request was sent. Waiting for Mom or Dad." : "You can ask for a little more time.");
             _voice?.Close();
         }
         else
         {
             LockOverlay.Visibility = Visibility.Collapsed;
+            Topmost = false;
         }
 
         BuildHomeTiles(rules);
@@ -78,6 +93,7 @@ public partial class MainWindow : Window
         LockTitle.Text = title;
         LockSub.Text = sub;
         LockOverlay.Visibility = Visibility.Visible;
+        Topmost = true;      // stay above games while locked
         Activate();
     }
 
@@ -115,6 +131,21 @@ public partial class MainWindow : Window
     }
 
     // ------------------------------------------------------------------ actions
+
+    /// <summary>Windows won't let a background window steal focus with Activate() alone; a brief Topmost does it.</summary>
+    private void BringToFront()
+    {
+        var wasTop = Topmost;
+        Topmost = true;
+        Activate();
+        Topmost = wasTop;
+    }
+
+    private void DismissMessage(object s, RoutedEventArgs e)
+    {
+        if (_shownMessage >= 0) _dismissed.Add(_shownMessage);
+        MessageBanner.Visibility = LockMessage.Visibility = Visibility.Collapsed;
+    }
 
     private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; }
     private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; }

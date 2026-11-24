@@ -101,6 +101,20 @@ $al = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome\URLAllowlist" -Err
 Check "chrome allow-list mode: block *" ($bl.'1' -eq "*")
 Check "chrome allow-list includes wikipedia.org" (@($al.PSObject.Properties.Value) -contains "wikipedia.org")
 
+# Remote control from the dashboard: a message reaches the shell, pause locks, resume unlocks.
+$cmd = Invoke-RestMethod "$hub/api/parent/kids/adam/commands" -Method Post -WebSession $s -ContentType application/json -Body '{"kind":"message","arg":"Dinner in 5!"}'
+Start-Sleep 8
+$st = Pipe @{ op = "state" }
+Check "parent message reaches the shell" (@($st.data.messages | Where-Object { $_.text -eq "Dinner in 5!" }).Count -eq 1) ($st.data.messages | ConvertTo-Json)
+$act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
+Check "command marked done on the hub" (($act.commands | Where-Object { $_.kind -eq "message" }).state -eq "done")
+Invoke-RestMethod "$hub/api/parent/kids/adam/pause" -Method Post -WebSession $s -ContentType application/json -Body '{"minutes":0}' | Out-Null
+Start-Sleep 8
+Check "pause now locks the PC" ((Pipe @{ op = "state" }).data.locked -eq $true)
+Invoke-RestMethod "$hub/api/parent/kids/adam/pause" -Method Delete -WebSession $s | Out-Null
+Start-Sleep 8
+Check "resume unlocks the PC" ((Pipe @{ op = "state" }).data.locked -eq $false)
+
 # Managed apps: the helper should install Steam on its own (Chrome is preinstalled on CI runners).
 $steamOk = $false
 for ($i = 0; $i -lt 60 -and -not $steamOk; $i++) {
@@ -113,6 +127,8 @@ for ($i = 0; $i -lt 60 -and -not $steamOk; $i++) {
 Check "helper installed Steam silently and reported it" $steamOk ($apps | ConvertTo-Json)
 Check "steam.exe exists" (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
 Check "hub shows chrome installed" (($apps | Where-Object { $_.app -eq "chrome" -and $_.state -eq "installed" }) -ne $null)
+$act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
+Check "steam install reported in the activity feed" (($act.events | Where-Object { $_.kind -eq "app_installed" -and $_.detail -eq "steam" }) -ne $null)
 
 # Lock: use up the day via a big negative grant is not possible, so approve nothing and set usage by heartbeats is slow;
 # instead flip the kid to 0 minutes by editing config and restarting the hub.

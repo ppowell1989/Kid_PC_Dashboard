@@ -11,6 +11,9 @@ public sealed class StateCache
     private DateTimeOffset _fetchedAt;
     private bool _reachable;
     private bool _locked = true;
+    private readonly List<ParentMessage> _messages = [];
+
+    public void AddMessage(ParentMessage m) { lock (_gate) { _messages.Add(m); if (_messages.Count > 5) _messages.RemoveAt(0); } }
 
     public void Set(Rules rules) { lock (_gate) { _rules = rules; _fetchedAt = DateTimeOffset.Now; _reachable = true; } }
     public void MarkUnreachable() { lock (_gate) _reachable = false; }
@@ -20,7 +23,11 @@ public sealed class StateCache
 
     public ShellState Snapshot(IEnumerable<int> installed)
     {
-        lock (_gate) return new ShellState(_rules, installed.ToList(), _locked, _reachable, _fetchedAt);
+        lock (_gate)
+        {
+            _messages.RemoveAll(m => DateTimeOffset.Now - m.At > TimeSpan.FromMinutes(30));
+            return new ShellState(_rules, installed.ToList(), _locked, _reachable, _fetchedAt, [.. _messages]);
+        }
     }
 
     /// <summary>
@@ -40,7 +47,7 @@ public sealed class StateCache
 }
 
 /// <summary>Every PollSeconds: report what is running, pull rules, enforce them.</summary>
-public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, ILogger<HubSync> log)
+public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, ILogger<HubSync> log)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -51,6 +58,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
             var activity = kidHere ? library.CurrentActivity(cache.Rules, Sessions.ConsoleSessionId) : new Activity("", false, []);
             try
             {
+                await events.FlushAsync(http, ct);
                 var appStates = apps.Status.ToDictionary(kv => kv.Key, kv => new { state = kv.Value.State, detail = kv.Value.Detail });
                 await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates }, ct);
                 var rules = await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct);
@@ -59,6 +67,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                     cache.Set(rules);
                     chrome.Apply(rules.Web);
                     apps.Ensure(rules.ManagedApps ?? ["steam", "chrome"]);
+                    await commands.RunAsync(rules.Commands ?? [], ct);
                 }
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
