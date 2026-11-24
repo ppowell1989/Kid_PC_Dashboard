@@ -84,3 +84,13 @@ discord_oauth:                    # only used when friend_verification = discord
   client_id: ""
   client_secret: ""
   redirect_uri: https://voice.example.com/join/discord/callback
+
+# Auto-update: the hub pulls the latest Windows build from the GitHub release and the PCs
+# fetch it from the hub (the PCs never talk to GitHub). The repo is private, so this needs a
+# fine-grained GitHub token with read-only "Contents" access to this one repo.
+updates:
+  enabled: false
+  github_repo: ppowell1989/Kid_PC_Dashboard
+  release_tag: test-build
+  github_token: ""
+  poll_minutes: 10

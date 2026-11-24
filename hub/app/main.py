@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, rules
+from . import adguard, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -41,12 +41,16 @@ def get_db() -> DB:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.db = DB(os.environ.get("HUB_DB", "hub.db"))
-    task = None
-    if settings.adguard.enabled and os.environ.get("HUB_DISABLE_POLLERS") != "1":
-        task = asyncio.create_task(adguard.poll_forever(app.state.db, settings))
+    app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
+    tasks = []
+    pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
+    if settings.adguard.enabled and pollers_on:
+        tasks.append(asyncio.create_task(adguard.poll_forever(app.state.db, settings)))
+    if settings.updates.enabled and settings.updates.github_token and pollers_on:
+        tasks.append(asyncio.create_task(updates.poll_forever(settings, app.state.updates_dir)))
     yield
-    if task:
-        task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="Kids PC hub", lifespan=lifespan)
@@ -205,6 +209,23 @@ def device_events(events: list[Event], kid: Kid = Depends(current_device), db: D
     for e in events[:100]:
         db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
+
+
+@app.get("/api/device/update")
+def device_update(arch: Literal["x64", "arm64"], kid: Kid = Depends(current_device)):
+    """Latest PC build the hub has for this architecture; the helper compares the version with its own."""
+    meta = updates.current(app.state.updates_dir, arch)
+    if not meta:
+        raise HTTPException(404, "no build on the hub yet")
+    return meta
+
+
+@app.get("/api/device/update/file")
+def device_update_file(arch: Literal["x64", "arm64"], kid: Kid = Depends(current_device)):
+    path = app.state.updates_dir / updates.ARCHES[arch]
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="application/zip")
 
 
 @app.get("/api/device/voice-token")

@@ -63,6 +63,14 @@ class DiscordOAuth(BaseModel):
     redirect_uri: str = ""
 
 
+class Updates(BaseModel):
+    enabled: bool = False
+    github_repo: str = "ppowell1989/Kid_PC_Dashboard"
+    release_tag: str = "test-build"
+    github_token: str = ""            # fine-grained token, this repo only, Contents: read
+    poll_minutes: int = 10
+
+
 class Settings(BaseModel):
     timezone: str = "America/New_York"
     parents: list[Parent] = Field(default_factory=list)
@@ -76,6 +84,7 @@ class Settings(BaseModel):
     adguard: AdGuard = AdGuard()
     livekit: LiveKit = LiveKit()
     discord_oauth: DiscordOAuth = DiscordOAuth()
+    updates: Updates = Updates()
 
     def kid(self, kid_id: str) -> Kid | None:
         return next((k for k in self.kids if k.id == kid_id), None)

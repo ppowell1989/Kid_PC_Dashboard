@@ -166,3 +166,49 @@ def test_events_feed(parent):
     r = parent.post("/api/device/events", headers=ADAM, json=[{"kind": "game_blocked", "detail": "Roblox", "at": "2026-11-24T01:00:00Z"}])
     assert r.status_code == 204
     assert parent.get("/api/parent/kids/adam/activity").json()["events"][0]["detail"] == "Roblox"
+
+
+def test_update_endpoints(parent):
+    import json as _json
+    from app.main import app as _app
+    d = _app.state.updates_dir
+    assert parent.get("/api/device/update?arch=arm64", headers=ADAM).status_code == 404
+    (d / "kidspc-win-arm64.zip").write_bytes(b"PK-fake")
+    (d / "arm64.json").write_text(_json.dumps({"version": "abc123", "sha256": "x", "size": 7}))
+    assert parent.get("/api/device/update?arch=arm64").status_code == 401        # parent cookie is not a device
+    assert parent.get("/api/device/update?arch=arm64", headers=ADAM).json()["version"] == "abc123"
+    assert parent.get("/api/device/update/file?arch=arm64", headers=ADAM).content == b"PK-fake"
+
+
+def test_fetch_builds_from_github_release(tmp_path):
+    import asyncio
+    import httpx
+    from app import updates
+    from app.config import Settings
+
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append(str(req.url))
+        if req.url.path.endswith("/releases/tags/test-build"):
+            assert req.headers["authorization"] == "Bearer tkn"
+            return httpx.Response(200, json={"target_commitish": "sha1", "assets": [
+                {"name": "kidspc-win-arm64.zip", "url": "https://api.github.com/repos/o/r/releases/assets/1"}]})
+        if req.url.path.endswith("/assets/1"):
+            return httpx.Response(302, headers={"location": "https://objects.example/zip"})
+        if req.url.host == "objects.example":
+            return httpx.Response(200, content=b"ZIPDATA")
+        return httpx.Response(404)
+
+    s = Settings.model_validate({"updates": {"enabled": True, "github_repo": "o/r", "github_token": "tkn"}})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            first = await updates.fetch_once(s, tmp_path, c)
+            second = await updates.fetch_once(s, tmp_path, c)
+            return first, second
+
+    first, second = asyncio.run(run())
+    assert first == ["arm64@sha1"] and second == []
+    assert (tmp_path / "kidspc-win-arm64.zip").read_bytes() == b"ZIPDATA"
+    assert updates.current(tmp_path, "arm64")["version"] == "sha1"

@@ -68,6 +68,20 @@ else
   echo "==> Keeping existing $CFG"
 fi
 
+# Auto-update (asked once): the hub fetches new Windows builds from the private GitHub release
+# and the PCs pull them from the hub. Needs a fine-grained token: this repo only, Contents read-only.
+if ! grep -q '^updates:' "$CFG"; then
+  echo "==> Auto-update for the PCs (optional, press Enter to skip)"
+  read -rsp "GitHub token with read-only Contents access to Kid_PC_Dashboard: " GH; echo
+  if [ -n "$GH" ]; then
+    printf '\nupdates:\n  enabled: true\n  github_repo: ppowell1989/Kid_PC_Dashboard\n  release_tag: test-build\n  github_token: "%s"\n' "$GH" >> "$CFG"
+    echo "    auto-update on"
+  else
+    printf '\nupdates: { enabled: false }\n' >> "$CFG"
+    echo "    skipped (edit updates: in $CFG later)"
+  fi
+fi
+
 echo "==> Starting hub on port $PORT"
 docker rm -f kidspc-hub >/dev/null 2>&1 || true
 docker run -d --name kidspc-hub --restart unless-stopped -p "$PORT:8080" -v "$DATA/hub:/data" kidspc-hub:local >/dev/null
