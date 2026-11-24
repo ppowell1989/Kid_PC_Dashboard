@@ -97,6 +97,10 @@ def test_remote_access_gate(client):
     assert origin_allowed(s, "100.100.1.1", "/")
     r = client.get("/api/parent/overview", headers={"x-real-ip": "8.8.8.8"})
     assert r.status_code == 403
+    # Through the Cloudflare tunnel the last hop is local; the visitor's real address still decides.
+    r = client.get("/api/parent/overview", headers={"cf-connecting-ip": "8.8.8.8", "x-real-ip": "192.168.1.5"})
+    assert r.status_code == 403
+    assert client.get("/static/app.css", headers={"cf-connecting-ip": "8.8.8.8"}).status_code == 200
 
 
 KID = Kid(id="a", name="A", device_token="t", daily_minutes={"weekday": 60, "weekend": 120},
