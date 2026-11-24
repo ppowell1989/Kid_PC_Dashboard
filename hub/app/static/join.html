@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f4f7fc">
-<title>Voice Chat</title>
+<title>Voice and Chat</title>
 <!-- Friends open this page from outside the house. Only app.css and /static/fonts/ are reachable there,
      so everything else this page needs is inline. -->
 <link rel="stylesheet" href="/static/app.css">
@@ -25,7 +25,21 @@
     <button id="mute" hidden>Mute my mic</button>
     <button id="leave" class="ghost" hidden>Leave</button>
   </div>
-  <p class="muted" id="hint">Voice only. A parent created this link and can switch it off at any time.</p>
+  <p class="muted" id="hint">A parent created this link and can switch it off at any time.</p>
+
+  <!-- Text chat with the same kid. His parents can read it all. -->
+  <section id="chatBox" class="card chat friendchat" hidden>
+    <h2>Messages</h2>
+    <div id="flog" class="chatlog"></div>
+    <p id="fstatus" class="muted" hidden></p>
+    <form id="fform" class="row">
+      <label class="picbtn" id="fpicbtn" title="Send a picture"><input type="file" id="fpic" accept="image/*" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg></label>
+      <input name="text" maxlength="500" autocomplete="off" placeholder="Type a message">
+      <button>Send</button>
+    </form>
+    <p class="muted small" id="fwho"></p>
+  </section>
 </main>
 <script>
 const code = location.pathname.split("/").pop();
@@ -62,7 +76,7 @@ async function setMic(on) {
 
 function showJoined(on) {
   $("#join").hidden = on; $("#mute").hidden = $("#leave").hidden = !on;
-  $("#hint").textContent = on ? "The mic button only changes your own microphone." : "Voice only. A parent created this link and can switch it off at any time.";
+  $("#hint").textContent = on ? "The mic button only changes your own microphone." : "A parent created this link and can switch it off at any time.";
   if (!on) $("#people").innerHTML = "";
 }
 
@@ -89,6 +103,68 @@ $("#join").onclick = async () => {
   await setMic(true);
 };
 $("#mute").onclick = () => setMic(!room.localParticipant.isMicrophoneEnabled);
+
+// ---------------------------------------------------------------- text chat
+const chat = { last: 0, started: false };
+const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fsay = (text) => { $("#fstatus").textContent = text; $("#fstatus").hidden = !text; };
+function linked(text, links) {
+  let out = "", at = 0;
+  for (const l of links || []) {
+    const i = text.indexOf(l, at);
+    if (i < 0) continue;
+    out += h(text.slice(at, i)) + `<a href="${h(/^https?:\/\//i.test(l) ? l : "https://" + l)}" target="_blank" rel="noopener noreferrer">${h(l)}</a>`;
+    at = i + l.length;
+  }
+  return out + h(text.slice(at));
+}
+async function loadChat() {
+  let r;
+  try { r = await fetch(`/join/${code}/chat?after=${chat.last}`); } catch { return fsay("Can't reach the chat right now."); }
+  if (r.status === 404) { $("#chatBox").hidden = true; return say("This invite link is no longer active.", true); }
+  const j = await r.json().catch(() => null);
+  if (!j) return;
+  if (!j.on) { $("#chatBox").hidden = true; return; }
+  $("#chatBox").hidden = false;
+  if (!room) $("#title").textContent = `Voice and chat with ${j.kid_name}`;
+  $("#fwho").textContent = `${j.kid_name}'s parents can read these messages and see every picture and link.`;
+  $("#fpicbtn").hidden = !j.pictures;
+  fsay("");
+  const log = $("#flog"), msgs = j.messages;
+  if (!msgs.length) { if (!chat.started) log.innerHTML = `<p class="muted">Say hi to ${h(j.kid_name)}!</p>`; chat.started = true; return; }
+  if (!chat.started) log.innerHTML = "";
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.insertAdjacentHTML("beforeend", msgs.map((m) => `<div class="msg ${m.mine ? "mine" : "kid"} ${m.removed ? "removed" : ""}">
+    ${m.mine ? "" : `<div class="who">${h(m.sender)}</div>`}<div class="bubble">${m.picture ? `<a href="/join/${code}/chat/picture/${m.id}" target="_blank"><img src="/join/${code}/chat/picture/${m.id}" alt="Picture from ${h(m.sender)}" loading="lazy"></a>` : ""}${m.removed ? `<i>${h(m.text)}</i>` : linked(m.text, m.links)}</div>
+    <div class="when">${h(new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div></div>`).join(""));
+  if (atBottom || !chat.started) log.scrollTop = log.scrollHeight;
+  chat.started = true;
+  chat.last = msgs[msgs.length - 1].id;
+}
+async function send(path, body) {
+  const r = await fetch(`/join/${code}/chat${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "That didn't send. Try again.");
+}
+$("#fform").onsubmit = async (e) => {
+  e.preventDefault();
+  const input = e.target.text, text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  try { await send("", { text }); } catch (err) { input.value = text; return fsay(err.message); }
+  loadChat();
+};
+$("#fpic").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) return fsay("That picture is too big. Try a smaller one.");
+  fsay("Sending the picture…");
+  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+  try { await send("/picture", { data, text: $("#fform").text.value.trim() }); $("#fform").text.value = ""; } catch (err) { return fsay(err.message); }
+  loadChat();
+};
+loadChat();
+setInterval(loadChat, 4000);
 $("#leave").onclick = () => room && room.disconnect();
 </script>
 </body>

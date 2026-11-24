@@ -182,6 +182,9 @@ Check "PC uses the family DNS filter" $dnsSet (Get-DnsClientServerAddress | Out-
 $cp = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome"
 Check "chrome secure DNS pinned to the family filter" ($cp.DnsOverHttpsMode -eq "secure" -and $cp.DnsOverHttpsTemplates -like "https://family.*")
 Check "kid game search answers" ((Pipe @{ op = "game_search"; detail = "portal" }).ok)
+$wowHits = Pipe @{ op = "game_search"; detail = "world of warcraft" }
+Check "kid game search finds Battle.net games, with the store in the pick" (@($wowHits.data | Where-Object { $_.ref -eq "battlenet:WoWC" -and $_.store -eq "Battle.net" }).Count -eq 1) ($wowHits | ConvertTo-Json -Depth 4)
+Check "PC clock follows the hub's time zone" ((Get-TimeZone).Id -eq "Eastern Standard Time") "PC is on $((Get-TimeZone).Id)"
 
 # Chrome history reader: pages and searches reach the dashboard, flagged words light up.
 $srch = @(); for ($i = 0; $i -lt 10 -and $srch.Count -eq 0; $i++) { Start-Sleep 3; $srch = @(Invoke-RestMethod "$hub/api/parent/searches/adam" -WebSession $s) }
@@ -198,6 +201,22 @@ Check "kid sees the family chat" (@($chat.data | Where-Object { $_.text -eq "Hom
 $sent = Pipe @{ op = "chat_send"; detail = "ok fine" }
 $pc = Invoke-RestMethod "$hub/api/parent/chat" -WebSession $s
 Check "kid's chat reaches the parents" ($sent.ok -and @($pc | Where-Object { $_.text -eq "ok fine" -and $_.sender -eq "Adam" }).Count -eq 1) ($pc | ConvertTo-Json)
+
+# Friend chat: a friend writes from the invite page, the kid answers with words and a picture through the pipe,
+# and the parents see all of it.
+$inv = Invoke-RestMethod "$hub/api/parent/invites" -Method Post -WebSession $s -ContentType application/json -Body '{"kid_id":"adam","friend_name":"Max"}'
+Invoke-RestMethod "$hub/join/$($inv.code)/chat" -Method Post -ContentType application/json -Body '{"text":"hey Adam"}' | Out-Null
+$convs = Pipe @{ op = "chat_convs" }
+$fc = @($convs.data.convs | Where-Object { $_.kind -eq "friend" })[0]
+Check "kid has a chat with his invited friend" ($fc -and $fc.title -eq "Max" -and $fc.id -notlike "*$($inv.code)*") ($convs | ConvertTo-Json -Depth 5)
+$fm = Pipe @{ op = "chat"; detail = "0"; ref = $fc.id }
+Check "kid sees the friend's message" (@($fm.data | Where-Object { $_.text -eq "hey Adam" -and $_.friend }).Count -eq 1) ($fm | ConvertTo-Json -Depth 5)
+$png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"   # 1x1 pixel
+$pic = Pipe @{ op = "chat_picture"; detail = $png; note = "look www.example.com"; ref = $fc.id }
+$shared = Invoke-RestMethod "$hub/api/parent/chat-shared" -WebSession $s
+Check "kid's picture and link reach the parents" ($pic.ok -and @($shared | Where-Object { $_.picture -and $_.links -contains "www.example.com" }).Count -eq 1) ($pic, $shared | ConvertTo-Json -Depth 5)
+$page = Invoke-RestMethod "$hub/join/$($inv.code)/chat"
+Check "friend sees the kid's picture" (@($page.messages | Where-Object { $_.picture -and $_.sender -eq "Adam" }).Count -eq 1) ($page | ConvertTo-Json -Depth 5)
 
 # Managed apps: the helper should install Steam on its own (Chrome is preinstalled on CI runners).
 $steamOk = $false

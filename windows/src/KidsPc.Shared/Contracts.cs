@@ -60,7 +60,10 @@ public sealed record Rules(
     // arrives unless a game is running, instead of waiting for the next restart or sign-in.
     [property: JsonPropertyName("auto_update")] bool AutoUpdate = false,
     // Approved games the hub wants on this PC: the helper installs them by itself, no tap from the kid.
-    List<InstallItem>? Installs = null);
+    List<InstallItem>? Installs = null,
+    // The family's time zone (IANA, e.g. "America/New_York"). The hub decides "today" and bedtime in it, and the
+    // helper sets the PC's clock to match so the time on his screen agrees with when the PC locks.
+    string? Timezone = null);
 
 /// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.</summary>
 public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0);
@@ -99,9 +102,23 @@ public static class Json
     };
 }
 
+/// <summary>One chat message. Friend = an invited friend wrote it from the invite page. Picture = fetch it with
+/// the "chat_picture_get" pipe op. Removed = a parent hid it (Text is then the hub's note saying so).</summary>
 public sealed record ChatMessage(long Id, string Sender,
-    [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine);
+    [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine,
+    string Conv = "family", bool Friend = false, bool Picture = false, List<string>? Links = null, bool Removed = false);
 
-/// <summary>A Steam store match from the hub's kid-safe game search.</summary>
-public sealed record SteamGame(string Appid, string Name,
-    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null);
+/// <summary>A conversation the kid can open: the family chat, his brothers, or one invited friend.</summary>
+public sealed record ChatConv(string Id, string Title, string Kind,
+    [property: JsonPropertyName("last_id")] long LastId,
+    [property: JsonPropertyName("last_other_id")] long LastOtherId,
+    [property: JsonPropertyName("can_send")] bool CanSend, string Note = "");
+
+public sealed record ChatList(List<ChatConv> Convs, bool Pictures, bool Links);
+
+public sealed record ChatPicture(string Data);
+
+/// <summary>A match from the hub's kid-safe game search (Steam, Battle.net, PC Game Pass). Ref names the game and
+/// the store it would come from, "steam:620" or "battlenet:WoWC", and goes with his request to Mom or Dad.</summary>
+public sealed record GameHit(string Ref, string Name,
+    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null, string? Store = null);

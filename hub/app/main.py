@@ -3,7 +3,7 @@
 Three audiences:
   /api/device/*  the shell, admin helper and Chrome extension on each PC (Bearer device token)
   /api/parent/*  the parents' phone dashboard (session cookie)
-  /join/*        friends joining voice chat from any browser (invite code)
+  /join/*        friends joining voice and text chat from any browser (invite code)
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, gamesearch, installs, retention, rules, updates
+from . import adguard, chat, gamesearch, installs, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -43,6 +43,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.db = DB(os.environ.get("HUB_DB", "hub.db"))
     app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
+    # Chat pictures sit next to the database, so a backup of the data folder has them too.
+    app.state.chat_dir = retention.PICTURES_DIR = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "chat-pictures"
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
@@ -58,6 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Kids PC hub", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(chat.router)
 
 
 @app.middleware("http")
@@ -273,7 +276,7 @@ class KidRequest(BaseModel):
     kind: Literal["game", "time", "site"]
     detail: str = Field(min_length=1, max_length=200)
     note: str = Field(default="", max_length=500)
-    ref: str = Field(default="", pattern=r"^(steam:\d{1,10})?$")   # the exact game the kid picked from search
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")   # the exact game (and store) the kid picked from search
 
 
 class Visit(BaseModel):
@@ -315,9 +318,12 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
-        "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
+        # The friend's chat id, never the invite code: the PC has no use for the link, so a kid can't pass it on.
+        "friends": [{"code": chat.friend_conv(r["code"]), "friend_name": r["friend_name"]}
+                    for r in db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,))],
         "family": family_for(db, settings, kid),
         "family_voice": family_settings(db)["voice"],
+        "timezone": settings.timezone,   # the PC's clock follows the hub, which decides "today" and bedtime
     }
 
 
@@ -390,9 +396,31 @@ def device_request(req: KidRequest, kid: Kid = Depends(current_device), db: DB =
     return {"id": rid}
 
 
+@app.get("/api/device/games/search")
+async def device_game_search(q: str, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Game search for the kid's "Get more games" screen: Steam, Battle.net and (when it's on) PC Game Pass,
+    one row per game, the same merge as the parent search. Each row carries the store it would come from
+    ("battlenet:WoWC"), so the request names the exact game. Adult-only titles and non-games are left out."""
+    q = q.strip()[:100]
+    if len(q) < 2:
+        return []
+    gp = settings.decisions.game_pass_enabled
+    steam, xbox_cat = await asyncio.gather(steam_search(q, db, kid_safe=True),
+                                           gamesearch.gamepass_catalogue(db) if gp else asyncio.sleep(0, None))
+    rows = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []), gp, {})
+    out = []
+    for r in rows:
+        if r["default"] is None or r["adult"]:
+            continue
+        p = r["platforms"][r["default"]]
+        out.append({"ref": f"{p['launcher']}:{p['launch_ref']}", "name": r["title"], "image_url": r["image_url"],
+                    "esrb": r["esrb"], "description": (r["details"] or {}).get("description") or "", "store": p["label"]})
+    return out
+
+
 @app.get("/api/device/steam/search")
 async def device_steam_search(q: str, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
-    """Game search for the kid's "Get more games" screen. Adult-only titles and non-games are filtered out."""
+    """Steam-only kid search, kept for helpers older than /api/device/games/search."""
     if len(q.strip()) < 2:
         return []
     return await steam_search(q, db, kid_safe=True)
@@ -470,39 +498,6 @@ def device_events(events: list[Event], kid: Kid = Depends(current_device), db: D
     return Response(status_code=204)
 
 
-# Family chat ----------------------------------------------------------------
-
-class ChatIn(BaseModel):
-    text: str = Field(min_length=1, max_length=500)
-
-
-def chat_since(db: DB, after: int) -> list[dict]:
-    rows = db.q("SELECT id, sender, kid_id, text, at FROM chat WHERE id>? ORDER BY id DESC LIMIT 100", (after,))
-    return rows[::-1]
-
-
-@app.get("/api/device/chat")
-def device_chat(after: int = 0, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
-    return [{**m, "mine": m["kid_id"] == kid.id} for m in chat_since(db, after)]
-
-
-@app.post("/api/device/chat", status_code=201)
-def device_chat_send(m: ChatIn, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
-    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (kid.name, kid.id, m.text.strip(), now))}
-
-
-@app.get("/api/parent/chat")
-def parent_chat(after: int = 0, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
-    return [{**m, "mine": m["kid_id"] is None and m["sender"] == parent} for m in chat_since(db, after)]
-
-
-@app.post("/api/parent/chat", status_code=201)
-def parent_chat_send(m: ChatIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
-    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (parent, None, m.text.strip(), now))}
-
-
 @app.get("/api/device/update")
 def device_update(arch: Literal["x64", "arm64"], kid: Kid = Depends(current_device)):
     """Latest PC build the hub has for this architecture; the helper compares the version with its own."""
@@ -569,7 +564,8 @@ def family_for(db: DB, settings: Settings, kid: Kid) -> list[dict]:
         p["game_title"] = game["title"] if game else ""
         p["join_game"] = mine.get(p["game_id"]) if fam["join"] and p["game_id"] and not p["locked"] else None
         # Not approved for him: the shell can turn the Join into a request to Mom or Dad.
-        p["ask_ref"] = f"steam:{game['launch_ref']}" if game and not p["join_game"] and game["launcher"] == "steam" else ""
+        p["ask_ref"] = (f"{game['launcher']}:{game['launch_ref']}" if game and not p["join_game"]
+                        and game["launcher"] in ("steam", "battlenet", "gamepass") else "")
         del p["game_id"]
         out.append(p)
     return out

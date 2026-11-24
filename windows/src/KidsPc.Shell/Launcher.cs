@@ -65,6 +65,17 @@ public static class Launcher
         Process.Start(new ProcessStartInfo(Chrome, "--start-maximized") { UseShellExecute = false });
     });
 
+    /// <summary>A link from chat, in Chrome. Only web addresses; Chrome's own rules decide whether the site opens.</summary>
+    public static bool OpenLink(string link) => Try("Chrome", () =>
+    {
+        if (App.DemoScene is not null) return;
+        var url = link.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? "https://" + link : link;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")) return;
+        var psi = new ProcessStartInfo(Chrome) { UseShellExecute = false };
+        psi.ArgumentList.Add(u.AbsoluteUri);
+        Process.Start(psi);
+    });
+
     private const string Steam = @"C:\Program Files (x86)\Steam\steam.exe";
 
     /// <summary>Something the helper needs done as the kid, in his session, so a game a parent approved installs

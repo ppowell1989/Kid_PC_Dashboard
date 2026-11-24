@@ -9,7 +9,7 @@ namespace KidsPc.Shell;
 
 /// <summary>
 /// A small card in the top right corner when someone in the family writes in the chat while it is closed:
-/// who wrote and the first words, with a sound. It floats over a game without taking the keyboard away from
+/// which chat it is in, with a sound. It floats over a game without taking the keyboard away from
 /// it, goes away by itself, and a click on it opens the chat. This is the kid screen's own card, not a Windows
 /// notification (those are switched off for his account).
 /// </summary>
@@ -18,7 +18,7 @@ public sealed class ChatToast : Window
     private static ChatToast? _showing;
     private readonly DispatcherTimer _hide = new() { Interval = TimeSpan.FromSeconds(8) };
 
-    private ChatToast(FrameworkElement look, string sender, string text, Action onClick)
+    private ChatToast(FrameworkElement look, string heading, string text, Action onClick)
     {
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -32,7 +32,7 @@ public sealed class ChatToast : Window
         Cursor = Cursors.Hand;
 
         Brush Paint(string key, Color fallback) => look.TryFindResource(key) as Brush ?? new SolidColorBrush(fallback);
-        var who = new TextBlock { Text = $"{sender} wrote in Family chat", FontSize = 14, Foreground = Paint("Muted", Colors.DimGray) };
+        var who = new TextBlock { Text = heading, FontSize = 14, Foreground = Paint("Muted", Colors.DimGray) };
         var words = new TextBlock
         {
             Text = text.Length > 140 ? text[..140] + "…" : text, FontSize = 19, TextWrapping = TextWrapping.Wrap,
@@ -59,12 +59,12 @@ public sealed class ChatToast : Window
     }
 
     /// <summary>Shows the card (replacing one that is still up) and plays a sound.</summary>
-    public static void Show(FrameworkElement look, string sender, string text, Action onClick)
+    public static void Show(FrameworkElement look, string heading, string text, Action onClick)
     {
         try
         {
             _showing?.Close();
-            _showing = new ChatToast(look, sender, text, onClick);
+            _showing = new ChatToast(look, heading, text, onClick);
             _showing.Show();
             SystemSounds.Asterisk.Play();
         }

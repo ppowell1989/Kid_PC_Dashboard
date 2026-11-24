@@ -48,8 +48,8 @@ $("#loginForm").onsubmit = async (e) => {
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
-  if (b.dataset.tab === "chat") { chatSeen(); loadChat(); }
-  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites, pcs: loadPcs }[b.dataset.tab] || (() => {}))();
+  if (b.dataset.tab === "chat") { chatSeen(); loadChat(); loadConvs().catch(() => {}); }
+  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: () => { loadInvites(); loadChatSettings().catch(oops); }, pcs: loadPcs }[b.dataset.tab] || (() => {}))();
 }));
 
 function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}` : `${m}m`; }
@@ -236,9 +236,9 @@ async function loadRequests() {
     const inCat = games.find((g) => g.title.toLowerCase() === r.detail.toLowerCase());
     if (inCat) sel.value = inCat.id;
     let hits = [];
-    const picked = (r.ref || "").startsWith("steam:") ? r.ref : "";
+    const picked = r.ref || "";   // the exact game and store he picked on his screen, e.g. "battlenet:WoWC"
     try {
-      if (picked) {   // the exact Steam game he picked on his screen goes first
+      if (picked.startsWith("steam:")) {   // a Steam pick goes first even if his words match other games better
         const a = await api(`/api/parent/steam/app/${picked.slice(6)}`);
         if (a.appid) hits.push(...(await api(`/api/parent/games/search?q=${encodeURIComponent(a.name)}`)).results
           .filter((h) => h.platforms.some((p) => `steam:${p.launch_ref}` === picked)).slice(0, 1));
@@ -246,17 +246,20 @@ async function loadRequests() {
       const more = (await api(`/api/parent/games/search?q=${encodeURIComponent(r.detail)}`)).results;
       hits = hits.concat(more.filter((h) => !hits.some((x) => x.title === h.title)));
     } catch {}
+    // The platform to add: the one he picked when this game has it, otherwise the game's default store.
+    const platOf = (h) => h.platforms.find((p) => p.addable && `${p.launcher}:${p.launch_ref}` === picked) || h.platforms[h.default];
     hits = hits.filter((h) => h.default !== null);
-    const refOf = (h) => `${h.platforms[h.default].launcher}:${h.platforms[h.default].launch_ref}`;
+    const refOf = (h) => { const p = platOf(h); return `${p.launcher}:${p.launch_ref}`; };
+    hits.sort((a, b) => (refOf(b) === picked) - (refOf(a) === picked));   // his pick first
     const byRef = Object.fromEntries(hits.map((h) => [refOf(h), h]));
     const info = $(`[data-infofor="${r.id}"]`);
     group.label = hits.length ? "Add from the stores" : "No store matches";
-    group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(h.platforms[h.default].label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
+    group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(platOf(h).label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
     const showArt = () => {
       const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
       img.hidden = !src; if (src) img.src = src;
       const h = byRef[sel.value];
-      info.innerHTML = h ? gameFacts(h, h.platforms[h.default]) : "";
+      info.innerHTML = h ? gameFacts(h, platOf(h)) : "";
     };
     if (picked && byRef[picked]) sel.value = picked;
     else if (!sel.value && hits.length) sel.value = refOf(hits[0]);
@@ -631,8 +634,11 @@ $("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention()
 refresh().catch(() => {});
 };
 
-// Family chat ---------------------------------------------------------------
-const chat = { last: 0, seen: 0, started: false };
+// Chat ----------------------------------------------------------------------
+// Conversations: the family chat (parents write here), the brothers' own chat, each friend's chat (read only),
+// and "Pictures & links", every picture and link sent in any of them. Parents can remove a message: the kids
+// and the friend then see that a parent removed it, and the parents keep seeing what it was.
+const chat = { conv: "family", last: 0, seen: {}, convs: [], started: false };
 // On a phone chat is a tab. On a laptop (same 900px as app.css) it is a bar docked in the bottom right corner
 // that opens over whatever tab is showing: body.chat-open while it is open, body.chat-unread for the red dot.
 const wide = window.matchMedia("(min-width: 900px)");
@@ -641,9 +647,8 @@ function chatOpen() {
   return wide.matches ? document.body.classList.contains("chat-open") : !$('[data-panel="chat"]').hidden;
 }
 const pageTitle = document.title;
-function chatSeen() { $("#chatDot").textContent = ""; document.body.classList.remove("chat-unread"); chat.seen = chat.last; chat.unread = 0; document.title = pageTitle; }
 // A short two-note sound for a new chat message. Browsers only allow sound after the page has been tapped or
-// clicked once, so a dashboard that was only ever looked at stays silent; the red dot and the tab title still show.
+// clicked once, so a dashboard that was only ever looked at stays silent; the dots and the tab title still show.
 function chatSound() {
   try {
     const ctx = chatSound.ctx || (chatSound.ctx = new (window.AudioContext || window.webkitAudioContext)());
@@ -657,6 +662,24 @@ function chatSound() {
     });
   } catch (e) { /* no sound on this browser */ }
 }
+// The tab title says how many conversations have something new, so it shows with the dashboard in a background tab.
+function chatTitle() {
+  const n = chat.convs.filter((c) => c.last_id > (chat.seen[c.id] || 0) && !(chatOpen() && c.id === chat.conv)).length;
+  document.title = n ? `(${n}) New message \u00B7 ${pageTitle}` : pageTitle;
+}
+function chatSeen() {
+  const c = chat.convs.find((x) => x.id === chat.conv);
+  if (c) chat.seen[c.id] = c.last_id;
+  if (chat.conv === "family" || !chat.convs.length) chat.seen.family = Math.max(chat.seen.family || 0, chat.last);
+  updateChatDot(); renderConvs(); chatTitle();
+}
+// The red dot is for the family chat, where messages are for the parents. The other chats get a dot on their button.
+function updateChatDot() {
+  const fam = chat.convs.find((c) => c.id === "family");
+  const unread = fam && fam.last_id > (chat.seen.family || 0) && !(chatOpen() && chat.conv === "family");
+  $("#chatDot").textContent = unread ? "●" : "";
+  document.body.classList.toggle("chat-unread", !!unread);
+}
 {
   const bar = $('[data-panel="chat"] > .title');
   bar.tabIndex = 0; bar.setAttribute("role", "button");
@@ -665,33 +688,118 @@ function chatSound() {
     const open = document.body.classList.toggle("chat-open");
     bar.setAttribute("aria-expanded", open);
     if (!open) return;
-    chatSeen(); $("#chatLog").scrollTop = $("#chatLog").scrollHeight; $("#chatForm").text.focus(); loadChat().catch(() => {});
+    chatSeen(); $("#chatLog").scrollTop = $("#chatLog").scrollHeight; if (chat.conv === "family") $("#chatForm").text.focus();
+    loadChat().catch(() => {}); loadConvs().catch(() => {});
   };
   bar.onclick = toggle;
   bar.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
   // Window dragged from phone width to laptop width while on the Chat tab: that tab is gone, so go to Now.
   wide.addEventListener("change", () => { if (wide.matches && $('nav button[data-tab="chat"]').classList.contains("on")) $('nav button[data-tab="now"]').click(); });
 }
+
+async function loadConvs() {
+  const r = await api("/api/parent/chats");
+  const first = !chat.convs.length;
+  chat.convs = r.convs;
+  for (const c of r.convs) if (first || !(c.id in chat.seen)) chat.seen[c.id] = Math.max(chat.seen[c.id] || 0, c.last_id);   // old messages aren't new
+  // A sound once per new message in a conversation that isn't open in front of the parent (any chat, not only Family).
+  chat.told = chat.told || {};
+  let news = false;
+  for (const c of r.convs) {
+    const told = c.id in chat.told ? chat.told[c.id] : chat.seen[c.id] || 0;
+    if (c.last_id > told && !(chatOpen() && c.id === chat.conv && !document.hidden)) news = true;
+    chat.told[c.id] = Math.max(told, c.last_id);
+  }
+  if (news && !first) chatSound();
+  if (chatOpen()) { const c = r.convs.find((x) => x.id === chat.conv); if (c) chat.seen[c.id] = c.last_id; }
+  renderConvs(); updateChatDot(); chatTitle();
+}
+function renderConvs() {
+  const shown = chat.convs.filter((c) => c.kind === "family" || c.count || c.active);
+  const shared = chat.convs.reduce((n, c) => n + c.pictures + c.links, 0);
+  $("#chatConvs").innerHTML = shown.map((c) => {
+    const isNew = c.last_id > (chat.seen[c.id] || 0) && c.id !== chat.conv;
+    return `<button type="button" role="tab" data-conv="${esc(c.id)}" class="${c.id === chat.conv ? "on" : ""} ${isNew ? "dot" : ""} ${c.active ? "" : "off"}"
+      aria-selected="${c.id === chat.conv}" title="${esc(c.who)}">${esc(c.kind === "family" ? "Family" : c.title)}${c.flagged ? `<span class="n" title="Flagged words">!${c.flagged}</span>` : ""}</button>`;
+  }).join("") + (shared ? `<button type="button" role="tab" data-conv="shared" class="${chat.conv === "shared" ? "on" : ""}">Pictures &amp; links</button>` : "");
+  document.querySelectorAll("[data-conv]").forEach((b) => (b.onclick = () => switchConv(b.dataset.conv)));
+}
+function switchConv(conv) {
+  if (conv === chat.conv) return;
+  chat.conv = conv; chat.last = 0; chat.started = false;
+  $("#chatLog").innerHTML = "";
+  const c = chat.convs.find((x) => x.id === conv);
+  const family = conv === "family";
+  $("#chatForm").hidden = !family;
+  $("#chatNote").hidden = family;
+  $("#chatNote").textContent = conv === "shared" ? "Every picture and link sent in any chat, newest first. Tap a picture to see it full size."
+    : c ? `${c.who}. You can read this chat; ${c.kind === "kids" ? "only the kids write in it" : "only the kid and the friend write in it"}. Remove a message to hide it from them.` : "";
+  chatSeen();
+  loadChat().catch(oops);
+}
+
+// Text with its links as links. Everything else is escaped.
+function linked(text, links) {
+  let out = "", at = 0;
+  for (const l of links || []) {
+    const i = text.indexOf(l, at);
+    if (i < 0) continue;
+    const href = /^https?:\/\//i.test(l) ? l : `https://${l}`;
+    out += esc(text.slice(at, i)) + `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(l)}</a>`;
+    at = i + l.length;
+  }
+  return out + esc(text.slice(at));
+}
+const picUrl = (id) => `/api/parent/chat/picture/${id}`;
+function msgHtml(m) {
+  const pic = m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="Picture from ${esc(m.sender)}" loading="lazy"></a>` : "";
+  const words = m.text ? (m.removed ? `<s>${linked(m.text, m.links)}</s>` : linked(m.text, m.links)) : "";
+  const tools = [m.flagged ? `<span class="flag">Flagged words</span>` : "",
+    m.removed ? `<span>Removed by ${esc(m.removed_by)}. Hidden from the kids.</span>` : !m.mine ? `<button type="button" data-remove="${m.id}">Remove</button>` : ""].filter(Boolean).join("");
+  return `<div class="msg ${m.mine ? "mine" : ""} ${m.kid_id ? "kid" : ""} ${m.friend ? "friend" : ""} ${m.removed ? "removed" : ""} ${m.flagged ? "flagged" : ""}" data-mid="${m.id}">
+    ${m.mine ? "" : `<div class="who">${esc(m.sender)}${m.friend ? " (friend)" : ""}</div>`}<div class="bubble">${pic}${words}</div>
+    <div class="when">${esc(new Date(m.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div>${tools ? `<div class="tools">${tools}</div>` : ""}</div>`;
+}
+function wireRemove(root) {
+  root.querySelectorAll("[data-remove]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: "Remove this message?", text: "The kids (and the friend) will see that a parent removed it. You will still see it here.", ok: "Remove", kind: "bad" })) return;
+    try { await api(`/api/parent/chat/${b.dataset.remove}`, { method: "DELETE" }); } catch (err) { return oops(err); }
+    reloadChat();
+  }));
+}
+function reloadChat() { chat.last = 0; chat.started = false; $("#chatLog").innerHTML = ""; loadChat().catch(oops); }
+
 async function loadChat() {
-  const msgs = await api(`/api/parent/chat?after=${chat.last}`);
-  if (!msgs.length) return;
   const log = $("#chatLog");
+  if (chat.conv === "shared") {
+    const items = await api("/api/parent/chat-shared");
+    const title = (m) => (chat.convs.find((c) => c.id === m.conv) || {}).title || "";
+    log.innerHTML = `<div class="shared">${items.map((m) => `<div class="item">
+      ${m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="" loading="lazy"></a>` : ""}
+      <b>${esc(m.sender)}</b> <span class="muted">in ${esc(m.conv === "family" ? "Family" : title(m))}</span><br>
+      ${m.removed ? "<s>" : ""}${linked(m.text, m.links)}${m.removed ? "</s> <span class='muted'>(removed)</span>" : ""}
+      <div class="muted">${esc(new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</div></div>`).join("")
+      || `<p class="muted">No pictures or links yet.</p>`}</div>`;
+    return;
+  }
+  const conv = chat.conv;
+  const msgs = await api(`/api/parent/chats/${encodeURIComponent(conv)}?after=${chat.last}`);
+  if (conv !== chat.conv) return;   // switched while this was on its way
+  if (!msgs.length) {
+    if (!chat.started && !log.children.length) log.innerHTML = `<p class="muted">Nothing here yet.</p>`;
+    chat.started = true;
+    return;
+  }
+  if (!chat.started) log.innerHTML = "";
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  log.insertAdjacentHTML("beforeend", msgs.map((m) => `<div class="msg ${m.mine ? "mine" : ""} ${m.kid_id ? "kid" : ""}">
-    ${m.mine ? "" : `<div class="who">${esc(m.sender)}</div>`}<div class="bubble">${esc(m.text)}</div>
-    <div class="when">${esc(new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div></div>`).join(""));
+  log.insertAdjacentHTML("beforeend", msgs.map(msgHtml).join(""));
+  wireRemove(log);
   if (atBottom || !chat.started) log.scrollTop = log.scrollHeight;
-  if (!chat.started) chat.seen = msgs[msgs.length - 1].id;
   chat.started = true;
   chat.last = msgs[msgs.length - 1].id;
-  if (chatOpen()) chat.seen = chat.last;
-  const unread = msgs.filter((m) => m.id > chat.seen && !m.mine).length;
-  if (unread) {
-    $("#chatDot").textContent = "\u25CF"; document.body.classList.add("chat-unread");
-    chat.unread = (chat.unread || 0) + unread;
-    document.title = `(${chat.unread}) New message \u00B7 ${pageTitle}`;
-    chatSound();
-  }
+  const c = chat.convs.find((x) => x.id === conv);
+  if (c) c.last_id = Math.max(c.last_id, chat.last);
+  if (chatOpen()) chatSeen();
 }
 $("#chatForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -702,5 +810,39 @@ $("#chatForm").onsubmit = async (e) => {
   try { await api("/api/parent/chat", { method: "POST", body: { text } }); } catch (err) { input.value = text; oops(err); }
   loadChat().catch(() => {});
 };
-let chatTick = 0;  // every 4 s with the chat open, every 8 s otherwise (for the red dot, the tab title and the sound)
-setInterval(() => { if (!$("#app").hidden && (chatOpen() || ++chatTick % 2 === 0)) loadChat().catch(() => {}); }, 4000);
+$("#chatPic").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
+  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+  const text = $("#chatForm").text.value.trim();
+  try { await api("/api/parent/chat/picture", { method: "POST", body: { data, text } }); $("#chatForm").text.value = ""; } catch (err) { return oops(err); }
+  loadChat().catch(() => {});
+};
+
+// Chat switches (Friends tab).
+async function loadChatSettings() {
+  const { settings: c } = await api("/api/parent/chats");
+  const sw = (key, label, hint) => `<label class="switch"><input type="checkbox" data-chatset="${key}" ${c[key] ? "checked" : ""}>
+      <span><b>${label}</b><small class="muted">${hint}</small></span></label>`;
+  $("#chatSettings").innerHTML = `<div class="card chatset">
+    <h2>Text chat</h2>
+    <p class="muted">The family chat is always on. You can read every chat on the Chat tab.</p>
+    ${sw("kids", "Brothers chat with each other", "A chat just for the kids. You can read it, but don't write in it.")}
+    ${sw("friends", "Chat with invited friends", "Each friend with a link can type with that kid, from the same page as voice.")}
+    ${sw("pictures", "Pictures", "Photos and screenshots. The hub strips hidden data such as where a photo was taken.")}
+    ${sw("links", "Links", "Web links in messages. On the kids' PCs a link opens in Chrome, under the same web rules.")}
+  </div>`;
+  document.querySelectorAll("[data-chatset]").forEach((x) => (x.onchange = async () => {
+    try { await api("/api/parent/chat-settings", { method: "PUT", body: { [x.dataset.chatset]: x.checked } }); } catch (err) { x.checked = !x.checked; oops(err); }
+  }));
+}
+
+let chatTick = 0;  // messages every 4 s with the chat open; the conversation list every 8 s (for the dots, the tab title and the sound)
+setInterval(() => {
+  if ($("#app").hidden) return;
+  const open = chatOpen();
+  if (open) loadChat().catch(() => {});
+  if (++chatTick % 2 === 0) loadConvs().catch(() => {});
+}, 4000);
