@@ -142,3 +142,25 @@ def test_old_pictures_are_deleted_with_their_messages(parent):
     db.x("UPDATE chat SET at='2026-01-01T10:00:00'")
     retention.prune(db, __import__("datetime").datetime(2026, 11, 24, tzinfo=__import__("datetime").timezone.utc))
     assert not (app.state.chat_dir / name).exists()
+
+
+def test_iphone_photos_and_other_formats_are_taken(parent):
+    from pillow_heif import register_heif_opener
+    from app.main import app
+    register_heif_opener()
+    code = invite(parent)
+    for fmt in ("HEIF", "MPO", "BMP", "TIFF", "WEBP"):
+        im = Image.new("RGB", (2000, 1500), "blue")
+        buf = io.BytesIO()
+        im.save(buf, fmt, **({"quality": 60} if fmt == "HEIF" else {}))
+        r = parent.post(f"/join/{code}/chat/picture", json={"data": base64.b64encode(buf.getvalue()).decode()})
+        assert r.status_code == 201, (fmt, r.text)
+        name = app.state.db.one("SELECT picture FROM chat WHERE id=?", (r.json()["id"],))["picture"]
+        assert name.endswith(".jpg") and Image.open(app.state.chat_dir / name).size == (1600, 1200)
+
+
+def test_a_video_gets_a_plain_answer(parent):
+    code = invite(parent)
+    mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  " + b"\x00" * 200
+    r = parent.post(f"/join/{code}/chat/picture", json={"data": base64.b64encode(mov).decode()})
+    assert r.status_code == 422 and "Videos" in r.json()["detail"]

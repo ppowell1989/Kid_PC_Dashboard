@@ -40,7 +40,11 @@ router = APIRouter()
 FAMILY, KIDS, FRIEND = "family", "kids", "friend-"
 DEFAULTS = {"kids": True, "friends": True, "pictures": True, "links": True}
 MAX_TEXT = 500
-MAX_PICTURE_BYTES = 8 * 1024 * 1024    # what a browser or the shell may send, before the hub shrinks it
+MAX_PICTURE_BYTES = 15 * 1024 * 1024   # what a browser or the shell may send, before the hub shrinks it (an iPhone photo is 2-6 MB)
+# Picture formats the hub takes in. Everything is re-saved as PNG or JPEG, so the kids' PCs and every browser can show it.
+# MPO is how iPhones and many cameras save an ordinary JPEG; HEIF/HEIC is the iPhone's own photo format.
+PICTURE_FORMATS = ("PNG", "JPEG", "MPO", "GIF", "WEBP", "BMP", "TIFF", "HEIF", "AVIF")
+VIDEO_BRANDS = (b"qt  ", b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"3gp4", b"3gp5", b"dash")
 MAX_SIDE = 1600                        # longest side the hub keeps; plenty for a screenshot on a phone
 REMOVED = "A parent removed this message."
 LINK_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
@@ -160,26 +164,46 @@ def _post(db: DB, settings: Settings, conv: str, sender: str, kid_id: str | None
                 (conv, sender, kid_id, int(friend), text, now, picture, json.dumps(links), int(is_flagged(text, settings.flag_words))))
 
 
+def _heif() -> None:
+    """Teach Pillow to open iPhone HEIC photos (once). Without the package the hub still runs, minus HEIC."""
+    global _heif_done
+    if _heif_done:
+        return
+    _heif_done = True
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except ImportError:
+        pass
+
+
+_heif_done = False
+
+
 def save_picture(folder: Path, data: str) -> str:
     """Checks the picture really is one, shrinks it, and re-saves it without hidden data (camera, GPS)."""
     from PIL import Image, ImageOps
+    _heif()
     try:
         raw = base64.b64decode(data.split(",", 1)[-1], validate=True)   # a browser's data: URL is fine too
     except (binascii.Error, ValueError):
         raise HTTPException(422, "That picture didn't come through. Try again.")
     if len(raw) > MAX_PICTURE_BYTES:
         raise HTTPException(413, "That picture is too big. Try a smaller one.")
-    Image.MAX_IMAGE_PIXELS = 40_000_000
+    Image.MAX_IMAGE_PIXELS = 60_000_000
     try:
         im = Image.open(io.BytesIO(raw))
         fmt = im.format
-        if fmt not in ("PNG", "JPEG", "GIF", "WEBP"):
-            raise HTTPException(422, "Only photos and screenshots can be sent (PNG, JPEG, GIF or WebP).")
+        if fmt not in PICTURE_FORMATS:
+            raise HTTPException(422, "That kind of picture can't be sent. Photos and screenshots work (JPEG, PNG, HEIC, GIF or WebP).")
+        im.seek(0)                         # GIF, MPO, HEIC bursts: the first picture
         im = ImageOps.exif_transpose(im)   # keep a phone photo the right way up once its EXIF is gone
         im.thumbnail((MAX_SIDE, MAX_SIDE))
     except HTTPException:
         raise
     except Exception:
+        if raw[4:8] == b"ftyp" and raw[8:12] in VIDEO_BRANDS:
+            raise HTTPException(422, "Videos can't be sent in chat yet. A photo or screenshot works.")
         raise HTTPException(422, "That file isn't a picture the hub can open.")
     folder.mkdir(parents=True, exist_ok=True)
     if fmt == "PNG":   # screenshots: keep them sharp
@@ -217,7 +241,7 @@ class ChatIn(BaseModel):
 
 
 class PictureIn(BaseModel):
-    data: str = Field(min_length=8, max_length=12_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
+    data: str = Field(min_length=8, max_length=21_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
     text: str = Field(default="", max_length=MAX_TEXT)
     conv: str = Field(default=FAMILY, max_length=40)
 

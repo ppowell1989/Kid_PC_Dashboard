@@ -915,7 +915,7 @@ $("#chatPic").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  if (file.size > 8 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
+  if (file.size > 15 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
   const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
   const text = $("#chatForm").text.value.trim();
   try { await api("/api/parent/chat/picture", { method: "POST", body: { data, text } }); $("#chatForm").text.value = ""; } catch (err) { return oops(err); }

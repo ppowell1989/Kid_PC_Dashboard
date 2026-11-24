@@ -120,7 +120,7 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail, conv = req.Ref ?? "family" }, ct), ct);
 
             case "chat_picture":   // Detail = the picture as base64 (the shell has already made it small), Note = words with it
-                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 12_000_000) return new(false, "That picture is too big. Try a smaller one.");
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 21_000_000) return new(false, "That picture is too big. Try a smaller one.");
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat/picture",
                     new { data = req.Detail, text = req.Note ?? "", conv = req.Ref ?? "family" }, ct), ct);
 
