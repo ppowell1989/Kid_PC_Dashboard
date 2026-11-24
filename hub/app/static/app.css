@@ -239,6 +239,19 @@ dialog .actions > button { flex: 1; }
 
 /* ---------------------------------------------------------------- laptop and desktop: tabs down the side, wider content
    The phone layout above is the base. Everything here only applies from 900px wide, and only to the dashboard. */
+/* ---------------------------------------------------------------- history and clean-up */
+h2.split { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+h2.split button { font-size: .85rem; }
+.list li.past { background: none; box-shadow: none; padding: 0; }
+.list li.past details { margin-top: 4px; }
+.list li.past p.muted { text-align: left; padding: 6px 0 0; font-size: .85rem; }
+#historyCard { margin-top: 20px; max-width: 900px; border-top: 0; padding: 14px 18px; }
+#historyCard > p.muted { text-align: left; padding: 8px 0 0; }
+#historyCard summary .muted { font-size: .85rem; margin-left: 6px; }
+.list li.keep { font-size: .92rem; }
+.list li.keep select { width: auto; min-height: 36px; padding: 4px 8px; margin: 0; }
+.list li.keep .inrow { margin: 0; flex: none; }
+
 @media (min-width: 900px) {
   #login { max-width: 440px; }
   #app { --side: 232px; max-width: 1480px; margin: 0; padding: 36px 40px 48px calc(var(--side) + 40px); }

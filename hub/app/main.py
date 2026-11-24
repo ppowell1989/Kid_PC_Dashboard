@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, gamesearch, rules, updates
+from . import adguard, gamesearch, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
+    tasks.append(asyncio.create_task(retention.prune_forever(app.state.db, lambda: rules.local_now(settings.timezone))))
     if settings.adguard.enabled and pollers_on:
         tasks.append(asyncio.create_task(adguard.poll_forever(app.state.db, settings)))
     if settings.updates.enabled and settings.updates.github_token and pollers_on:
@@ -498,16 +499,26 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
 
 
 @app.get("/api/parent/searches/{kid_id}")
-def parent_searches(kid_id: str, limit: int = 200, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+def parent_searches(kid_id: str, limit: int = 200, days: int = 0,
+                    parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    return db.q("SELECT term, at, flagged FROM searches WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 1000)))
+    return db.q("SELECT term, at, flagged FROM searches WHERE kid_id=? AND at >= ? ORDER BY at DESC LIMIT ?",
+                (kid_id, since(settings, days), min(limit, 1000)))
+
+
+def since(settings: Settings, days: int) -> str:
+    """Start of the window the dashboard asked for: 1 = today, 7 = the last week, 0 = everything kept.
+    A day prefix, so it compares against every timestamp shape in the DB (see retention._cutoff)."""
+    if days <= 0:
+        return ""
+    return (rules.local_now(settings.timezone) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
 
 @app.get("/api/parent/visits/{kid_id}")
-def parent_visits(kid_id: str, source: str | None = None, limit: int = 200,
+def parent_visits(kid_id: str, source: str | None = None, limit: int = 200, days: int = 0,
                   parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    sql, args = "SELECT * FROM visits WHERE kid_id=?", [kid_id]
+    sql, args = "SELECT * FROM visits WHERE kid_id=? AND at >= ?", [kid_id, since(settings, days)]
     if source in ("chrome", "dns"):
         sql += " AND source=?"
         args.append(source)
@@ -853,6 +864,38 @@ def parent_del_site(domain: str, parent: str = Depends(current_parent), db: DB =
 
 # Voice invites --------------------------------------------------------------
 
+# History: how long it is kept, and clearing it --------------------------------
+
+@app.get("/api/parent/retention")
+def parent_retention(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    days = retention.get(db)
+    return {"days": days, "choices": list(retention.CHOICES),
+            "kinds": [{"kind": k, "label": label, "days": days[k]} for k, (label, _) in retention.KINDS.items()]}
+
+
+class RetentionIn(BaseModel):
+    days: dict[str, int]
+
+
+@app.put("/api/parent/retention")
+def parent_set_retention(r: RetentionIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    bad = [k for k, v in r.days.items() if k not in retention.KINDS or v not in retention.CHOICES]
+    if bad:
+        raise HTTPException(422, f"unknown kind or number of days: {', '.join(bad)}")
+    days = retention.put(db, r.days)
+    retention.prune(db, rules.local_now(settings.timezone))   # a shorter window takes effect now, not in an hour
+    return {"days": days}
+
+
+@app.delete("/api/parent/history/{kind}")
+def parent_clear_history(kind: str, kid_id: str | None = None, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    if kind not in retention.KINDS:
+        raise HTTPException(404)
+    if kid_id:
+        kid_or_404(settings, kid_id)
+    return {"deleted": retention.clear(db, kind, kid_id=kid_id)}
+
+
 class InviteIn(BaseModel):
     kid_id: str
     friend_name: str = Field(min_length=1, max_length=60)
@@ -879,7 +922,7 @@ def parent_revoke_invite(code: str, parent: str = Depends(current_parent), db: D
     inv = db.one("SELECT * FROM invites WHERE code=?", (code,))
     if not inv:
         raise HTTPException(404)
-    db.x("UPDATE invites SET revoked=1 WHERE code=?", (code,))
+    db.x("UPDATE invites SET revoked=1, revoked_at=datetime('now') WHERE code=? AND revoked=0", (code,))
     # Kick the friend if they are in the room right now. Best effort: LiveKit may be down.
     room = f"room-{inv['kid_id']}"
     try:
