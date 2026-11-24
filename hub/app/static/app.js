@@ -48,7 +48,7 @@ $("#loginForm").onsubmit = async (e) => {
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
-  if (b.dataset.tab === "chat") { $("#chatDot").textContent = ""; chat.seen = chat.last; loadChat(); }
+  if (b.dataset.tab === "chat") { chatSeen(); loadChat(); }
   ({ requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites }[b.dataset.tab] || (() => {}))();
 }));
 
@@ -283,7 +283,29 @@ setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) re
 
 // Family chat ---------------------------------------------------------------
 const chat = { last: 0, seen: 0, started: false };
-function chatOpen() { return !$("#app").hidden && !$('[data-panel="chat"]').hidden; }
+// On a phone chat is a tab. On a laptop (same 900px as app.css) it is a bar docked in the bottom right corner
+// that opens over whatever tab is showing: body.chat-open while it is open, body.chat-unread for the red dot.
+const wide = window.matchMedia("(min-width: 900px)");
+function chatOpen() {
+  if ($("#app").hidden) return false;
+  return wide.matches ? document.body.classList.contains("chat-open") : !$('[data-panel="chat"]').hidden;
+}
+function chatSeen() { $("#chatDot").textContent = ""; document.body.classList.remove("chat-unread"); chat.seen = chat.last; }
+{
+  const bar = $('[data-panel="chat"] > .title');
+  bar.tabIndex = 0; bar.setAttribute("role", "button");
+  const toggle = () => {
+    if (!wide.matches) return;
+    const open = document.body.classList.toggle("chat-open");
+    bar.setAttribute("aria-expanded", open);
+    if (!open) return;
+    chatSeen(); $("#chatLog").scrollTop = $("#chatLog").scrollHeight; $("#chatForm").text.focus(); loadChat().catch(() => {});
+  };
+  bar.onclick = toggle;
+  bar.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+  // Window dragged from phone width to laptop width while on the Chat tab: that tab is gone, so go to Now.
+  wide.addEventListener("change", () => { if (wide.matches && $('nav button[data-tab="chat"]').classList.contains("on")) $('nav button[data-tab="now"]').click(); });
+}
 async function loadChat() {
   const msgs = await api(`/api/parent/chat?after=${chat.last}`);
   if (!msgs.length) return;
@@ -298,7 +320,7 @@ async function loadChat() {
   chat.last = msgs[msgs.length - 1].id;
   if (chatOpen()) chat.seen = chat.last;
   const unread = msgs.filter((m) => m.id > chat.seen && !m.mine).length;
-  if (unread) $("#chatDot").textContent = "\u25CF";
+  if (unread) { $("#chatDot").textContent = "\u25CF"; document.body.classList.add("chat-unread"); }
 }
 $("#chatForm").onsubmit = async (e) => {
   e.preventDefault();
