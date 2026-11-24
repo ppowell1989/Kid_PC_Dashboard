@@ -73,6 +73,7 @@ fi
 if ! grep -q '^updates:' "$CFG"; then
   echo "==> Auto-update for the PCs (optional, press Enter to skip)"
   read -rsp "GitHub token with read-only Contents access to Kid_PC_Dashboard: " GH; echo
+  GH=$(printf %s "$GH" | tr -cd 'A-Za-z0-9_')   # a paste with Ctrl+V in the web shell adds invisible control characters
   if [ -n "$GH" ]; then
     printf '\nupdates:\n  enabled: true\n  github_repo: ppowell1989/Kid_PC_Dashboard\n  release_tag: test-build\n  github_token: "%s"\n' "$GH" >> "$CFG"
     echo "    auto-update on"
