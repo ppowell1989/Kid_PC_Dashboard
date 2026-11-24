@@ -463,6 +463,38 @@ def test_approve_game_request_with_a_battlenet_pick(parent):
     assert [x["launch_ref"] for x in parent.get("/api/device/rules", headers=ADAM).json()["games"]] == ["WTCG"]
 
 
+def test_kid_search_covers_battlenet_and_keeps_the_store(parent, monkeypatch):
+    """His "Get more games" search found nothing for World of Warcraft because it only asked Steam."""
+    _stub_stores(monkeypatch)
+    hits = parent.get("/api/device/games/search?q=world of warcraft", headers=ADAM).json()
+    refs = [h["ref"] for h in hits]
+    assert {"battlenet:WoW", "battlenet:WoWF", "battlenet:WoWC", "battlenet:WoWCE", "battlenet:WoWA"} <= set(refs)
+    assert all(h["store"] == "Battle.net" and h["esrb"] == "T" for h in hits)
+    # A game on several stores comes once, from the preferred one; Game Pass is off, so Minecraft isn't offered.
+    ow = parent.get("/api/device/games/search?q=overwatch", headers=ADAM).json()
+    assert [(h["name"], h["ref"], h["store"]) for h in ow] == [("Overwatch® 2", "steam:2357570", "Steam")]
+    assert parent.get("/api/device/games/search?q=minecraft", headers=ADAM).json() == []
+    # The request carries his exact pick, and approving it adds that version.
+    rid = parent.post("/api/device/requests", headers=ADAM,
+                      json={"kind": "game", "detail": "World of Warcraft: Mists of Pandaria Classic", "ref": "battlenet:WoWC"}).json()["id"]
+    assert [r["ref"] for r in parent.get("/api/parent/requests").json()] == ["battlenet:WoWC"]
+    assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "ref": "battlenet:WoWC"}).status_code == 200
+    assert [x["launch_ref"] for x in parent.get("/api/device/rules", headers=ADAM).json()["games"]] == ["WoWC"]
+    assert parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "x", "ref": "origin:1"}).status_code == 422
+
+
+def test_kid_search_offers_game_pass_when_it_is_on(parent, monkeypatch):
+    _stub_stores(monkeypatch)
+    from app import config
+    monkeypatch.setattr(config.get_settings().decisions, "game_pass_enabled", True)
+    mc = parent.get("/api/device/games/search?q=minecraft", headers=ADAM).json()
+    assert [(h["ref"], h["store"], h["esrb"]) for h in mc] == [("gamepass:9NBLGGH4R315", "PC Game Pass", "E10+")]
+
+
+def test_rules_carry_the_family_time_zone(parent):
+    assert parent.get("/api/device/rules", headers=ADAM).json()["timezone"] == "UTC"   # the test config
+
+
 # --- bedtime holds through the night ------------------------------------------------------------
 
 def test_midnight_does_not_unlock_a_day_with_no_windows():

@@ -99,9 +99,9 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 cache.Voice = req.Detail is "family" or "friends" ? req.Detail : "";
                 return Ok(new { });
 
-            case "game_search":   // Steam search for "Get more games"; the hub filters out adult-only titles
-                if (string.IsNullOrWhiteSpace(req.Detail)) return Ok(Array.Empty<SteamGame>());
-                var found = await http.GetFromJsonAsync<List<SteamGame>>($"/api/device/steam/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
+            case "game_search":   // "Get more games": Steam, Battle.net and Game Pass; the hub filters out adult-only titles
+                if (string.IsNullOrWhiteSpace(req.Detail)) return Ok(Array.Empty<GameHit>());
+                var found = await http.GetFromJsonAsync<List<GameHit>>($"/api/device/games/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
                 return Ok(found ?? []);
 
             case "chat":      // family chat: messages after id Detail (works while locked, so he can talk to Mom and Dad)

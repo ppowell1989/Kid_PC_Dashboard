@@ -53,7 +53,7 @@ public sealed class StateCache
 }
 
 /// <summary>Every PollSeconds: report what is running, pull rules, enforce them.</summary>
-public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, GameDeployer deployer, ILogger<HubSync> log)
+public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, GameDeployer deployer, TimeZoneSync clock, ILogger<HubSync> log)
     : BackgroundService
 {
     // Play the hub never heard about, because it couldn't be reached (network cable out, Wi-Fi off, hub down).
@@ -106,6 +106,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                     cache.Set(rules);
                     chrome.Apply(rules.Web);
                     dns.Apply(rules.Web.Dns);
+                    clock.Apply(rules.Timezone);
                     apps.Ensure(rules.ManagedApps ?? ["steam", "chrome"]);
                     // Approved games go on by themselves. A game the kid is playing is never interrupted for it.
                     try { deployer.Tick(rules, kidHere, activity.Processes.Any(p => p.Kind is "steam" or "battlenet" or "direct")); }

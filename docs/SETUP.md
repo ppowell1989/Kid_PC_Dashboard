@@ -43,7 +43,9 @@ rollback in `hub-autoupdate.sh` carry over.
    standard account and profile, installs the shell and helper, applies the Chrome policies and
    lockdown, turns on automatic sign-in, waits for the helper to install Steam and Chrome, checks
    everything, and restarts into the kid's screen. Re-running the same line is safe.
-4. The dashboard shows the PC online with its build within a minute.
+4. The dashboard shows the PC online with its build within a minute. The PC's clock switches to the
+   hub's `timezone` (America/New_York) on its own and "Set time zone automatically" is turned off, so the
+   time on his screen matches when the hub says bedtime is. Nothing to pick during Windows setup.
 5. Sign in to Steam and Battle.net once as the kid, with "remember me". Steam: a child account
    in your **Steam Family**. Battle.net: a child account under Blizzard parental controls.
 

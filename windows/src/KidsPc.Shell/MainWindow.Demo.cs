@@ -16,7 +16,7 @@ public partial class MainWindow
                 await SearchGamesAsync();
                 if (scene == "ask")
                 {
-                    var hits = await _helper.GetAsync<List<KidsPc.Shared.SteamGame>>(new KidsPc.Shared.PipeRequest("game_search", Detail: "space"));
+                    var hits = await _helper.GetAsync<List<KidsPc.Shared.GameHit>>(new KidsPc.Shared.PipeRequest("game_search", Detail: "space"));
                     ShowAsk(hits![2]);
                     AskNote.Text = "Barrett has it and we want to build rockets together";
                 }
