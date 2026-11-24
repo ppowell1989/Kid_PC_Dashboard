@@ -88,6 +88,32 @@
       <Setter Property="Foreground" Value="{StaticResource Cyan}"/>
     </Style>
 
+    <!-- Scroll bars: a slim violet thumb instead of the grey Windows one. -->
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="12"/>
+      <Setter Property="MinWidth" Value="12"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Border Background="#660A0630" CornerRadius="6">
+              <Track x:Name="PART_Track" IsDirectionReversed="True">
+                <Track.Thumb>
+                  <Thumb>
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border CornerRadius="6" Background="#9B5CFF"/>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- Text boxes: dark well, neon edge when typing. -->
     <Style TargetType="TextBox">
       <Setter Property="Background" Value="{StaticResource Well}"/>
