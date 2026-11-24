@@ -17,7 +17,9 @@ namespace KidsPc.Helper;
 /// or in the first minutes after the kid's screen starts: he is told, signed out, the build is
 /// installed, and the PC restarts if it signs him in by itself. That is what makes "restart the PC"
 /// install a waiting update even though Windows signs the kid in seconds after starting, before
-/// this service gets a look. A game in progress is never interrupted.
+/// this service gets a look. A game in progress is never interrupted, with one exception: a parent
+/// pressing "Install now" on the dashboard. A parent can also set a PC (a test PC, say) to take
+/// every build the moment it arrives, as long as no game is running.
 /// </summary>
 public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, ILogger<Updater> log) : BackgroundService
 {
@@ -43,6 +45,16 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
     private DateTimeOffset _lastTick;
     private string? _lastApplied;
     private DateTimeOffset _lastApplyAt;
+    private string? _askedBy;                               // a parent pressed "Install now" on the dashboard
+    private readonly SemaphoreSlim _wake = new(0, 1);       // cuts the wait between ticks short
+
+    /// <summary>A parent asked for the newest build to go in now, whatever the kid is doing.</summary>
+    public string InstallNow(string by)
+    {
+        Interlocked.Exchange(ref _askedBy, string.IsNullOrWhiteSpace(by) ? "A parent" : by);
+        try { _wake.Release(); } catch (SemaphoreFullException) { /* already awake */ }
+        return _ready is { } v ? $"installing {Short(v)}" : "checking for a newer build";
+    }
 
     public static string HelperVersion =>
         Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "dev";
@@ -56,7 +68,7 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
         }
     }
 
-    public AppStatus Status { get; private set; } = new("installed", $"version {Short(HelperVersion)}");
+    public AppStatus Status { get; private set; } = new("installed", $"on build {Short(HelperVersion)}");
 
     private static string Short(string v) => v.Length > 8 ? v[..8] : v;
 
@@ -67,11 +79,13 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
         // A build downloaded before the PC restarted is installed without asking the hub again:
         // the network is often not up yet in the minutes when it can go in.
         _ready = StagedOnDisk();
-        await Task.Delay(Tick, ct);
+        await _wake.WaitAsync(Tick, ct);
         var nextHubCheck = DateTimeOffset.MinValue;
         while (!ct.IsCancellationRequested)
         {
-            if (DateTimeOffset.Now >= nextHubCheck)
+            // One try per press: a build that will not go in must not keep signing him out.
+            var askedBy = Interlocked.Exchange(ref _askedBy, null);
+            if (DateTimeOffset.Now >= nextHubCheck || askedBy is not null)
             {
                 nextHubCheck = DateTimeOffset.Now + HubCheckEvery;
                 try { await CheckAsync(ct); }
@@ -83,14 +97,14 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
             }
             if (_ready is { } version)
             {
-                try { await InstallWhenPossibleAsync(version, ct); }
+                try { await InstallWhenPossibleAsync(version, askedBy, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     log.LogWarning("update install failed: {Msg}", ex.Message);
                     Status = new("failed", ex.Message);
                 }
             }
-            await Task.Delay(Tick, ct);
+            await _wake.WaitAsync(Tick, ct);
         }
     }
 
@@ -100,7 +114,7 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
         var r = await http.GetAsync($"/api/device/update?arch={Arch}", ct);
         if (r.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            if (_ready is null) Status = new("installed", $"version {Short(HelperVersion)} (hub has no build to offer)");
+            if (_ready is null) Status = new("installed", $"on build {Short(HelperVersion)} (the hub has no build to offer)");
             return;
         }
         r.EnsureSuccessStatusCode();
@@ -108,7 +122,7 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
         if (Installed(build.Version))
         {
             _ready = null;
-            Status = new("installed", $"up to date ({Short(build.Version)})");
+            Status = new("installed", $"on build {Short(build.Version)}");
             return;
         }
 
@@ -139,10 +153,11 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
         return null;
     }
 
-    private async Task InstallWhenPossibleAsync(string version, CancellationToken ct)
+    private async Task InstallWhenPossibleAsync(string version, string? askedBy, CancellationToken ct)
     {
         var staged = Path.Combine(StagedRoot, version);
         var waiting = new AppStatus("installing", $"update {Short(version)} ready; installs at the next restart or sign-in");
+        var rightAway = cache.Rules?.AutoUpdate == true;    // the parent chose "install updates as soon as they arrive" for this PC
 
         // A long gap between ticks means the PC was asleep or shut down with fast start-up: treat it like a fresh start.
         var now = DateTimeOffset.UtcNow;
@@ -156,8 +171,8 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
             var user = Sessions.ConsoleUser();
             var someoneElse = !string.IsNullOrEmpty(user) && !string.Equals(user, cfg.KidUser, StringComparison.OrdinalIgnoreCase);
             _quietTicks++;
-            if (!someoneElse && _quietTicks < QuietTicksNeeded) { Status = waiting; return; }
-            if (_lastApplied == version && DateTimeOffset.Now - _lastApplyAt < ForceAgainAfter)
+            if (!someoneElse && askedBy is null && _quietTicks < QuietTicksNeeded) { Status = waiting; return; }
+            if (askedBy is null && _lastApplied == version && DateTimeOffset.Now - _lastApplyAt < ForceAgainAfter)
             {
                 Status = new("failed", $"update {Short(version)} did not take; see C:\\ProgramData\\KidsPc\\update.log");
                 return;
@@ -171,15 +186,27 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
 
         // The kid's screen is up, and its files can't be replaced while it runs. Just after it started
         // (a restart or a sign-in) nothing is lost by signing him out for a minute, so the build goes in then.
+        // A PC set to install right away does the same whenever no game is running, and a parent's
+        // "Install now" does it whatever is running.
         _quietTicks = 0;
-        if (!JustStarted(shells) || !MayForce(version) || GameRunning()) { Status = waiting; return; }
+        if (askedBy is null)
+        {
+            if (!(JustStarted(shells) || rightAway) || !MayForce(version) || GameRunning())
+            {
+                Status = rightAway && MayForce(version)
+                    ? new("installing", $"update {Short(version)} ready; installs when the game is closed")
+                    : waiting;
+                return;
+            }
+        }
 
         var restart = SignsInByItself();
         RecordForced(version);      // before signing anyone out: this is what stops it from ever looping
         Status = new("installing", $"installing {Short(version)}");
-        log.LogInformation("signing the kid out to install {Version} (restart after: {Restart})", version, restart);
-        cache.AddMessage(new ParentMessage(-(int)(DateTimeOffset.Now.ToUnixTimeSeconds() & 0x3FFFFFFF), "Kids PC",
-            restart ? "Installing an update. This PC will restart in a moment." : "Installing an update. You will be signed out for a moment.", DateTimeOffset.Now));
+        log.LogInformation("signing the kid out to install {Version} (restart after: {Restart}, asked by: {By})", version, restart, askedBy ?? "nobody");
+        var then = restart ? "This PC will restart in a moment." : "You will be signed out for a moment.";
+        cache.AddMessage(new ParentMessage(-(int)(DateTimeOffset.Now.ToUnixTimeSeconds() & 0x3FFFFFFF), askedBy ?? "Kids PC",
+            askedBy is null ? $"Installing an update. {then}" : $"{askedBy} is installing an update. {then}", DateTimeOffset.Now));
         await Task.Delay(TimeSpan.FromSeconds(8), ct);      // long enough for the shell to show it
         try
         {
@@ -191,6 +218,8 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
                 Status = waiting;
                 return;
             }
+            _lastApplied = version;
+            _lastApplyAt = DateTimeOffset.Now;
             Apply(staged, restart);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
