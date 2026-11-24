@@ -73,3 +73,22 @@ jobs:
           curl -fs localhost:8080/ | grep -q "Kids PC Hub"
           curl -fs -H "Authorization: Bearer CHANGE-ME-adam-device-token" localhost:8080/api/device/rules   # exercises timezone data
           docker logs hub
+
+  test-release:
+    # Publishes the latest main build as a pre-release named "test-build", so it downloads like a normal file.
+    if: github.ref == 'refs/heads/main'
+    needs: [integration]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: kidspc-win-*, path: dl }
+      - name: Zip and publish
+        env: { GH_TOKEN: "${{ github.token }}", GH_REPO: "${{ github.repository }}" }
+        run: |
+          cd dl
+          for d in kidspc-win-*; do (cd "$d" && zip -qr "../$d.zip" .); done
+          gh release delete test-build -y --cleanup-tag || true
+          gh release create test-build kidspc-win-*.zip --prerelease --target "${{ github.sha }}" \
+            --title "Test build $(date -u +%Y-%m-%d\ %H:%M) UTC" \
+            --notes "Latest main build. Unzip to C:\\kidspc (VM on a Mac: kidspc-win-arm64.zip)."
