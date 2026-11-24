@@ -19,6 +19,8 @@ public partial class VoiceWindow : Window
         InitializeComponent();
         Loaded += async (_, _) =>
         {
+          try
+          {
             var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KidsPc", "WebView2");
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
             await Web.EnsureCoreWebView2Async(env);
@@ -37,8 +39,30 @@ public partial class VoiceWindow : Window
             core.NewWindowRequested += (_, e) => e.Handled = true;
 
             var hash = $"url={Uri.EscapeDataString(vt.Url)}&token={Uri.EscapeDataString(vt.Token)}&name={Uri.EscapeDataString(kidName)}";
+            if (DemoOut is not null) core.NavigationCompleted += async (_, e) => await SaveDemoShotAsync(core, e);
             core.Navigate($"https://{Host}/voice.html#{hash}");
+          }
+          catch (Exception ex) when (DemoOut is not null) { File.WriteAllText(Path.Combine(DemoOut, "voice-page.txt"), ex.ToString()); }
         };
         Closed += (_, _) => Web.Dispose();   // leaving the window leaves the room
     }
+
+    /// <summary>Demo runs only (CI screenshots): where to save a picture of the page exactly as WebView2 drew it.</summary>
+    private static string? DemoOut => App.DemoScene is null ? null : Environment.GetEnvironmentVariable("KIDSPC_DEMO_OUT");
+
+    private static async Task SaveDemoShotAsync(CoreWebView2 core, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        try
+        {
+            await Task.Delay(1500);   // fonts in, first paint done
+            using (var f = File.Create(Path.Combine(DemoOut!, "voice-page.png")))
+                await core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, f);
+            File.WriteAllText(Path.Combine(DemoOut!, "voice-page.txt"), $"navigation success={e.IsSuccess} status={e.WebErrorStatus}");
+        }
+        catch (Exception ex) { File.WriteAllText(Path.Combine(DemoOut!, "voice-page.txt"), ex.ToString()); }
+    }
+
+    private void DragWindow(object s, System.Windows.Input.MouseButtonEventArgs e) => DragMove();
+
+    private void Leave(object s, RoutedEventArgs e) => Close();
 }

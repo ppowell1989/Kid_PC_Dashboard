@@ -14,6 +14,7 @@ public static class Launcher
 
     public static void LaunchGame(Game g)
     {
+        if (App.DemoScene is not null) return;
         switch (g.Launcher)
         {
             case "steam":
@@ -32,8 +33,11 @@ public static class Launcher
         }
     }
 
-    public static void LaunchChrome() =>
+    public static void LaunchChrome()
+    {
+        if (App.DemoScene is not null) return;
         Process.Start(new ProcessStartInfo(Chrome, "--start-maximized") { UseShellExecute = false });
+    }
 
     private const string Steam = @"C:\Program Files (x86)\Steam\steam.exe";
 
@@ -41,6 +45,7 @@ public static class Launcher
     /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
     public static void OpenUri(string uri)
     {
+        if (App.DemoScene is not null) return;
         if (uri.StartsWith("steam://", StringComparison.OrdinalIgnoreCase) && File.Exists(Steam))
             Process.Start(new ProcessStartInfo(Steam, uri) { UseShellExecute = false });
         else

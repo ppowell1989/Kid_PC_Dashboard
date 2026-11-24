@@ -2,39 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05031a">
 <title>Kids PC Hub</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+<div class="sky" aria-hidden="true"></div>
+
 <main id="login" hidden>
-  <h1>Kids PC Hub</h1>
+  <div class="brand hero">
+    <div class="logo" aria-hidden="true"></div>
+    <h1>Kids PC Hub</h1>
+    <p class="tag">Mission control</p>
+  </div>
   <form id="loginForm" class="card">
     <label>Name <input name="name" autocomplete="username" required></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <button>Sign in</button>
+    <button class="wide">Sign in</button>
     <p class="err" id="loginErr"></p>
   </form>
 </main>
 
 <main id="app" hidden>
   <header>
-    <h1>Kids PC Hub</h1>
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>Kids PC Hub</h1>
+        <p class="tag">Mission control</p>
+      </div>
+    </div>
     <nav>
-      <button data-tab="now" class="on">Now</button>
-      <button data-tab="chat">Chat <span id="chatDot"></span></button>
-      <button data-tab="requests">Requests <span id="reqCount"></span></button>
-      <button data-tab="web">Web</button>
-      <button data-tab="games">Games</button>
-      <button data-tab="voice">Voice</button>
+      <button data-tab="now" class="on"><i class="pl pl-now"></i><span>Now</span></button>
+      <button data-tab="chat"><i class="pl pl-chat"></i><span>Chat</span><span id="chatDot"></span></button>
+      <button data-tab="requests"><i class="pl pl-req"></i><span>Requests</span><span id="reqCount"></span></button>
+      <button data-tab="web"><i class="pl pl-web"></i><span>Web</span></button>
+      <button data-tab="games"><i class="pl pl-games"></i><span>Games</span></button>
+      <button data-tab="voice"><i class="pl pl-voice"></i><span>Voice</span></button>
     </nav>
   </header>
 
   <section data-panel="now"><div id="kids"></div></section>
 
-  <section data-panel="requests" hidden><div id="requests"></div></section>
+  <section data-panel="requests" hidden>
+    <h2 class="title">Requests</h2>
+    <div id="requests"></div>
+  </section>
 
   <section data-panel="web" hidden>
+    <h2 class="title">Web</h2>
     <div class="row">
       <select id="webKid"></select>
       <select id="webSource"><option value="">All</option><option value="chrome">Pages (Chrome)</option><option value="dns">Sites (network)</option></select>
@@ -49,6 +66,8 @@
   </section>
 
   <section data-panel="games" hidden>
+    <h2 class="title">Games</h2>
+    <ul id="games" class="list"></ul>
     <form id="gameForm" class="card">
       <h2>Add a game to the catalogue</h2>
       <label>Launcher
@@ -63,12 +82,12 @@
       <label>Title <input name="title" placeholder="Leave blank for Steam: filled in from the store"></label>
       <label>Rating <input name="rating" placeholder="E10+"></label>
       <fieldset id="gameKids"><legend>Approved for</legend></fieldset>
-      <button>Add</button>
+      <button class="wide">Add game</button>
     </form>
-    <ul id="games" class="list"></ul>
   </section>
 
   <section data-panel="chat" hidden>
+    <h2 class="title">Family chat</h2>
     <div class="card chat">
       <div id="chatLog" class="chatlog"></div>
       <form id="chatForm" class="row">
@@ -79,15 +98,29 @@
   </section>
 
   <section data-panel="voice" hidden>
+    <h2 class="title">Voice chat friends</h2>
+    <ul id="invites" class="list"></ul>
     <form id="inviteForm" class="card">
       <h2>New invite link</h2>
       <label>For <select name="kid_id" id="inviteKid"></select></label>
       <label>Friend's name <input name="friend_name" required></label>
-      <button>Create link</button>
+      <button class="wide">Create link</button>
     </form>
-    <ul id="invites" class="list"></ul>
   </section>
 </main>
+
+<!-- One sheet for every question the dashboard asks (replaces the browser's own pop-ups). -->
+<dialog id="sheet">
+  <form method="dialog">
+    <h2 id="sheetTitle"></h2>
+    <p id="sheetText" class="muted"></p>
+    <input id="sheetInput" maxlength="300" autocomplete="off">
+    <div class="actions rev">
+      <button value="ok" id="sheetOk">OK</button>
+      <button value="cancel" id="sheetCancel" class="ghost" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
 <script src="/static/app.js"></script>
 </body>
 </html>
