@@ -44,7 +44,15 @@
     </nav>
   </header>
 
-  <section data-panel="now"><div id="kids"></div><div id="family"></div></section>
+  <section data-panel="now">
+    <div id="kids"></div>
+    <div id="family"></div>
+    <details class="card" id="historyCard">
+      <summary><b>History and clean-up</b> <span class="muted">How long the hub keeps things</span></summary>
+      <p class="muted">Older entries are deleted automatically. Clear removes everything of that kind now, for both kids.</p>
+      <ul id="retention" class="list"></ul>
+    </details>
+  </section>
 
   <section data-panel="requests" hidden>
     <h2 class="title">Requests</h2>
@@ -63,10 +71,11 @@
     <div class="row">
       <select id="webKid"></select>
       <select id="webSource"><option value="">All</option><option value="chrome">Pages (Chrome)</option><option value="dns">Sites (network)</option></select>
+      <select id="webDays"><option value="1">Today</option><option value="7" selected>7 days</option><option value="0">All kept</option></select>
     </div>
-    <h2>Searches</h2>
+    <h2 class="split">Searches <button class="ghost small" data-clearweb="searches">Clear</button></h2>
     <ul id="searches" class="list"></ul>
-    <h2>Pages</h2>
+    <h2 class="split">Pages <button class="ghost small" data-clearweb="visits">Clear</button></h2>
     <ul id="visits" class="list"></ul>
     <h2>Allowed sites <small id="webMode"></small></h2>
     <form id="siteForm" class="row"><input name="domain" placeholder="example.com" required><button>Add</button></form>

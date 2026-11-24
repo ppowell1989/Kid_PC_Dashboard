@@ -501,3 +501,61 @@ def test_setup_is_home_network_only(client):
     with TestClient(_app, client=("8.8.8.8", 5000)) as outside:
         assert outside.get("/setup/ABCDEFGH").status_code == 403
         assert outside.post("/api/setup/ABCDEFGH/claim", json={}).status_code == 403
+
+
+def test_history_is_pruned_and_can_be_cleared(parent):
+    from app import retention
+    from app.main import app
+    db = app.state.db
+    h = {"visits": [{"url": "https://old.example/a", "at": "2026-09-01T10:00:00Z"},
+                    {"url": "https://new.example/b", "at": "2026-11-24T10:00:00Z"}],
+         "searches": [{"term": "old thing", "at": "2026-08-01T10:00:00Z"}, {"term": "new thing", "at": "2026-11-23T10:00:00Z"}]}
+    assert parent.post("/api/device/history", headers=ADAM, json=h).status_code == 204
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES('adam','game_blocked','x','2026-09-01T10:00:00Z')")
+    db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES('Adam','adam','hi','2026-01-01T10:00:00')")
+    db.x("INSERT INTO requests(kid_id,kind,detail,state,created_at,decided_at) VALUES('adam','time','15','declined','2026-09-01 10:00:00','2026-09-01 10:05:00')")
+    db.x("INSERT INTO requests(kid_id,kind,detail,created_at) VALUES('adam','time','15','2026-09-01 10:00:00')")   # still pending: kept
+
+    r = parent.get("/api/parent/retention").json()
+    assert r["days"]["visits"] == 30 and r["days"]["invites"] == 7
+    # Saving the settings prunes straight away with the defaults.
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 30}}).status_code == 200
+    assert [v["domain"] for v in parent.get("/api/parent/visits/adam").json()] == ["new.example"]
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam").json()] == ["new thing"]   # 90 days: Aug 1 is gone
+    assert db.one("SELECT COUNT(*) n FROM events")["n"] == 0
+    assert db.one("SELECT COUNT(*) n FROM chat")["n"] == 0
+    assert [q["state"] for q in db.q("SELECT state FROM requests")] == ["pending"]
+
+    # "Today" and "last 7 days" windows on the Web tab.
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam?days=1").json()] == []
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam?days=7").json()] == ["new thing"]
+
+    # Keep forever (0) and bad values.
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 0}}).json()["days"]["visits"] == 0
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 5}}).status_code == 422
+    assert parent.put("/api/parent/retention", json={"days": {"nope": 7}}).status_code == 422
+
+    # Clear by hand, for one kid.
+    parent.post("/api/device/history", headers={"Authorization": "Bearer tok-barrett"}, json={"visits": [{"url": "https://b.example", "at": "2026-11-24T09:00:00Z"}]})
+    assert parent.delete("/api/parent/history/visits?kid_id=adam").json() == {"deleted": 1}
+    assert parent.get("/api/parent/visits/adam").json() == []
+    assert len(parent.get("/api/parent/visits/barrett").json()) == 1
+    assert parent.delete("/api/parent/history/everything").status_code == 404
+    assert retention.get(db)["visits"] == 0
+
+
+def test_revoked_invites_can_be_cleared(parent):
+    from app.main import app
+    a = parent.post("/api/parent/invites", json={"kid_id": "adam", "friend_name": "Sam"}).json()
+    b = parent.post("/api/parent/invites", json={"kid_id": "adam", "friend_name": "Max"}).json()
+    parent.delete(f"/api/parent/invites/{a['code']}")
+    rows = parent.get("/api/parent/invites").json()
+    assert {r["friend_name"]: r["revoked"] for r in rows} == {"Sam": 1, "Max": 0}
+    assert [r for r in rows if r["revoked"]][0]["revoked_at"]
+    # Old revoked links go on their own once past the window.
+    app.state.db.x("UPDATE invites SET revoked_at='2026-11-01 10:00:00' WHERE code=?", (a["code"],))
+    parent.put("/api/parent/retention", json={"days": {"invites": 7}})
+    assert [r["friend_name"] for r in parent.get("/api/parent/invites").json()] == ["Max"]
+    parent.delete(f"/api/parent/invites/{b['code']}")
+    assert parent.delete("/api/parent/history/invites").json() == {"deleted": 1}
+    assert parent.get("/api/parent/invites").json() == []
