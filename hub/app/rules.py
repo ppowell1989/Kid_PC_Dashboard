@@ -2,7 +2,8 @@
 
 Each kid has one rule per day of the week (a "playtime"): a daily minute limit, a bedtime, and
 optional play windows. Parents edit them in the dashboard's Playtimes tab; until they do, the
-daily_minutes/bedtime in config.yaml are used. With no windows, any time before bedtime is play time.
+daily_minutes/bedtime in config.yaml are used. With no windows, any time before bedtime is play time,
+and last night's bedtime lasts until DAY_START: midnight starts a new day's minutes, not a new play time.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 from .config import Kid
 
 WARNING_MINUTES = 10
+DAY_START = "06:00"   # on a day with no play windows, bedtime the night before holds until this time
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]   # datetime.weekday() order
 
 
@@ -76,7 +78,12 @@ def next_window_start(rule_for, now: datetime) -> datetime | None:
         if rule.daily_minutes <= 0:
             continue
         if not rule.windows:
-            return None          # "any time" days have no start to point at (they open at midnight)
+            # An "any time" day opens when last night's bedtime ends, or at midnight if there was none.
+            prev = rule_for((day.weekday() - 1) % 7)
+            start = _at(day, DAY_START) if prev.bedtime else day
+            if start > now:
+                return start
+            continue
         bed = _at(day, rule.bedtime) if rule.bedtime else _end_of_day(day)
         for s in sorted(_at(day, s) for s, _ in rule.windows):
             if s > now and s < bed:
@@ -98,7 +105,11 @@ def compute(rule: DayRule, now: datetime, used: int, granted: int, late_until: d
         current = [(_at(now, s), _at(now, e)) for s, e in rule.windows]
         stop = max((e for s, e in current if s <= now < e), default=None)
     else:
-        stop = midnight
+        # No windows: any time before bedtime. But the small hours belong to the night before: if that
+        # day had a bedtime, it holds until DAY_START. Without this, midnight unlocked the PC with a fresh day.
+        prev = rule_for((now.weekday() - 1) % 7) if rule_for else rule
+        asleep = bool(prev.bedtime) and now < _at(now, DAY_START)
+        stop = None if asleep else midnight
     if stop is not None:
         stop = min(stop, bed_dt)
     late = bool(late_until and late_until > now)
@@ -114,7 +125,7 @@ def compute(rule: DayRule, now: datetime, used: int, granted: int, late_until: d
     elif to_bed == 0:
         reason = "bedtime"
     elif to_stop == 0:
-        reason = "outside_hours"
+        reason = "outside_hours" if rule.windows else "bedtime"
     else:
         reason = ""
     if paused_until and paused_until > now:

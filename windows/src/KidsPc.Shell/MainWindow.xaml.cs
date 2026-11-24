@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         };
         SizeChanged += (_, _) => DrawBackdrop();
         Theme.Changed += OnThemeChanged;
+        Launcher.Failed += (what, ex) => Dispatcher.Invoke(() => CouldNotStart(what, ex));
     }
 
     private async Task RefreshAsync()
@@ -159,8 +160,8 @@ public partial class MainWindow : Window
         _homeSig = sig;
         HomeTiles.Children.Clear();
         foreach (var g in installed)
-            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Start(g.Title, () => Launcher.LaunchGame(g)), image: g.ImageUrl));
-        HomeTiles.Children.Add(Tile("Web\nChrome", () => Start("Chrome", Launcher.LaunchChrome), glyph: "\uE774"));
+            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Launcher.LaunchGame(g), image: g.ImageUrl));
+        HomeTiles.Children.Add(Tile("Web\nChrome", () => Launcher.LaunchChrome(), glyph: "\uE774"));
         HomeTiles.Children.Add(Tile("Chat with a friend\nVoice", OpenVoice, enabled: rules.Friends.Count > 0, glyph: "\uE720"));
         Recolour(HomeTiles);
     }
@@ -315,7 +316,7 @@ public partial class MainWindow : Window
             var r = await _helper.GetAsync<InstallResult>(new PipeRequest("install", GameId: g.Id));
             switch (r?.Action)
             {
-                case "uri": Launcher.OpenUri(r.Uri!); break;
+                case "uri": if (!Launcher.OpenUri(r.Uri!, g.Title)) return; break;      // it has already said why not
                 case "exec": Process.Start(new ProcessStartInfo(r.Uri!, r.Args ?? "") { UseShellExecute = false }); break;
             }
             StatusLine.Text = r?.Message ?? "";
@@ -324,14 +325,8 @@ public partial class MainWindow : Window
         catch (Exception ex) { CouldNotStart(g.Title, ex); }
     }
 
-    /// <summary>Starts a program for the kid. One that is missing or will not start gets a plain sentence on
-    /// his screen and a line in his parents' activity feed. Windows' own error text never reaches him.</summary>
-    internal bool Start(string what, Action start)
-    {
-        try { start(); return true; }
-        catch (Exception ex) { CouldNotStart(what, ex); return false; }
-    }
-
+    /// <summary>A program for the kid is missing or would not start: he gets a plain sentence on his screen and
+    /// his parents get a line in his activity feed. Windows' own error text never reaches him.</summary>
     private void CouldNotStart(string what, Exception ex)
     {
         StatusLine.Text = $"{what} couldn't start on this PC. A parent has been told.";

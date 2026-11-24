@@ -94,6 +94,8 @@ class Settings(BaseModel):
     flag_words: list[str] = [
         "porn", "sex", "nude", "naked", "xxx", "boobs", "hentai", "onlyfans", "nsfw", "rule 34",
         "gore", "suicide", "kill myself", "self harm", "cutting", "drugs", "vape", "weed",
+        # Looking for a way around the controls is worth a parent's glance too.
+        "bypass", "unblock", "vpn", "proxy", "parental control", "screen time hack", "task manager", "safe mode",
     ]
     livekit: LiveKit = LiveKit()
     discord_oauth: DiscordOAuth = DiscordOAuth()

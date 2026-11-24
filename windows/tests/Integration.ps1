@@ -36,7 +36,7 @@ Pop-Location
 timezone: America/New_York
 parents: [{ name: Patrick, password_hash: "$hash" }]
 kids:
-  - { id: adam, name: Adam, device_token: dev-adam, extension_token: ext-adam, daily_minutes: { weekday: 90, weekend: 90 }, bedtime: { weekday: "23:59", weekend: "23:59" } }
+  - { id: adam, name: Adam, device_token: dev-adam, extension_token: ext-adam, daily_minutes: { weekday: 90, weekend: 90 }, bedtime: { weekday: "", weekend: "" } }   # no bedtime: the checks must pass at any hour CI runs
 decisions: { web_mode: allowlist, game_pass_enabled: false, friend_verification: none, remote_access: lan_only }
 allowed_sites: [wikipedia.org]
 managed_apps: [steam, chrome]

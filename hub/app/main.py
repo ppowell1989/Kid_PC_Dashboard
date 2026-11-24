@@ -64,9 +64,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 async def remote_access_gate(request: Request, call_next):
     # A request that came in through Cloudflare (the tunnel) is from outside the house, even though
     # its last hop is a container on this machine. Cloudflare always sets this header itself.
-    h = request.headers
-    ip = h.get("cf-connecting-ip") or h.get("x-real-ip") or (request.client.host if request.client else "")
-    if not origin_allowed(get_settings(), ip, request.url.path):
+    if not origin_allowed(get_settings(), client_ip(request), request.url.path):
         return JSONResponse({"detail": "hub is home-network only"}, status_code=403)
     response = await call_next(request)
     # Pages and their scripts change with every hub update. Without this a browser keeps showing
@@ -104,7 +102,10 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     day = rules.day_key(now)
     used = (db.one("SELECT minutes FROM usage WHERE kid_id=? AND day=?", (kid.id, day)) or {}).get("minutes", 0)
     g = db.one("SELECT COALESCE(SUM(minutes),0) AS m, MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, day))
-    late_until = datetime.fromisoformat(g["u"]) if g and g["u"] else None
+    # Extra time approved late at night may run past midnight, so last night's "play until" still counts.
+    y = db.one("SELECT MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, rules.day_key(now - timedelta(days=1))))
+    untils = [u for u in (g["u"] if g else "", y["u"] if y else "") if u]
+    late_until = datetime.fromisoformat(max(untils)) if untils else None
     p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
     paused_until = datetime.fromisoformat(p["until"]) if p else None
     return rules.compute(rule_for(db, kid, now.weekday()), now, used, g["m"] if g else 0, late_until, paused_until,
@@ -252,6 +253,9 @@ class Heartbeat(BaseModel):
     apps: dict[str, AppState] = Field(default_factory=dict)   # managed apps on this PC
     game_id: int | None = None   # catalogue id of the game in that title, when it is one
     voice: Literal["", "family", "friends"] = ""   # voice room the shell has open
+    # Minutes played while the PC couldn't reach the hub (cable out, Wi-Fi off, hub down). The helper keeps
+    # count and sends them with the first heartbeat that gets through, so going offline isn't free time.
+    offline_minutes: int = Field(default=0, ge=0, le=24 * 60)
 
 
 class KidRequest(BaseModel):
@@ -310,6 +314,11 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO usage(kid_id,day,minutes) VALUES(?,?,1)
                 ON CONFLICT(kid_id,day) DO UPDATE SET minutes = minutes + 1""", (kid.id, rules.day_key(now)))
         counted_at = now_ts
+    if hb.offline_minutes:
+        db.x("""INSERT INTO usage(kid_id,day,minutes) VALUES(?,?,?)
+                ON CONFLICT(kid_id,day) DO UPDATE SET minutes = minutes + excluded.minutes""", (kid.id, rules.day_key(now), hb.offline_minutes))
+        db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+             (kid.id, "offline_play", f"{hb.offline_minutes} min played while the PC couldn't reach the hub", now.isoformat()))
     for app_name, a in list(hb.apps.items())[:10]:
         db.x("""INSERT INTO device_apps(kid_id,app,state,detail,at) VALUES(?,?,?,?,?)
                 ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",
@@ -325,8 +334,8 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
 
 @app.post("/api/device/requests", status_code=201)
 def device_request(req: KidRequest, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
-    if req.kind == "time" and not req.detail.isdigit():
-        raise HTTPException(422, "time requests carry minutes as detail")
+    if req.kind == "time" and not (req.detail.isdigit() and 1 <= int(req.detail) <= 240):
+        raise HTTPException(422, "time requests carry minutes (1 to 240) as detail")
     dup = db.one("SELECT id FROM requests WHERE kid_id=? AND kind=? AND detail=? AND state='pending'", (kid.id, req.kind, req.detail))
     if dup:
         return {"id": dup["id"], "duplicate": True}
@@ -465,8 +474,10 @@ def device_update_file(arch: Literal["x64", "arm64"], kid: Kid = Depends(current
 
 
 @app.get("/api/device/voice-token")
-def device_voice_token(kid: Kid = Depends(current_device), settings: Settings = Depends(get_settings)):
+def device_voice_token(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     """The kid's own token for his voice room. One room per kid: friends join his room."""
+    if today_state(db, settings, kid).locked:   # the helper checks too; the hub is the one that can't be skipped
+        raise HTTPException(403, "Voice chat is off while the PC is locked.")
     return {"url": settings.livekit.url, "room": f"room-{kid.id}",
             "token": livekit_token(settings, f"kid-{kid.id}", kid.name, f"room-{kid.id}")}
 
@@ -568,11 +579,33 @@ class Login(BaseModel):
     password: str
 
 
+# Wrong passwords, per device and name. The kids' PCs are on the same network as the hub, so the sign-in
+# page is one address away from a kid who wants to guess Mom's password.
+LOGIN_TRIES = 6
+LOGIN_WINDOW_SECONDS = 10 * 60
+_login_failures: dict[tuple[str, str], list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    h = request.headers
+    return h.get("cf-connecting-ip") or h.get("x-real-ip") or (request.client.host if request.client else "")
+
+
 @app.post("/api/parent/login")
-def parent_login(body: Login, response: Response, settings: Settings = Depends(get_settings)):
-    p = next((p for p in settings.parents if p.name.lower() == body.name.lower()), None)
+def parent_login(body: Login, request: Request, response: Response, settings: Settings = Depends(get_settings)):
+    key = (client_ip(request), body.name.strip().lower()[:60])
+    now_ts = time.time()
+    recent = [t for t in _login_failures.get(key, []) if now_ts - t < LOGIN_WINDOW_SECONDS]
+    if len(recent) >= LOGIN_TRIES:
+        wait = int((LOGIN_WINDOW_SECONDS - (now_ts - recent[0])) // 60) + 1
+        raise HTTPException(429, f"Too many wrong passwords. Try again in {wait} minute{'' if wait == 1 else 's'}.")
+    p = next((p for p in settings.parents if p.name.lower() == body.name.strip().lower()), None)
     if not p or not verify_password(body.password, p.password_hash):
+        if len(_login_failures) > 5000:
+            _login_failures.clear()   # never let a flood of made-up names grow this without limit
+        _login_failures[key] = recent + [now_ts]
         raise HTTPException(401, "wrong name or password")
+    _login_failures.pop(key, None)
     response.set_cookie(SESSION_COOKIE, make_session(settings, p.name), max_age=SESSION_SECONDS,
                         httponly=True, samesite="strict", secure=os.environ.get("HUB_SECURE_COOKIE") == "1")
     return {"name": p.name}
@@ -643,7 +676,7 @@ def parent_requests(state: str = "pending", parent: str = Depends(current_parent
 
 class Decision(BaseModel):
     approve: bool
-    minutes: int | None = None     # for time requests, override the requested minutes
+    minutes: int | None = Field(default=None, ge=1, le=240)     # for time requests, override the requested minutes
     game_id: int | None = None     # for game requests, the catalogue game to approve
     steam_appid: str | None = None  # ...or a Steam app to add to the catalogue and approve in one step
     ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")  # ...or any search result

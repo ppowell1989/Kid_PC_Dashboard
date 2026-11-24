@@ -239,7 +239,7 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
 
     private bool GameRunning()
     {
-        try { return library.CurrentActivity(cache.Rules, Sessions.ConsoleSessionId).Processes.Any(p => p.Kind is not ("chrome" or "browser")); }
+        try { return library.CurrentActivity(cache.Rules, Sessions.ConsoleSessionId).Processes.Any(p => p.Kind is not ("chrome" or "browser" or "tool")); }
         catch (Exception ex)
         {
             log.LogWarning("could not tell whether a game is running: {Msg}", ex.Message);
