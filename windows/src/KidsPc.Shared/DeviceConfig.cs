@@ -15,7 +15,7 @@ public sealed class DeviceConfig
     public string BattleNetPath { get; set; } = @"C:\Program Files (x86)\Battle.net\Battle.net.exe";
     public string BattleNetGamesRoot { get; set; } = @"C:\Program Files (x86)";
     public string InstallerShare { get; set; } = "";                    // optional: \\truenas\kidspc-installers for "direct" games
-    public int PollSeconds { get; set; } = 30;
+    public int PollSeconds { get; set; } = 10;
     public int HistorySeconds { get; set; } = 120;                       // how often Chrome history is sent to the hub
 
     public static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "KidsPc");

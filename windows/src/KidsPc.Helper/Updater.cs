@@ -29,7 +29,7 @@ public sealed class Updater(HttpClient http, DeviceConfig cfg, StateCache cache,
     private static readonly string ForcedFile = Path.Combine(DeviceConfig.Dir, "update-forced.txt");
 
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan HubCheckEvery = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan HubCheckEvery = TimeSpan.FromSeconds(30);
     /// <summary>How long after his screen starts the kid may be signed out again for an update.</summary>
     private static readonly TimeSpan FreshSignIn = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan ForceAgainAfter = TimeSpan.FromMinutes(30);

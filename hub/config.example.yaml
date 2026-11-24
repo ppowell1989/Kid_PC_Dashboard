@@ -93,4 +93,4 @@ updates:
   github_repo: ppowell1989/Kid_PC_Dashboard
   release_tag: test-build
   github_token: ""
-  poll_minutes: 10
+  poll_minutes: 1

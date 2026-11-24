@@ -30,7 +30,15 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
         ["Hero"] = "Heroes of the Storm",
         ["WTCG"] = "Hearthstone",
         ["Fen"] = "Diablo IV",
-    };
+        ["S2"] = "StarCraft II",
+        ["S1"] = "StarCraft",
+        ["W3"] = "Warcraft III",
+        ["D3"] = "Diablo III",
+        ["OSI"] = "Diablo II Resurrected",
+        ["ANBS"] = "Diablo Immortal",
+        ["WLBY"] = "Crash Bandicoot 4",
+        ["RTRO"] = "Blizzard Arcade Collection",
+    };   // keep in step with BATTLENET in hub/app/gamesearch.py
 
     [GeneratedRegex("\"(appid|installdir|name)\"\\s+\"([^\"]*)\"", RegexOptions.IgnoreCase)]
     private static partial Regex AcfField();

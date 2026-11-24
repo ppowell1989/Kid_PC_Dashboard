@@ -51,6 +51,9 @@ function renderPeople() {
   if (micNote) say(micNote, true);
 }
 
+// The browser's own microphone clean-up: echo, steady background noise and level. voiceIsolation asks for the
+// stronger filter some systems have; a browser without it ignores the request.
+const MIC = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: true };
 async function setMic(on) {
   try { await room.localParticipant.setMicrophoneEnabled(on); micNote = ""; }
   catch (e) { micNote = "Your microphone isn't working. Allow it in your browser, then press Unmute my mic. You can still listen."; }
@@ -72,7 +75,7 @@ $("#join").onclick = async () => {
     j = await r.json();
     if (!r.ok) return say(j.detail || "This link is not active.", true);
     $("#title").textContent = `Voice chat with ${j.kid_name}`;
-    room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+    room = new LK.Room({ audioCaptureDefaults: MIC });
     const E = LK.RoomEvent;
     room.on(E.TrackSubscribed, (track) => { if (track.kind === "audio") document.body.appendChild(track.attach()); renderPeople(); });
     for (const e of [E.ParticipantConnected, E.ParticipantDisconnected, E.ActiveSpeakersChanged, E.TrackMuted, E.TrackUnmuted,

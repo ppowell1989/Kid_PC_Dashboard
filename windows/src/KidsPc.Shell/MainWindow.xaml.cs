@@ -11,7 +11,7 @@ namespace KidsPc.Shell;
 public partial class MainWindow : Window
 {
     private readonly IHelper _helper = App.DemoScene is null ? new PipeHelper() : new DemoHelper(App.DemoScene);
-    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(5) };
     private ShellState? _state;
     private bool _warnedToday;
     private VoiceWindow? _voice;
@@ -41,7 +41,8 @@ public partial class MainWindow : Window
         catch (Exception)
         {
             // Helper not answering: the helper is what enforces, so fail closed.
-            ShowLock("The PC is starting up", "Give it a minute. If this stays, ask Mom or Dad.");
+            ShowLock("The PC is starting up", "Give it a minute. If this stays, ask Mom or Dad.", canAsk: false);
+            _ = RefreshSoonAsync();
             return;
         }
         Render();
@@ -51,7 +52,8 @@ public partial class MainWindow : Window
     {
         if (_state?.Rules is not { } rules)
         {
-            ShowLock("Waiting for the home server", "Ask Mom or Dad if this doesn't go away.");
+            ShowLock("Waiting for the home server", "Ask Mom or Dad if this doesn't go away.", canAsk: false);
+            _ = RefreshSoonAsync();
             return;
         }
         var t = rules.Time;
@@ -81,7 +83,14 @@ public partial class MainWindow : Window
             MessageBanner.Visibility = LockMessage.Visibility = Visibility.Collapsed;
         }
 
-        if (_state.Locked)
+        if (_state.Locked && !t.Locked && _state.HubReachable)
+        {
+            // The helper has fresh rules that say "not locked" but hasn't applied them yet (it starts out locked
+            // at sign-in). Don't tell him his time is up or offer to ask for more: it clears in a few seconds.
+            ShowLock("Getting things ready", "One moment.", canAsk: false);
+            _ = RefreshSoonAsync();
+        }
+        else if (_state.Locked)
         {
             var pending = rules.PendingRequests.Any(r => r.Kind == "time");
             var title = t.LockReason switch { "bedtime" => "It's bedtime", "paused" => "Mom or Dad paused the PC", _ => "Time's up for today" };
@@ -99,10 +108,24 @@ public partial class MainWindow : Window
         BuildCatalogue(rules);
     }
 
-    private void ShowLock(string title, string sub)
+    private bool _refreshingSoon;
+
+    /// <summary>One extra look at the helper in 2 seconds, instead of waiting for the next regular poll.</summary>
+    private async Task RefreshSoonAsync()
+    {
+        if (_refreshingSoon || App.DemoScene is not null) return;
+        _refreshingSoon = true;
+        try { await Task.Delay(2000); await RefreshAsync(); }
+        finally { _refreshingSoon = false; }
+    }
+
+    /// <param name="canAsk">Show the "ask for more time" buttons. Only when time, bedtime or a pause is the reason.</param>
+    private void ShowLock(string title, string sub, bool canAsk = true)
     {
         LockTitle.Text = title;
         LockSub.Text = sub;
+        LockAsk.Visibility = canAsk ? Visibility.Visible : Visibility.Collapsed;
+        if (!canAsk) LockStatus.Text = "";
         LockOverlay.Visibility = Visibility.Visible;
         Topmost = true;      // stay above games while locked
         Activate();
