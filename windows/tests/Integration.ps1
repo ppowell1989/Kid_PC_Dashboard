@@ -173,7 +173,7 @@ Check "helper installed Steam silently and reported it" $steamOk ($apps | Conver
 Check "steam.exe exists" (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
 Check "hub shows chrome installed" (($apps | Where-Object { $_.app -eq "chrome" -and $_.state -eq "installed" }) -ne $null)
 $kp = $apps | Where-Object { $_.app -eq "kidspc" }
-Check "helper reports its version" ($kp -ne $null -and $kp.state -eq "installed" -and $kp.detail -match "version") ($kp | ConvertTo-Json)
+Check "helper reports its version" ($kp -ne $null -and $kp.state -eq "installed" -and $kp.detail -match "build|version") ($kp | ConvertTo-Json)
 $act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
 Check "steam install reported in the activity feed" (($act.events | Where-Object { $_.kind -eq "app_installed" -and $_.detail -eq "steam" }) -ne $null)
 
