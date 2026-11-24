@@ -60,7 +60,10 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 @app.middleware("http")
 async def remote_access_gate(request: Request, call_next):
-    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    # A request that came in through Cloudflare (the tunnel) is from outside the house, even though
+    # its last hop is a container on this machine. Cloudflare always sets this header itself.
+    h = request.headers
+    ip = h.get("cf-connecting-ip") or h.get("x-real-ip") or (request.client.host if request.client else "")
     if not origin_allowed(get_settings(), ip, request.url.path):
         return JSONResponse({"detail": "hub is home-network only"}, status_code=403)
     return await call_next(request)

@@ -90,11 +90,17 @@ def test_remote_access_gate(client):
     assert origin_allowed(s, "192.168.1.5", "/api/parent/overview")
     assert not origin_allowed(s, "8.8.8.8", "/api/parent/overview")
     assert origin_allowed(s, "8.8.8.8", "/join/abc")            # friends always reach join pages
+    assert origin_allowed(s, "8.8.8.8", "/static/app.css")      # ...and the stylesheet that page uses
+    assert not origin_allowed(s, "8.8.8.8", "/static/app.js")   # but not the dashboard's code
     assert not origin_allowed(s, "100.100.1.1", "/")
     s.decisions.remote_access = "tailscale"
     assert origin_allowed(s, "100.100.1.1", "/")
     r = client.get("/api/parent/overview", headers={"x-real-ip": "8.8.8.8"})
     assert r.status_code == 403
+    # Through the Cloudflare tunnel the last hop is local; the visitor's real address still decides.
+    r = client.get("/api/parent/overview", headers={"cf-connecting-ip": "8.8.8.8", "x-real-ip": "192.168.1.5"})
+    assert r.status_code == 403
+    assert client.get("/static/app.css", headers={"cf-connecting-ip": "8.8.8.8"}).status_code == 200
 
 
 KID = Kid(id="a", name="A", device_token="t", daily_minutes={"weekday": 60, "weekend": 120},

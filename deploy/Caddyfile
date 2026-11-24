@@ -2,7 +2,7 @@
 # The parent dashboard is NOT routed here. It stays on http://<truenas>:8080 inside the house
 # (or over Tailscale if decisions.remote_access = tailscale).
 voice.example.com {                      # GUESS: your domain
-	@livekit path /rtc* /twirp*
+	@livekit path /rtc*          # signalling only; the admin API (/twirp) stays private
 	handle @livekit {
 		reverse_proxy livekit:7880
 	}
