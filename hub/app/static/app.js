@@ -563,6 +563,20 @@ function renderConsoles(c) {
       </div>`).join("") || `<p class="muted">No Switch found yet. Set one up in the Parental Controls app first.</p>`}
       <button class="ghost small" data-nunlink="1">Unlink</button></div>`;
   }
+  box.insertAdjacentHTML("beforeend", xboxCard(c, kidOpts));
+  box.querySelectorAll("[data-xconnect]").forEach((b) => (b.onclick = () => connectXbox().catch(oops)));
+  const saveMember = async (id) => {
+    const kid = box.querySelector(`[data-xkid="${CSS.escape(id)}"]`).value, lock = box.querySelector(`[data-xlock="${CSS.escape(id)}"]`);
+    renderConsoles(await api(`/api/parent/consoles/xbox/members/${encodeURIComponent(id)}`, { method: "PUT", body: { kid_id: kid, enforce: lock ? lock.checked : true } }));
+    refresh();
+  };
+  box.querySelectorAll("[data-xkid]").forEach((s) => (s.onchange = () => saveMember(s.dataset.xkid).catch(oops)));
+  box.querySelectorAll("[data-xlock]").forEach((s) => (s.onchange = () => saveMember(s.dataset.xlock).catch(oops)));
+  box.querySelectorAll("[data-xunlink]").forEach((b) => (b.onclick = async () => {
+    if (!(await sheet({ title: "Unlink Xbox?", text: "Xbox play stops counting toward the PC, and any Xbox block the hub set is lifted.", ok: "Unlink", kind: "bad" }))) return;
+    await api("/api/parent/consoles/xbox", { method: "DELETE" }).catch(oops);
+    loadConsoles();
+  }));
   box.querySelectorAll("[data-nconnect]").forEach((b) => (b.onclick = () => connectNintendo().catch(oops)));
   box.querySelectorAll("[data-nsync]").forEach((b) => (b.onclick = async () => renderConsoles(await api("/api/parent/consoles/sync", { method: "POST" }).catch(oops) || c)));
   box.querySelectorAll("[data-nplayer]").forEach((s) => (s.onchange = async () => {
@@ -580,6 +594,32 @@ function renderConsoles(c) {
     await api("/api/parent/consoles/nintendo", { method: "DELETE" }).catch(oops);
     loadConsoles();
   }));
+}
+function xboxCard(c, kidOpts) {
+  const x = c.xbox;
+  if (!x) return `<div class="card"><h2>Xbox</h2>
+    <p class="muted">Link the Microsoft account you use in the Family Safety app (the family organizer). Xbox play then comes out of the same daily time as the PC, and the hub locks his Xbox when that time runs out.</p>
+    <button data-xconnect="1">Connect Microsoft account</button></div>`;
+  const synced = x.synced_at ? new Date(x.synced_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
+  const rows = x.members.map((m) => `<li><div class="split"><span>${esc(m.nickname)} <span class="muted">${m.role === "Admin" ? "organizer" : `${fmtMin(m.minutes)} on Xbox today`}${m.blocked ? " · Xbox locked" : ""}</span></span>
+      <select data-xkid="${esc(m.player_id)}" aria-label="Whose time is ${esc(m.nickname)}">${kidOpts(m.kid_id, "Not counted")}</select></div>
+      ${m.kid_id ? `<label class="check" style="white-space:normal"><input type="checkbox" data-xlock="${esc(m.player_id)}" ${m.enforce ? "checked" : ""}> Lock his Xbox when his time is up</label>` : ""}</li>`).join("");
+  return `<div class="card"><h2 class="split">Xbox <button class="ghost small" data-nsync="1">Check now</button></h2>
+    <p class="muted">Linked ${esc(x.linked_by ? `by ${x.linked_by}` : "")}. Last checked ${esc(synced)}. Xbox time can take a few minutes to show up, so a lock may come a few minutes late.</p>
+    ${x.error ? `<div class="alert"><span>${esc(x.error)}</span>${/again/.test(x.error) ? `<button class="bad small" data-xconnect="1">Connect</button>` : ""}</div>` : ""}
+    <ul class="list">${rows || `<li class="muted">No one in this Microsoft family has Family Safety turned on yet.</li>`}</ul>
+    <button class="ghost small" data-xunlink="1">Unlink</button></div>`;
+}
+async function connectXbox() {
+  const { login_url } = await api("/api/parent/consoles/xbox/start", { method: "POST" });
+  window.open(login_url, "_blank", "noopener");
+  const link = await sheet({
+    title: "Paste the Microsoft address",
+    text: "Sign in on the page that just opened with the family organizer's Microsoft account. You'll end on a blank page: copy its whole address (it contains \"code=\") and paste it here.",
+    input: "https://login.live.com/oauth20_desktop.srf?code=…", ok: "Link",
+  });
+  if (!link) return;
+  renderConsoles(await api("/api/parent/consoles/xbox/finish", { method: "POST", body: { link } }));
 }
 async function connectNintendo() {
   const { login_url } = await api("/api/parent/consoles/nintendo/start", { method: "POST" });

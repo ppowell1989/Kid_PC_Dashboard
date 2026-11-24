@@ -26,7 +26,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from . import rules
+from . import rules, xbox
 from .db import DB
 
 log = logging.getLogger("hub.consoles")
@@ -234,6 +234,7 @@ async def sync_forever(db: DB, settings, today_state, every_seconds: int) -> Non
     while True:
         try:
             await sync_once(db, settings, today_state)
+            await xbox.sync_once(db, settings, today_state)
         except Exception:
             log.exception("console sync")
         await asyncio.sleep(every_seconds)
