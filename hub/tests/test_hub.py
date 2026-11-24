@@ -299,3 +299,11 @@ def test_history_upload_flags_searches(parent):
     assert [(x["term"], x["flagged"]) for x in s] == [("essex county", 0), ("Sexy pics", 1), ("minecraft seeds", 0)]
     assert next(k for k in parent.get("/api/parent/overview").json()["kids"] if k["id"] == "adam")["flagged_today"] == 1
     assert parent.get("/api/parent/visits/adam").json()[0]["domain"] == "en.wikipedia.org"
+
+
+def test_decision_reason_reaches_the_kid(parent):
+    parent.post("/api/device/requests", headers=ADAM, json={"kind": "site", "detail": "roblox.com"})
+    rid = parent.get("/api/parent/requests").json()[0]["id"]
+    parent.post(f"/api/parent/requests/{rid}", json={"approve": False, "reason": "Not until homework is done"})
+    msgs = [c["arg"] for c in parent.get("/api/device/rules", headers=ADAM).json()["commands"] if c["kind"] == "message"]
+    assert any("Not this time: roblox.com" in m and "Not until homework is done" in m for m in msgs)

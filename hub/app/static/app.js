@@ -158,7 +158,8 @@ async function loadRequests() {
       const h = sel.value.startsWith("steam:") ? byId[sel.value.slice(6)] : null;
       info.innerHTML = h ? [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${h.esrb_descriptors ? `: ${esc(h.esrb_descriptors)}` : ""}` : "No ESRB rating on Steam",
         h.adult ? `<span class="bad">Adult content</span>` : "", h.content_notes ? esc(h.content_notes) : "", esc(h.description || ""),
-        h.free ? "Free" : esc(h.price || "")].filter(Boolean).join("<br>") : "";
+        h.free ? "Free" : `${esc(h.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(h.appid)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`,
+      ].filter(Boolean).join("<br>") : "";
     };
     if (picked && byId[picked]) sel.value = `steam:${picked}`;
     else if (!sel.value && hits.length) sel.value = `steam:${hits[0].appid}`;
@@ -167,6 +168,11 @@ async function loadRequests() {
   document.querySelectorAll("[data-decide]").forEach((b) => (b.onclick = async () => {
     const pick = $(`[data-gamefor="${b.dataset.decide}"]`);
     const body = { approve: b.dataset.ok === "1" };
+    if (!body.approve) {
+      const reason = prompt(`Tell ${kidName(reqs.find((r) => String(r.id) === b.dataset.decide)?.kid_id)} why? (optional, shows on his screen)`, "");
+      if (reason === null) return;
+      body.reason = reason;
+    }
     if (pick && body.approve) {
       if (!pick.value) return alert("Choose the game first.");
       if (pick.value.startsWith("steam:")) body.steam_appid = pick.value.slice(6); else body.game_id = +pick.value;

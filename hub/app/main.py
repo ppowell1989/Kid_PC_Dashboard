@@ -495,6 +495,7 @@ class Decision(BaseModel):
     minutes: int | None = None     # for time requests, override the requested minutes
     game_id: int | None = None     # for game requests, the catalogue game to approve
     steam_appid: str | None = None  # ...or a Steam app to add to the catalogue and approve in one step
+    reason: str = Field(default="", max_length=200)   # shown to the kid, e.g. why it's a no
 
 
 @app.post("/api/parent/requests/{rid}")
@@ -517,8 +518,20 @@ async def parent_decide(rid: int, d: Decision, parent: str = Depends(current_par
             db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (kid.id, d.game_id))
         elif r["kind"] == "site":
             db.x("INSERT OR IGNORE INTO sites(domain) VALUES(?)", (r["detail"].lower(),))
-    db.x("UPDATE requests SET state=?, decided_by=?, decided_at=datetime('now') WHERE id=?",
-         ("approved" if d.approve else "declined", parent, rid))
+    db.x("UPDATE requests SET state=?, decided_by=?, decided_at=datetime('now'), reason=? WHERE id=?",
+         ("approved" if d.approve else "declined", parent, d.reason.strip(), rid))
+    # Tell the kid on his screen (same path as a parent's message).
+    what = {"time": f"{d.minutes or r['detail']} more minutes", "site": r["detail"]}.get(r["kind"], r["detail"])
+    if r["kind"] == "game" and d.approve and d.game_id:
+        g = db.one("SELECT title FROM games WHERE id=?", (d.game_id,))
+        what = g["title"] if g else what
+    note = f" {parent} says: \"{d.reason.strip()}\"" if d.reason.strip() else ""
+    if d.approve:
+        where = " It's in Get more games now." if r["kind"] == "game" else ""
+        text = f"Yes! {what} is approved.{where}{note}"
+    else:
+        text = f"Not this time: {what}.{note}"
+    db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)", (kid.id, "message", text[:300], parent))
     return db.one("SELECT * FROM requests WHERE id=?", (rid,))
 
 

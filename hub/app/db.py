@@ -126,7 +126,8 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 
 
 MIGRATIONS = [
-    ("requests", "ref", "TEXT DEFAULT ''"),   # e.g. "steam:291550" when the kid picked an exact game
+    ("requests", "ref", "TEXT DEFAULT ''"),
+    ("requests", "reason", "TEXT DEFAULT ''"),   # parent's note when deciding, shown to the kid   # e.g. "steam:291550" when the kid picked an exact game
 ]
 
 
