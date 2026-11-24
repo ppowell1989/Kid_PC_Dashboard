@@ -164,11 +164,11 @@ select + .art { margin-top: 10px; }
 .alert { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--bad-soft); color: var(--bad-text); font-weight: 700; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: .8rem; color: var(--muted); background: var(--well); }
-.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.chip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .chip.pending::before { background: var(--warn); }
 .chip.failed { background: var(--bad-soft); color: var(--bad-text); }
 .chip.failed::before { background: var(--bad); }
-.chip button { margin: -2px -6px -2px 2px; }
+.chip button { flex: none; margin: -2px -6px -2px 2px; white-space: nowrap; }
 /* Family card: the brothers together, and three switches */
 .family p { margin: 6px 0; }
 .family .switch { display: flex; align-items: flex-start; gap: 12px; margin: 14px 0 0; color: var(--text); font-size: 1rem; }

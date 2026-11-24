@@ -74,7 +74,7 @@ async function refresh() {
       return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || a.app)} ${esc(sys ? a.detail : a.state)}${retry}${install}</span>`;
     }).join("");
     const hasPc = (k.apps || []).some((a) => a.app === "kidspc");
-    const how = hasPc ? `<span class="chip ${k.auto_update ? "" : "pending"}">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${k.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
+    const how = hasPc ? `<span class="chip">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${k.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
     // "On build X" is only half the story: say when something newer is still being built or on its way.
     const pc = (k.apps || []).find((a) => a.app === "kidspc"), B = o.builds || {}, b = B.building;
     const late = b && b.waiting_minutes >= 15;
