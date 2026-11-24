@@ -177,12 +177,9 @@ Check "helper reports its version" ($kp -ne $null -and $kp.state -eq "installed"
 $act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
 Check "steam install reported in the activity feed" (($act.events | Where-Object { $_.kind -eq "app_installed" -and $_.detail -eq "steam" }) -ne $null)
 
-# Lock: use up the day via a big negative grant is not possible, so approve nothing and set usage by heartbeats is slow;
-# instead flip the kid to 0 minutes by editing config and restarting the hub.
-Stop-Process $hubProc -Force
-(Get-Content "$work\config.yaml") -replace "weekday: 90, weekend: 90", "weekday: 0, weekend: 0" | Set-Content "$work\config.yaml"
-$hubProc = Start-Process python -ArgumentList "-m uvicorn app.main:app --port $Port" -WorkingDirectory "$root\hub" -PassThru -NoNewWindow `
-  -RedirectStandardError "$work\hub2.err.log" -RedirectStandardOutput "$work\hub2.out.log"
+# Lock: a parent sets every day to 0 minutes in Playtimes (the hub's DB owns the rules, not config.yaml).
+Invoke-RestMethod "$hub/api/parent/playtimes/adam" -Method Put -WebSession $s -ContentType application/json `
+  -Body '{"days":[0,1,2,3,4,5,6],"daily_minutes":0,"bedtime":"23:59","windows":[]}' | Out-Null
 Start-Sleep 10
 $st = Pipe @{ op = "state" }
 Check "locked when out of time" ($st.data.locked -eq $true) ($st.data.rules.time | ConvertTo-Json)
