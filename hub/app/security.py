@@ -98,7 +98,8 @@ def livekit_token(settings: Settings, identity: str, name: str, room: str, ttl: 
         "name": name,
         "nbf": now,
         "exp": now + ttl,
-        "video": {"room": room, "roomJoin": True, "canPublish": True, "canSubscribe": True},
+        # Voice only: no camera and no screen sharing, whatever program a friend joins with.
+        "video": {"room": room, "roomJoin": True, "canPublish": True, "canSubscribe": True, "canPublishSources": ["microphone"]},
     }
     return jwt.encode(claims, settings.livekit.api_secret, "HS256")
 

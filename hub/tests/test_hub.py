@@ -510,3 +510,34 @@ def test_minutes_played_offline_are_counted_when_the_pc_comes_back(parent):
     parent.post("/api/device/heartbeat", headers=ADAM, json={"running": "", "active": False})
     assert len([e for e in parent.get("/api/parent/kids/adam/activity").json()["events"] if e["kind"] == "offline_play"]) == 1
     assert parent.post("/api/device/heartbeat", headers=ADAM, json={"offline_minutes": 5000}).status_code == 422
+
+
+# --- hardening ----------------------------------------------------------------------------------
+
+def test_wrong_passwords_are_slowed_down(client):
+    from app import main
+    main._login_failures.clear()
+    bad = {"name": "Patrick", "password": "guess"}
+    for _ in range(main.LOGIN_TRIES):
+        assert client.post("/api/parent/login", json=bad).status_code == 401
+    r = client.post("/api/parent/login", json=bad)
+    assert r.status_code == 429 and "Try again in" in r.json()["detail"]
+    # Even the right password waits now, and another name on the same device is not held up.
+    assert client.post("/api/parent/login", json={"name": "Patrick", "password": "pw"}).status_code == 429
+    assert client.post("/api/parent/login", json={"name": "Barbara", "password": "x"}).status_code == 401
+    main._login_failures.clear()
+    assert client.post("/api/parent/login", json={"name": "Patrick", "password": "pw"}).status_code == 200
+
+
+def test_voice_tokens_are_microphone_only_and_refused_while_locked(parent):
+    tok = parent.get("/api/device/voice-token", headers=ADAM).json()["token"]
+    assert jwt.decode(tok, "s" * 32, ["HS256"])["video"]["canPublishSources"] == ["microphone"]
+    parent.post("/api/parent/kids/adam/pause", json={"minutes": 0})
+    assert parent.get("/api/device/voice-token", headers=ADAM).status_code == 403
+
+
+def test_time_requests_and_answers_stay_in_range(parent):
+    assert parent.post("/api/device/requests", headers=ADAM, json={"kind": "time", "detail": "99999"}).status_code == 422
+    rid = parent.post("/api/device/requests", headers=ADAM, json={"kind": "time", "detail": "30"}).json()["id"]
+    assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "minutes": -5}).status_code == 422
+    assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "minutes": 20}).status_code == 200
