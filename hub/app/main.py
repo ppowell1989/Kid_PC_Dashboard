@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.db = DB(os.environ.get("HUB_DB", "hub.db"))
     app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
+    seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
     if settings.adguard.enabled and pollers_on:
@@ -83,6 +84,16 @@ def rule_for(db: DB, kid: Kid, weekday: int) -> rules.DayRule:
     if not r:
         return rules.default_rule(kid, weekday)
     return rules.DayRule(daily_minutes=r["daily_minutes"], bedtime=r["bedtime"], windows=[tuple(w) for w in json.loads(r["windows"])])
+
+
+def seed_playtimes(db: DB, settings: Settings) -> None:
+    """The DB owns every playtime rule. config.yaml's daily_minutes/bedtime only seed a kid's week the first
+    time the hub sees that kid; after that, edits happen through the API (dashboard), never config.yaml."""
+    for kid in settings.kids:
+        for wd in range(7):
+            r = rules.default_rule(kid, wd)
+            db.x("""INSERT OR IGNORE INTO playtimes(kid_id,weekday,daily_minutes,bedtime,windows,updated_by)
+                    VALUES(?,?,?,?,'[]','')""", (kid.id, wd, r.daily_minutes, r.bedtime))
 
 
 def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = None) -> rules.TimeState:
@@ -595,10 +606,10 @@ class Playtime(BaseModel):
 
 def playtime_json(db: DB, kid: Kid, weekday: int) -> dict:
     r = rule_for(db, kid, weekday)
-    custom = db.one("SELECT updated_by, updated_at FROM playtimes WHERE kid_id=? AND weekday=?", (kid.id, weekday))
+    row = db.one("SELECT updated_by, updated_at FROM playtimes WHERE kid_id=? AND weekday=?", (kid.id, weekday))
+    by = row["updated_by"] if row else ""
     return {"day": weekday, "name": rules.DAYS[weekday], "daily_minutes": r.daily_minutes, "bedtime": r.bedtime,
-            "windows": [{"start": s, "end": e} for s, e in r.windows], "custom": bool(custom),
-            "updated_by": custom["updated_by"] if custom else ""}
+            "windows": [{"start": s, "end": e} for s, e in r.windows], "custom": bool(by), "updated_by": by}
 
 
 @app.get("/api/parent/playtimes")

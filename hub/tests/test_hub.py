@@ -362,6 +362,9 @@ def test_playtime_no_windows_and_no_bedtime():
 
 
 def test_playtimes_api_defaults_save_and_enforce(parent):
+    from app.main import app
+    # The DB owns the rules: config.yaml's values were copied in at startup, one row per kid per day.
+    assert app.state.db.one("SELECT COUNT(*) n FROM playtimes")["n"] == 14
     pt = parent.get("/api/parent/playtimes").json()
     assert pt["today"] == 1   # frozen at Tuesday
     adam = next(k for k in pt["kids"] if k["id"] == "adam")
