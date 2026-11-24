@@ -63,7 +63,16 @@ if (-not $ShellOnly) {
   Step "Writing device config"
   $dataDir = "$env:ProgramData\KidsPc"
   New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-  @{ hubUrl = $HubUrl; deviceToken = $DeviceToken; kidUser = $KidUser } | ConvertTo-Json | Set-Content "$dataDir\device.json" -Encoding UTF8
+  # Re-running to update: keep the hub address and tokens from the last install unless new ones are given.
+  if (-not $DeviceToken -and (Test-Path "$dataDir\device.json")) {
+    $prev = Get-Content "$dataDir\device.json" -Raw | ConvertFrom-Json
+    $DeviceToken = $prev.deviceToken
+    if (-not $PSBoundParameters.ContainsKey('HubUrl') -and $prev.hubUrl) { $HubUrl = $prev.hubUrl }
+    if (-not $ExtensionToken -and $prev.extensionToken) { $ExtensionToken = $prev.extensionToken }
+    Write-Host "    reusing hub $HubUrl and tokens from the last install"
+  }
+  if (-not $DeviceToken) { throw "No -DeviceToken given and no previous install to reuse it from (see pc-tokens.txt on the hub)." }
+  @{ hubUrl = $HubUrl; deviceToken = $DeviceToken; extensionToken = $ExtensionToken; kidUser = $KidUser } | ConvertTo-Json | Set-Content "$dataDir\device.json" -Encoding UTF8
   icacls $dataDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 
   # ------------------------------------------------------------------ helper service
