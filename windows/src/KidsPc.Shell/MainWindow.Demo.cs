@@ -24,6 +24,11 @@ public partial class MainWindow
             case "chat":
                 ToggleChat(this, new RoutedEventArgs());
                 break;
+            case "chat-friend":   // a friend's chat with a picture and a link in it
+                await PollConvsAsync();
+                _conv = "friend-demo";
+                ToggleChat(this, new RoutedEventArgs());
+                break;
             case "power":
                 OpenPower(this, new RoutedEventArgs());
                 break;

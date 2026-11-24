@@ -1,3 +1,7 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using KidsPc.Shared;
 
 namespace KidsPc.Shell;
@@ -17,7 +21,7 @@ internal sealed class PipeHelper : IHelper
 /// <summary>
 /// Stand-in helper for "KidsPcShell.exe --demo &lt;scene&gt;": canned data, no hub, no helper, nothing launches.
 /// Used by windows\tests\Screenshots.ps1 so every screen of the design can be looked at on real Windows pixels.
-/// Scenes: home, catalogue, ask, chat, voice, family, warning, lock, themes, power. Add "--theme &lt;id&gt;" to see one in another look.
+/// Scenes: home, catalogue, ask, chat, chat-friend, voice, family, warning, lock, themes, power. Add "--theme &lt;id&gt;" to see one in another look.
 /// </summary>
 internal sealed class DemoHelper(string scene) : IHelper
 {
@@ -47,7 +51,15 @@ internal sealed class DemoHelper(string scene) : IHelper
                 new("220200", "Kerbal Space Program", ArtFor(220200), "E", "Take charge of the space program for the alien race known as the Kerbals. Build spacecraft that fly (or don't) based on realistic physics."),
                 new("275850", "No Man's Sky", ArtFor(275850), "T", "A game about exploration and survival in an infinite procedurally generated universe."),
             },
-            "chat" => req.Detail == "0" ? Chat() : new List<ChatMessage>(),
+            "chat_convs" => new ChatList(
+            [
+                new("family", "Family", "family", 5, 4, true),
+                new("kids", "Barrett", "kids", 12, 12, scene != "lock"),
+                new("friend-demo", "Max", "friend", 24, 23, scene != "lock", scene == "lock" ? "Off while the PC is locked" : ""),
+            ], true, true),
+            "chat" => req.Detail == "0" ? Chat(req.Ref ?? "family") : new List<ChatMessage>(),
+            "chat_picture_get" => new ChatPicture(DemoPicture()),
+            "chat_send" or "chat_picture" => new { sent = true },
             "install" => new InstallResult("none", null, "Demo mode: nothing was installed."),
             "voice_token" or "family_voice_token" => scene is "voice" or "family" ? new VoiceToken("demo", "demo", "demo") : throw new HelperSaidNo("Voice chat is off in demo mode."),
             _ => null,
@@ -76,17 +88,58 @@ internal sealed class DemoHelper(string scene) : IHelper
             InstallPercent: new Dictionary<int, int> { [5] = 45 });
     }
 
-    private static List<ChatMessage> Chat()
+    private static List<ChatMessage> Chat(string conv)
     {
         var now = DateTimeOffset.Now;
         string At(int minutesAgo) => now.AddMinutes(-minutesAgo).ToString("o");
-        return
-        [
-            new(1, "Dad", null, "Homework done?", At(42), false),
-            new(2, "Adam", "adam", "Yes! Can I play Brawlhalla with Barrett?", At(40), true),
-            new(3, "Barrett", "barrett", "pleeease", At(39), false),
-            new(4, "Mom", null, "OK, until dinner. Be nice to each other.", At(37), false),
-            new(5, "Adam", "adam", "Thanks Mom!", At(36), true),
-        ];
+        return conv switch
+        {
+            "kids" =>
+            [
+                new(10, "Barrett", "barrett", "are you on yet", At(20), false, "kids"),
+                new(11, "Adam", "adam", "after homework. 20 min", At(18), true, "kids"),
+                new(12, "Barrett", "barrett", "ok I'll make the server", At(17), false, "kids"),
+            ],
+            "friend-demo" =>
+            [
+                new(20, "Max", null, "did you beat the boss yet", At(15), false, "friend-demo", Friend: true),
+                new(21, "Adam", "adam", "YES look", At(12), true, "friend-demo", Picture: true),
+                new(22, "Max", null, "no way!! how", At(11), false, "friend-demo", Friend: true),
+                new(23, "Max", null, "this guide helped me www.example.com/boss-guide", At(9), false, "friend-demo", Friend: true,
+                    Links: ["www.example.com/boss-guide"]),
+                new(24, "Adam", "adam", "cool, play at 4?", At(8), true, "friend-demo"),
+            ],
+            _ =>
+            [
+                new(1, "Dad", null, "Homework done?", At(42), false),
+                new(2, "Adam", "adam", "Yes! Can I play Brawlhalla with Barrett?", At(40), true),
+                new(3, "Barrett", "barrett", "pleeease", At(39), false),
+                new(4, "Mom", null, "OK, until dinner. Be nice to each other.", At(37), false),
+                new(5, "Adam", "adam", "Thanks Mom!", At(36), true),
+            ],
+        };
+    }
+
+    /// <summary>A made-up "game screenshot" for the demo chat: a sky, hills and a banner.</summary>
+    private static string DemoPicture()
+    {
+        var v = new DrawingVisual();
+        using (var dc = v.RenderOpen())
+        {
+            dc.DrawRectangle(new LinearGradientBrush(Color.FromRgb(0x5B, 0x8D, 0xEF), Color.FromRgb(0xB8, 0xE1, 0xFF), 90), null, new Rect(0, 0, 640, 360));
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)), null, new Point(160, 420), 320, 160);
+            dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(0x38, 0x8E, 0x3C)), null, new Point(520, 440), 300, 170);
+            dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(0xD0, 0x1A, 0x1A, 0x2E)), null, new Rect(150, 110, 340, 90), 18, 18);
+            var t = new FormattedText("BOSS DEFEATED!", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface("Segoe UI Black"), 40, Brushes.Gold, 1.0);
+            dc.DrawText(t, new Point(320 - t.Width / 2, 155 - t.Height / 2));
+        }
+        var bmp = new RenderTargetBitmap(640, 360, 96, 96, PixelFormats.Pbgra32);
+        bmp.Render(v);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(bmp));
+        using var ms = new MemoryStream();
+        enc.Save(ms);
+        return Convert.ToBase64String(ms.ToArray());
     }
 }

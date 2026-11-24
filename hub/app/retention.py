@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from .db import DB
 
@@ -21,10 +22,11 @@ KINDS: dict[str, tuple[str, int]] = {
     "activity": ("PC activity log", 30),
     "requests": ("Answered requests", 30),
     "invites":  ("Revoked voice links", 7),
-    "chat":     ("Family chat", 90),
+    "chat":     ("Chat messages and pictures", 90),
 }
 CHOICES = (0, 1, 7, 14, 30, 90, 180, 365)
 PRUNE_EVERY_SECONDS = 3600
+PICTURES_DIR: Path | None = None   # chat pictures; main sets it at start
 
 
 def get(db: DB) -> dict[str, int]:
@@ -54,7 +56,7 @@ _SQL = {
                  "DELETE FROM commands WHERE state != 'pending' AND created_at < ?{kid}"],
     "requests": ["DELETE FROM requests WHERE state != 'pending' AND COALESCE(NULLIF(decided_at,''), created_at) < ?{kid}"],
     "invites":  ["DELETE FROM invites WHERE revoked=1 AND COALESCE(NULLIF(revoked_at,''), created_at) < ?{kid}"],
-    "chat":     ["DELETE FROM chat WHERE at < ?"],   # one family room, not per kid
+    "chat":     ["DELETE FROM chat WHERE at < ?"],   # all conversations; pictures go with their messages (below)
 }
 
 
@@ -68,7 +70,22 @@ def clear(db: DB, kind: str, before: str = "9999", kid_id: str | None = None) ->
             else:
                 cur = c.execute(sql.format(kid=""), (before,))
             n += cur.rowcount
+    if kind == "chat" and n:
+        sweep_pictures(db)
     return n
+
+
+def sweep_pictures(db: DB) -> int:
+    """Delete picture files no message points at any more."""
+    if not PICTURES_DIR or not PICTURES_DIR.exists():
+        return 0
+    keep = {r["picture"] for r in db.q("SELECT picture FROM chat WHERE picture!=''")}
+    gone = 0
+    for f in PICTURES_DIR.iterdir():
+        if f.is_file() and f.name not in keep:
+            f.unlink(missing_ok=True)
+            gone += 1
+    return gone
 
 
 def prune(db: DB, now: datetime) -> dict[str, int]:

@@ -224,38 +224,70 @@
       </Grid>
     </Grid>
 
-    <!-- ======================= Family chat (above the lock screen, so he can always reach Mom and Dad) ======================= -->
+    <!-- ======================= Chat (above the lock screen, so he can always reach Mom and Dad) =======================
+         Family, his brothers, and each friend a parent invited. Built in MainWindow.Chat.cs. -->
     <Grid HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,44,40">
       <Grid HorizontalAlignment="Right" VerticalAlignment="Bottom">
         <Button x:Name="ChatPill" Style="{DynamicResource Pill}" Margin="0" FontSize="19" Padding="24,14,24,15" Click="ToggleChat">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE8BD;" FontFamily="{DynamicResource Icons}" FontSize="21" VerticalAlignment="Center" Margin="0,2,10,0"/>
-            <TextBlock Text="Family chat" VerticalAlignment="Center"/>
+            <TextBlock Text="Chat" VerticalAlignment="Center"/>
             <Border x:Name="ChatBadge" Background="{DynamicResource Bad}" CornerRadius="12" MinWidth="24" Height="24" Padding="6,0" Margin="10,0,0,0" Visibility="Collapsed">
               <TextBlock x:Name="ChatBadgeText" Foreground="White" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
           </StackPanel>
         </Button>
       </Grid>
-      <Grid x:Name="ChatPanel" Visibility="Collapsed" Width="430" Height="580">
+      <Grid x:Name="ChatPanel" Visibility="Collapsed" Width="470" Height="660">
         <Border Style="{DynamicResource Shadow}"/>
         <Border Style="{DynamicResource CardBox}" Padding="18">
-          <DockPanel>
-            <DockPanel DockPanel.Dock="Top" Margin="4,0,0,14">
-              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="16,7,16,8" Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Hide" Click="ToggleChat"/>
-              <TextBlock Text="Family chat" FontSize="24" FontFamily="{DynamicResource Display}" VerticalAlignment="Center"/>
+          <Grid>
+            <DockPanel>
+              <DockPanel DockPanel.Dock="Top" Margin="4,0,0,10">
+                <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="16,7,16,8" Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Hide" Click="ToggleChat"/>
+                <TextBlock x:Name="ChatTitle" Text="Family chat" FontSize="24" FontFamily="{DynamicResource Display}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+              </DockPanel>
+              <!-- One pill per conversation; a dot on the ones with something new -->
+              <WrapPanel x:Name="ChatConvs" DockPanel.Dock="Top" Margin="0,0,0,8"/>
+              <TextBlock x:Name="ChatWho" DockPanel.Dock="Top" FontSize="13" Foreground="{DynamicResource Muted}" Margin="4,0,0,8" TextWrapping="Wrap"/>
+              <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                <Button x:Name="ChatPictureButton" DockPanel.Dock="Left" Style="{DynamicResource Pill}" Margin="0,0,10,0" Padding="14,0" Height="48" FontSize="20"
+                        Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" ToolTip="Send a picture" Click="OpenPicturePicker">
+                  <TextBlock Text="&#xE91B;" FontFamily="{DynamicResource Icons}" VerticalAlignment="Center"/>
+                </Button>
+                <Button x:Name="ChatSendButton" DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="10,0,0,0" Content="Send" Click="SendChat"/>
+                <TextBox x:Name="ChatBox" FontSize="17" Height="48" Padding="12,0" MaxLength="500" KeyDown="ChatKeyDown" PreviewKeyDown="ChatPreviewKeyDown" VerticalContentAlignment="Center"/>
+              </DockPanel>
+              <TextBlock x:Name="ChatStatus" DockPanel.Dock="Bottom" FontSize="13" Foreground="{DynamicResource Muted}" Visibility="Collapsed" TextWrapping="Wrap" Margin="4,8,0,0"/>
+              <Border Background="{DynamicResource Well}" CornerRadius="{DynamicResource RButton}" Padding="12,12,4,12">
+                <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
+                  <StackPanel x:Name="ChatLog" Margin="0,0,8,0"/>
+                </ScrollViewer>
+              </Border>
             </DockPanel>
-            <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
-              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="10,0,0,0" Content="Send" Click="SendChat"/>
-              <TextBox x:Name="ChatBox" FontSize="17" Height="48" Padding="12,0" MaxLength="500" KeyDown="ChatKeyDown" VerticalContentAlignment="Center"/>
-            </DockPanel>
-            <TextBlock x:Name="ChatStatus" DockPanel.Dock="Bottom" FontSize="13" Foreground="{DynamicResource Muted}" Visibility="Collapsed"/>
-            <Border Background="{DynamicResource Well}" CornerRadius="{DynamicResource RButton}" Padding="12,12,4,12">
-              <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="ChatLog" Margin="0,0,8,0"/>
-              </ScrollViewer>
+
+            <!-- Pick a picture: his newest screenshots, or whatever is on the clipboard. No file browser. -->
+            <Border x:Name="PicturePicker" Visibility="Collapsed" Background="{DynamicResource Card}" CornerRadius="{DynamicResource RButton}">
+              <DockPanel Margin="4">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                  <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="16,7,16,8" Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Back" Click="ClosePicturePicker"/>
+                  <TextBlock Text="Send a picture" FontSize="22" FontFamily="{DynamicResource Display}" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Button x:Name="PasteButton" DockPanel.Dock="Top" Style="{DynamicResource Pill}" Margin="0,0,0,10" HorizontalAlignment="Left" FontSize="15" Padding="16,7,16,8"
+                        Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Paste the picture I copied" Click="PastePicture"/>
+                <TextBlock x:Name="PickerNote" DockPanel.Dock="Bottom" FontSize="13" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="2,10,0,0"
+                           Text="Your newest screenshots. Mom and Dad can see every picture you send."/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                  <WrapPanel x:Name="PickerGrid"/>
+                </ScrollViewer>
+              </DockPanel>
             </Border>
-          </DockPanel>
+
+            <!-- A picture from the chat, big. Click anywhere to close. -->
+            <Border x:Name="PictureBig" Visibility="Collapsed" Background="{DynamicResource Scrim}" CornerRadius="{DynamicResource RButton}" MouseLeftButtonUp="ClosePictureBig" Cursor="Hand">
+              <Image x:Name="PictureBigImage" Margin="12" Stretch="Uniform"/>
+            </Border>
+          </Grid>
         </Border>
       </Grid>
     </Grid>

@@ -199,6 +199,22 @@ $sent = Pipe @{ op = "chat_send"; detail = "ok fine" }
 $pc = Invoke-RestMethod "$hub/api/parent/chat" -WebSession $s
 Check "kid's chat reaches the parents" ($sent.ok -and @($pc | Where-Object { $_.text -eq "ok fine" -and $_.sender -eq "Adam" }).Count -eq 1) ($pc | ConvertTo-Json)
 
+# Friend chat: a friend writes from the invite page, the kid answers with words and a picture through the pipe,
+# and the parents see all of it.
+$inv = Invoke-RestMethod "$hub/api/parent/invites" -Method Post -WebSession $s -ContentType application/json -Body '{"kid_id":"adam","friend_name":"Max"}'
+Invoke-RestMethod "$hub/join/$($inv.code)/chat" -Method Post -ContentType application/json -Body '{"text":"hey Adam"}' | Out-Null
+$convs = Pipe @{ op = "chat_convs" }
+$fc = @($convs.data.convs | Where-Object { $_.kind -eq "friend" })[0]
+Check "kid has a chat with his invited friend" ($fc -and $fc.title -eq "Max" -and $fc.id -notlike "*$($inv.code)*") ($convs | ConvertTo-Json -Depth 5)
+$fm = Pipe @{ op = "chat"; detail = "0"; ref = $fc.id }
+Check "kid sees the friend's message" (@($fm.data | Where-Object { $_.text -eq "hey Adam" -and $_.friend }).Count -eq 1) ($fm | ConvertTo-Json -Depth 5)
+$png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"   # 1x1 pixel
+$pic = Pipe @{ op = "chat_picture"; detail = $png; note = "look www.example.com"; ref = $fc.id }
+$shared = Invoke-RestMethod "$hub/api/parent/chat-shared" -WebSession $s
+Check "kid's picture and link reach the parents" ($pic.ok -and @($shared | Where-Object { $_.picture -and $_.links -contains "www.example.com" }).Count -eq 1) ($pic, $shared | ConvertTo-Json -Depth 5)
+$page = Invoke-RestMethod "$hub/join/$($inv.code)/chat"
+Check "friend sees the kid's picture" (@($page.messages | Where-Object { $_.picture -and $_.sender -eq "Adam" }).Count -eq 1) ($page | ConvertTo-Json -Depth 5)
+
 # Managed apps: the helper should install Steam on its own (Chrome is preinstalled on CI runners).
 $steamOk = $false
 for ($i = 0; $i -lt 60 -and -not $steamOk; $i++) {
