@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, gamesearch, installs, retention, rules, updates
+from . import adguard, chat, consoles, gamesearch, installs, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -53,6 +53,9 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(adguard.poll_forever(app.state.db, settings)))
     if settings.updates.enabled and settings.updates.github_token and pollers_on:
         tasks.append(asyncio.create_task(updates.poll_forever(settings, app.state.updates_dir)))
+    if settings.consoles.enabled and pollers_on:
+        tasks.append(asyncio.create_task(consoles.sync_forever(
+            app.state.db, settings, lambda kid: today_state(app.state.db, settings, kid), settings.consoles.poll_seconds)))
     yield
     for t in tasks:
         t.cancel()
@@ -104,6 +107,7 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     now = now or rules.local_now(settings.timezone)
     day = rules.day_key(now)
     used = (db.one("SELECT minutes FROM usage WHERE kid_id=? AND day=?", (kid.id, day)) or {}).get("minutes", 0)
+    used += consoles.console_minutes(db, kid.id, day)   # one daily budget: Switch play counts too
     g = db.one("SELECT COALESCE(SUM(minutes),0) AS m, MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, day))
     # Extra time approved late at night may run past midnight, so last night's "play until" still counts.
     y = db.one("SELECT MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, rules.day_key(now - timedelta(days=1))))
@@ -674,6 +678,7 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "running": s["running"] if s and online else "",
             "seen_at": s["seen_at"] if s else None,
             "time": today_state(db, settings, kid).__dict__,
+            "consoles": consoles.console_today(db, kid.id, rules.day_key(rules.local_now(settings.timezone))),
             "pending": db.one("SELECT COUNT(*) n FROM requests WHERE kid_id=? AND state='pending'", (kid.id,))["n"],
             "apps": db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=? ORDER BY app", (kid.id,)),
             "auto_update": auto_update(db, kid.id),
@@ -852,6 +857,112 @@ def parent_set_playtime(kid_id: str, p: Playtime, parent: str = Depends(current_
 
 class Pause(BaseModel):
     minutes: int = Field(default=0, ge=0, le=24 * 60)   # 0 = until resumed (capped at end of day)
+
+
+# Consoles (shared daily time) -----------------------------------------------
+
+def consoles_on(settings: Settings) -> None:
+    if not settings.consoles.enabled:
+        raise HTTPException(404, "Consoles are turned off in config.yaml (consoles: enabled: false).")
+
+
+@app.get("/api/parent/consoles")
+def parent_consoles(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    day = rules.day_key(rules.local_now(settings.timezone))
+    link = db.one("SELECT provider,label,linked_by,linked_at,synced_at,error FROM console_links WHERE provider=?", (consoles.NINTENDO,))
+    devices = []
+    for d in db.q("SELECT * FROM console_devices WHERE provider=? ORDER BY name", (consoles.NINTENDO,)) if link else []:
+        players = db.q("""SELECT p.player_id, p.nickname, p.kid_id, COALESCE(u.minutes,0) AS minutes, COALESCE(u.games,'[]') AS games
+                          FROM console_players p LEFT JOIN console_usage u ON u.provider=p.provider AND u.device_id=p.device_id
+                            AND u.player_id=p.player_id AND u.day=?
+                          WHERE p.provider=? AND p.device_id=? ORDER BY p.nickname""", (day, consoles.NINTENDO, d["device_id"]))
+        for p in players:
+            p["games"] = json.loads(p["games"])
+        devices.append({"device_id": d["device_id"], "name": d["name"], "model": d["model"], "limit_kid": d["limit_kid"],
+                        "stop_game": bool(d["stop_game"]), "limit_now": d["limit_now"], "extra_time": bool(d["extra_time"]),
+                        "stops_game": bool(d["stops_game"]), "players": players})
+    return {"kids": [{"id": k.id, "name": k.name} for k in settings.kids], "nintendo": link, "devices": devices}
+
+
+class ConsoleFinish(BaseModel):
+    link: str = Field(min_length=10, max_length=4000)
+
+
+@app.post("/api/parent/consoles/nintendo/start")
+async def parent_nintendo_start(parent: str = Depends(current_parent), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    return {"login_url": await consoles.nintendo_start_login()}
+
+
+@app.post("/api/parent/consoles/nintendo/finish")
+async def parent_nintendo_finish(body: ConsoleFinish, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    try:
+        token, label = await consoles.nintendo_finish_login(body.link)
+    except consoles.LoginExpired as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        raise HTTPException(400, "Nintendo didn't accept that link. Tap Connect again and paste the newest link.")
+    now = rules.local_now(settings.timezone).isoformat()
+    db.x("""INSERT INTO console_links(provider,token,label,linked_by,linked_at) VALUES(?,?,?,?,?)
+            ON CONFLICT(provider) DO UPDATE SET token=excluded.token, label=excluded.label, linked_by=excluded.linked_by,
+              linked_at=excluded.linked_at, error=''""", (consoles.NINTENDO, token, label, parent, now))
+    await consoles.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    return parent_consoles(parent, db, settings)
+
+
+@app.delete("/api/parent/consoles/nintendo", status_code=204)
+async def parent_nintendo_unlink(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Forget the account. The Switch keeps whatever limit it has today; set it in Nintendo's app if needed."""
+    consoles_on(settings)
+    await consoles._drop_client()
+    for t in ("console_links", "console_devices", "console_players", "console_usage"):
+        db.x(f"DELETE FROM {t} WHERE provider=?", (consoles.NINTENDO,))
+
+
+@app.post("/api/parent/consoles/sync")
+async def parent_consoles_sync(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    await consoles.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    return parent_consoles(parent, db, settings)
+
+
+class ConsolePlayer(BaseModel):
+    kid_id: str = ""
+
+
+@app.put("/api/parent/consoles/nintendo/devices/{device_id}/players/{player_id}")
+def parent_console_player(device_id: str, player_id: str, body: ConsolePlayer, parent: str = Depends(current_parent),
+                          db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    if body.kid_id:
+        kid_or_404(settings, body.kid_id)
+    if not db.one("SELECT 1 FROM console_players WHERE provider=? AND device_id=? AND player_id=?", (consoles.NINTENDO, device_id, player_id)):
+        raise HTTPException(404, "No such player")
+    db.x("UPDATE console_players SET kid_id=? WHERE provider=? AND device_id=? AND player_id=?",
+         (body.kid_id, consoles.NINTENDO, device_id, player_id))
+    return parent_consoles(parent, db, settings)
+
+
+class ConsoleDevice(BaseModel):
+    limit_kid: str = ""        # '' = the hub leaves this console's limit alone
+    stop_game: bool = True
+
+
+@app.put("/api/parent/consoles/nintendo/devices/{device_id}")
+async def parent_console_device(device_id: str, body: ConsoleDevice, parent: str = Depends(current_parent),
+                                db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    if body.limit_kid:
+        kid_or_404(settings, body.limit_kid)
+    if not db.one("SELECT 1 FROM console_devices WHERE provider=? AND device_id=?", (consoles.NINTENDO, device_id)):
+        raise HTTPException(404, "No such console")
+    db.x("UPDATE console_devices SET limit_kid=?, stop_game=? WHERE provider=? AND device_id=?",
+         (body.limit_kid, int(body.stop_game), consoles.NINTENDO, device_id))
+    if body.limit_kid:   # apply now rather than at the next poll
+        await consoles.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    return parent_consoles(parent, db, settings)
 
 
 @app.post("/api/parent/kids/{kid_id}/pause")

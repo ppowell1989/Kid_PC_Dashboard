@@ -151,6 +151,46 @@ CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a 
     used_at    TEXT DEFAULT '',           -- last time a PC used it (it keeps working until it expires, so a failed run can be repeated)
     used_by    TEXT DEFAULT ''            -- the PC's computer name
 );
+CREATE TABLE IF NOT EXISTS console_links (   -- a parent's linked console account (today: Nintendo); token never leaves the hub
+    provider  TEXT PRIMARY KEY,
+    token     TEXT NOT NULL,
+    label     TEXT DEFAULT '',
+    linked_by TEXT DEFAULT '',
+    linked_at TEXT DEFAULT '',
+    synced_at TEXT DEFAULT '',
+    error     TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS console_devices (  -- each console on a linked account
+    provider     TEXT NOT NULL,
+    device_id    TEXT NOT NULL,
+    name         TEXT DEFAULT '',
+    model        TEXT DEFAULT '',
+    limit_kid    TEXT DEFAULT '',             -- the console's own daily limit follows this kid's time left ('' = leave it alone)
+    stop_game    INTEGER NOT NULL DEFAULT 1,  -- also turn on "Suspend software" so the game stops at the limit
+    limit_now    INTEGER,                     -- the console's limit today as last read or set
+    limit_set_at TEXT DEFAULT '',
+    extra_time   INTEGER NOT NULL DEFAULT 0,
+    stops_game   INTEGER NOT NULL DEFAULT 0,
+    seen_at      TEXT DEFAULT '',
+    PRIMARY KEY (provider, device_id)
+);
+CREATE TABLE IF NOT EXISTS console_players (  -- user profiles on a console, matched by a parent to a kid
+    provider  TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    nickname  TEXT DEFAULT '',
+    kid_id    TEXT DEFAULT '',                 -- '' = not counted toward anyone
+    PRIMARY KEY (provider, device_id, player_id)
+);
+CREATE TABLE IF NOT EXISTS console_usage (    -- a player's minutes on a console for a local day (Nintendo's running total)
+    provider  TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    day       TEXT NOT NULL,
+    minutes   INTEGER NOT NULL DEFAULT 0,
+    games     TEXT DEFAULT '[]',
+    PRIMARY KEY (provider, device_id, player_id, day)
+);
 """
 
 
