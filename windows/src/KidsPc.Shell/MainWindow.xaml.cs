@@ -28,6 +28,7 @@ public partial class MainWindow : Window
             if (App.DemoScene is { } scene) await ShowDemoSceneAsync(scene);
         };
         SizeChanged += (_, _) => DrawBackdrop();
+        Theme.Changed += OnThemeChanged;
     }
 
     private async Task RefreshAsync()
@@ -57,6 +58,7 @@ public partial class MainWindow : Window
         Greeting.Text = $"Hi, {rules.Kid.Name}!";
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
         ShowFuel(t);
+        SetTicker(rules.Kid.Name);
         StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
 
         if (t.Warn)
@@ -134,7 +136,11 @@ public partial class MainWindow : Window
         foreach (var g in notInstalled)
             CatalogueTiles.Children.Add(Tile($"{g.Title}\nInstall", async () => await InstallAsync(g), image: g.ImageUrl));
         if (notInstalled.Count == 0)
-            CatalogueTiles.Children.Add(new TextBlock { Text = "Everything approved is already installed.", FontSize = 18, Foreground = (Brush)FindResource("Muted") });
+        {
+            var none = new TextBlock { Text = "Everything approved is already installed.", FontSize = 18 };
+            none.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+            CatalogueTiles.Children.Add(none);
+        }
         Recolour(CatalogueTiles);
     }
 
@@ -159,15 +165,6 @@ public partial class MainWindow : Window
         catch { return Art[url] = null; }
     }
 
-    /// <summary>Soft poster colours for tiles that have no art (Web, voice chat, a game with no picture), taken in turn.</summary>
-    private static readonly (Color From, Color To)[] Posters =
-    [
-        (Color.FromRgb(0x5B, 0x8D, 0xFF), Color.FromRgb(0x3D, 0x6B, 0xF5)),   // blue
-        (Color.FromRgb(0x3F, 0xC9, 0x9A), Color.FromRgb(0x1F, 0xA9, 0x71)),   // green
-        (Color.FromRgb(0xFF, 0xB6, 0x5C), Color.FromRgb(0xF2, 0x8C, 0x28)),   // orange
-        (Color.FromRgb(0x9D, 0x86, 0xFF), Color.FromRgb(0x7C, 0x5C, 0xFC)),   // violet
-    ];
-
     /// <summary>A tile: art (or an icon on a poster colour) on top, the name on a plate below.
     /// A second line in <paramref name="text"/> becomes the small coloured caption, e.g. "Portal 2\nInstall".</summary>
     private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null)
@@ -177,36 +174,69 @@ public partial class MainWindow : Window
         var plate = new StackPanel();
         plate.Children.Add(new TextBlock
         {
-            Text = lines[0], FontSize = 20, FontFamily = (FontFamily)Application.Current.Resources["Display"],
+            Text = lines[0], FontSize = 20,
             TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap, MaxHeight = 50, LineHeight = 24,
         });
+        ((TextBlock)plate.Children[0]).SetResourceReference(TextBlock.FontFamilyProperty, "TileTitleFont");
         if (lines.Length > 1)
+        {
             plate.Children.Add(new TextBlock
             {
                 Text = lines[1].Replace("\n", "  \u2022  "), FontSize = 15, Margin = new Thickness(0, 1, 0, 0),
-                Foreground = (Brush)Application.Current.Resources["Muted"], TextTrimming = TextTrimming.CharacterEllipsis,
+                TextTrimming = TextTrimming.CharacterEllipsis,
             });
+            ((TextBlock)plate.Children[1]).SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+        }
         var b = new Button
         {
-            Style = (Style)Application.Current.Resources["Tile"],
             Content = plate,
             IsEnabled = enabled,
         };
+        b.SetResourceReference(StyleProperty, "Tile");
         if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
         else b.Tag = glyph ?? "\uE7FC";   // no art: a game controller
         b.Click += (_, _) => onClick();
         return b;
     }
 
-    /// <summary>Gives each tile with no art the next poster colour.</summary>
-    private static void Recolour(Panel tiles)
+    /// <summary>Dresses a row of tiles for the current theme: tiles with no art take the theme's poster colours in
+    /// turn, and themes with coloured frames (TileFrames) give each tile the next frame colour.</summary>
+    private void Recolour(Panel tiles)
     {
-        var i = 0;
-        foreach (var b in tiles.Children.OfType<Button>().Where(b => b.Background is not ImageBrush))
+        var posters = TryFindResource("PosterColours") as Color[] ?? [Color.FromRgb(0x3D, 0x6B, 0xF5)];
+        var frames = TryFindResource("TileFrames") as Color[];
+        int i = 0, p = 0;
+        foreach (var b in tiles.Children.OfType<Button>())
         {
-            var (from, to) = Posters[i++ % Posters.Length];
-            b.Background = new LinearGradientBrush(from, to, 45);
+            var caption = b.Content is StackPanel { Children.Count: > 1 } plate ? plate.Children[1] as TextBlock : null;
+            if (frames is { Length: > 0 })
+            {
+                var frame = new SolidColorBrush(frames[i++ % frames.Length]);
+                b.BorderBrush = frame;
+                if (frames.Length > 1 && caption is not null) caption.Foreground = frame;
+            }
+            else
+            {
+                b.ClearValue(BorderBrushProperty);
+                caption?.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+            }
+            if (b.Background is not ImageBrush)
+            {
+                var c = posters[p++ % posters.Length];
+                var light = Color.FromRgb((byte)(c.R + (255 - c.R) / 4), (byte)(c.G + (255 - c.G) / 4), (byte)(c.B + (255 - c.B) / 4));
+                b.Background = new LinearGradientBrush(light, c, 45);
+            }
         }
+    }
+
+    /// <summary>A new look was picked: redraw what code draws (backdrop, tile colours, ticker). Everything
+    /// declared in XAML follows the new theme by itself.</summary>
+    private void OnThemeChanged()
+    {
+        DrawBackdrop();
+        Recolour(HomeTiles); Recolour(CatalogueTiles); Recolour(SearchResults);
+        if (_state?.Rules is { } rules) { SetTicker(rules.Kid.Name); ShowFuel(rules.Time); }
+        if (ThemeOverlay.Visibility == Visibility.Visible) BuildThemeChoices();
     }
 
     /// <summary>The time left as a bar: green, then amber, then red.</summary>
@@ -215,7 +245,7 @@ public partial class MainWindow : Window
         var total = Math.Max(1, t.Allowance + t.Granted);
         var left = Math.Clamp((double)t.MinutesLeft / total, 0, 1);
         FuelFill.Width = Math.Round(FuelLane.Width * left);
-        FuelFill.Background = (Brush)FindResource(t.Warn || left <= 0.12 ? "FuelEmpty" : left <= 0.34 ? "FuelLow" : "FuelOk");
+        FuelFill.SetResourceReference(Border.BackgroundProperty, t.Warn || left <= 0.12 ? "FuelEmpty" : left <= 0.34 ? "FuelLow" : "FuelOk");
     }
 
     // ------------------------------------------------------------------ actions
@@ -354,7 +384,7 @@ public partial class MainWindow : Window
         try
         {
             var vt = await _helper.GetAsync<VoiceToken>(new PipeRequest("voice_token"));
-            _voice = new VoiceWindow(vt!, _state!.Rules!.Kid.Name) { Owner = this };
+            _voice = new VoiceWindow(vt!, _state!.Rules!.Kid.Name, Theme.Current) { Owner = this };
             _voice.Show();
         }
         catch (Exception ex) { StatusLine.Text = ex.Message; }
