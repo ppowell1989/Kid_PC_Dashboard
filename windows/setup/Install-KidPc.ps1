@@ -63,6 +63,8 @@ if (-not $ShellOnly) {
   Step "Writing device config"
   $dataDir = "$env:ProgramData\KidsPc"
   New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+  # A build installed by hand replaces whatever the updater had downloaded and not yet installed.
+  Remove-Item -Recurse -Force "$dataDir\staged", "$dataDir\update-forced.txt" -ErrorAction SilentlyContinue
   # Re-running to update: keep the hub address and tokens from the last install unless new ones are given.
   if (-not $DeviceToken -and (Test-Path "$dataDir\device.json")) {
     $prev = Get-Content "$dataDir\device.json" -Raw | ConvertFrom-Json

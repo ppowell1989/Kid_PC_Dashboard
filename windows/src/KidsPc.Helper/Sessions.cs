@@ -13,6 +13,10 @@ public static class Sessions
 
     [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
 
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSLogoffSession(IntPtr server, uint sessionId, [MarshalAs(UnmanagedType.Bool)] bool wait);
+
     private const int WTSUserName = 5;
 
     public static uint ConsoleSessionId => WTSGetActiveConsoleSessionId();
@@ -28,4 +32,7 @@ public static class Sessions
 
     public static bool KidIsAtConsole(string kidUser) =>
         string.Equals(ConsoleUser(), kidUser, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Signs a session out, as if its user had picked Sign out. Returns at once; the session ends a few seconds later.</summary>
+    public static bool SignOut(uint sessionId) => WTSLogoffSession(IntPtr.Zero, sessionId, false);
 }
