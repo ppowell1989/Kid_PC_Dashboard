@@ -6,7 +6,7 @@ and a .NET Worker Service for the helper.
 | Project | Runs as | Job |
 |---|---|---|
 | `KidsPc.Shell` | the kid (standard user), as his Windows shell instead of Explorer | Home screen, game tiles, "get more games", time left, 10-minute warning, lock screen, ask for time/games, Chrome tile, voice window |
-| `KidsPc.Helper` | Windows service, LocalSystem | Holds the hub token. Heartbeats + pulls rules every 30 s. Stops games when time is up or a game isn't approved. Rewrites Chrome's URL lists. Answers the shell over a named pipe. |
+| `KidsPc.Helper` | Windows service, LocalSystem | Holds the hub token. Heartbeats + pulls rules every 10 s. Stops games when time is up or a game isn't approved. Rewrites Chrome's URL lists. Answers the shell over a named pipe. |
 | `KidsPc.Shared` | | Hub contracts, pipe protocol, device config |
 
 The shell never talks to the hub directly, so the kid's account never sees the device token
@@ -17,7 +17,7 @@ The shell never talks to the hub directly, so the kid's account never sees the d
 - **No desktop.** Per-user `Winlogon\Shell` points at `KidsPcShell.exe`, so there is no Start menu,
   taskbar or File Explorer. Task Manager, Run, regedit, cmd and Control Panel are off by policy.
 - **Time limits are enforced by the helper, not the shell.** At zero it kills game and Chrome processes
-  every 30 s. The shell's lock screen is just the friendly face of that.
+  every 10 s. The shell's lock screen is just the friendly face of that.
 - **Unapproved games get stopped.** The helper maps running processes to Steam app ids via
   `appmanifest_*.acf` and to Battle.net games by folder, and kills anything not approved for that kid.
   Steam's own store is still reachable from the Steam client, so also turn on **Steam Families**

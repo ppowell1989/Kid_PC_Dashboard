@@ -279,7 +279,7 @@ $("#inviteForm").onsubmit = async (e) => {
 };
 
 refresh().catch(() => {});
-setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 30000);
+setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 10000);
 
 // Family chat ---------------------------------------------------------------
 const chat = { last: 0, seen: 0, started: false };

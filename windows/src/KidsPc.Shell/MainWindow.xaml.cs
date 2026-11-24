@@ -11,7 +11,7 @@ namespace KidsPc.Shell;
 public partial class MainWindow : Window
 {
     private readonly IHelper _helper = App.DemoScene is null ? new PipeHelper() : new DemoHelper(App.DemoScene);
-    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(5) };
     private ShellState? _state;
     private bool _warnedToday;
     private VoiceWindow? _voice;

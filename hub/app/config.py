@@ -72,7 +72,7 @@ class Updates(BaseModel):
     github_repo: str = "ppowell1989/Kid_PC_Dashboard"
     release_tag: str = "test-build"
     github_token: str = ""            # fine-grained token, this repo only, Contents: read
-    poll_minutes: int = 10
+    poll_minutes: int = 1             # a merged change should reach the PCs soon after its build finishes
 
 
 class Settings(BaseModel):
