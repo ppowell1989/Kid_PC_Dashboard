@@ -265,19 +265,26 @@ async function loadRequests() {
 }
 
 async function loadWeb() {
-  const kid = $("#webKid").value, src = $("#webSource").value;
+  const kid = $("#webKid").value, src = $("#webSource").value, days = $("#webDays").value;
   const [visits, sites, searches] = await Promise.all([
-    api(`/api/parent/visits/${kid}?limit=200${src ? `&source=${src}` : ""}`), api("/api/parent/sites"), api(`/api/parent/searches/${kid}?limit=100`),
+    api(`/api/parent/visits/${kid}?limit=200&days=${days}${src ? `&source=${src}` : ""}`), api("/api/parent/sites"), api(`/api/parent/searches/${kid}?limit=100&days=${days}`),
   ]);
+  const none = { 1: "today", 7: "in the last 7 days", 0: "kept" }[days];
   $("#searches").innerHTML = searches.map((q) => `<li>${q.flagged ? '<span class="tagline bad">Flagged</span> ' : ""}${esc(q.term)}
-    <div class="muted">${esc(new Date(q.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div></li>`).join("") || `<li class="muted">No searches yet.</li>`;
+    <div class="muted">${esc(new Date(q.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div></li>`).join("") || `<li class="muted">No searches ${none}.</li>`;
   $("#visits").innerHTML = visits.map((v) => `<li>${v.blocked ? '<span class="tagline bad">Blocked</span> ' : ""}<b>${esc(v.title || v.domain)}</b>
-    <div class="muted">${esc(v.url || v.domain)}</div><div class="muted">${esc(when(v.at))} · ${v.source === "chrome" ? "Chrome" : "network"}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
+    <div class="muted">${esc(v.url || v.domain)}</div><div class="muted">${esc(when(v.at))} · ${v.source === "chrome" ? "Chrome" : "network"}</div></li>`).join("") || `<li class="muted">No pages ${none}.</li>`;
   $("#webMode").textContent = sites.mode === "allowlist" ? "(allow-list mode: only these load)" : "(filtered mode: list is informational)";
   $("#sites").innerHTML = sites.sites.map((d) => `<li class="split">${esc(d)} <button class="ghost small" data-delsite="${esc(d)}">Remove</button></li>`).join("");
   document.querySelectorAll("[data-delsite]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/sites/${encodeURIComponent(b.dataset.delsite)}`, { method: "DELETE" }); loadWeb(); }));
 }
-$("#webKid").onchange = $("#webSource").onchange = loadWeb;
+$("#webKid").onchange = $("#webSource").onchange = $("#webDays").onchange = loadWeb;
+document.querySelectorAll("[data-clearweb]").forEach((b) => (b.onclick = async () => {
+  const kid = $("#webKid").value, what = b.dataset.clearweb === "searches" ? "searches" : "pages and sites";
+  if (!await sheet({ title: `Clear ${kidName(kid)}'s ${what}?`, text: "This deletes all of them from the hub, not just the ones showing.", ok: "Clear", kind: "bad" })) return;
+  try { await api(`/api/parent/history/${b.dataset.clearweb}?kid_id=${encodeURIComponent(kid)}`, { method: "DELETE" }); } catch (err) { return oops(err); }
+  loadWeb();
+}));
 $("#siteForm").onsubmit = async (e) => { e.preventDefault(); await api("/api/parent/sites", { method: "POST", body: { domain: new FormData(e.target).get("domain") } }); e.target.reset(); loadWeb(); };
 
 // What a parent needs to decide on a game: rating, where it's on, and how to get it.
@@ -365,12 +372,26 @@ async function copyText(text) {
 }
 
 async function loadInvites() {
-  const inv = await api("/api/parent/invites");
-  $("#invites").innerHTML = inv.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} ${i.revoked ? '<span class="tagline bad">Revoked</span>' : ""}
+  const [inv, keep] = await Promise.all([api("/api/parent/invites"), api("/api/parent/retention").catch(() => null)]);
+  const live = inv.filter((i) => !i.revoked), past = inv.filter((i) => i.revoked);
+  const days = keep ? keep.days.invites : 7;
+  $("#invites").innerHTML = live.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))}
     <div class="muted">${esc(i.link)}</div>
-    ${i.revoked ? "" : `<div class="actions"><button data-copy="${esc(i.link)}">Copy link</button><button class="ghost" data-revoke="${esc(i.code)}">Revoke</button></div>`}</li>`).join("") || `<li class="muted">No invites yet.</li>`;
+    <div class="actions"><button data-copy="${esc(i.link)}">Copy link</button><button class="ghost" data-revoke="${esc(i.code)}" data-name="${esc(i.friend_name)}">Revoke</button></div></li>`).join("")
+    || `<li class="muted">No active links. Make one for a friend on the right.</li>`;
+  if (past.length) $("#invites").insertAdjacentHTML("beforeend", `<li class="past"><details>
+      <summary>Revoked links (${past.length})</summary>
+      <p class="muted">These no longer work. ${days ? `They are deleted ${days === 1 ? "a day" : `${days} days`} after you revoke them.` : "They are kept until you clear them."}</p>
+      <ul class="list">${past.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} <span class="tagline bad">Revoked</span>
+        <div class="muted">${i.revoked_at ? `Revoked ${esc(localTime(i.revoked_at))}` : esc(i.link)}</div></li>`).join("")}</ul>
+      <button class="ghost small" id="clearInvites">Clear revoked links</button></details></li>`);
   document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
-  document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites(); }));
+  document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Revoke ${b.dataset.name}'s link?`, text: "The link stops working straight away, and they are dropped from a call they are in.", ok: "Revoke", kind: "bad" })) return;
+    await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites();
+  }));
+  const clr = $("#clearInvites");
+  if (clr) clr.onclick = async () => { await api("/api/parent/history/invites", { method: "DELETE" }); loadInvites(); };
 }
 $("#inviteForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -378,6 +399,24 @@ $("#inviteForm").onsubmit = async (e) => {
   await api("/api/parent/invites", { method: "POST", body: { kid_id: f.get("kid_id"), friend_name: f.get("friend_name") } });
   e.target.reset(); fillKidSelects(); loadInvites();
 };
+
+// History and clean-up (Now tab) ---------------------------------------------
+const keepLabel = (d) => (d === 0 ? "Forever" : d === 1 ? "1 day" : d === 365 ? "1 year" : `${d} days`);
+async function loadRetention() {
+  const r = await api("/api/parent/retention");
+  $("#retention").innerHTML = r.kinds.map((k) => `<li class="split keep"><span>${esc(k.label)}</span><span class="inrow">
+      <select data-keep="${k.kind}" aria-label="Keep ${esc(k.label)} for">${r.choices.map((d) => `<option value="${d}" ${d === k.days ? "selected" : ""}>${keepLabel(d)}</option>`).join("")}</select>
+      <button class="ghost small" data-clearkind="${k.kind}" data-label="${esc(k.label)}">Clear</button></span></li>`).join("");
+  document.querySelectorAll("[data-keep]").forEach((s) => (s.onchange = async () => {
+    try { await api("/api/parent/retention", { method: "PUT", body: { days: { [s.dataset.keep]: +s.value } } }); } catch (err) { oops(err); }
+    loadRetention();
+  }));
+  document.querySelectorAll("[data-clearkind]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Clear ${b.dataset.label.toLowerCase()}?`, text: "This deletes all of it now, for both kids. It can't be undone.", ok: "Clear", kind: "bad" })) return;
+    try { const r = await api(`/api/parent/history/${b.dataset.clearkind}`, { method: "DELETE" }); b.textContent = `Cleared ${r.deleted}`; b.disabled = true; } catch (err) { oops(err); }
+  }));
+}
+$("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention().catch(oops); };
 
 refresh().catch(() => {});
 setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 10000);
@@ -485,7 +524,25 @@ $("#ptSave").onclick = async (e) => {
     for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/playtimes/${k}`, { method: "PUT", body });
   } catch (err) { $("#ptErr").textContent = err.message; return; }
   $("#ptSheet").close();
-  loadPlaytimes().catch(oops); refresh().catch(() => {});
+  loadPlaytimes().catch(oops); // History and clean-up (Now tab) ---------------------------------------------
+const keepLabel = (d) => (d === 0 ? "Forever" : d === 1 ? "1 day" : d === 365 ? "1 year" : `${d} days`);
+async function loadRetention() {
+  const r = await api("/api/parent/retention");
+  $("#retention").innerHTML = r.kinds.map((k) => `<li class="split keep"><span>${esc(k.label)}</span><span class="inrow">
+      <select data-keep="${k.kind}" aria-label="Keep ${esc(k.label)} for">${r.choices.map((d) => `<option value="${d}" ${d === k.days ? "selected" : ""}>${keepLabel(d)}</option>`).join("")}</select>
+      <button class="ghost small" data-clearkind="${k.kind}" data-label="${esc(k.label)}">Clear</button></span></li>`).join("");
+  document.querySelectorAll("[data-keep]").forEach((s) => (s.onchange = async () => {
+    try { await api("/api/parent/retention", { method: "PUT", body: { days: { [s.dataset.keep]: +s.value } } }); } catch (err) { oops(err); }
+    loadRetention();
+  }));
+  document.querySelectorAll("[data-clearkind]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Clear ${b.dataset.label.toLowerCase()}?`, text: "This deletes all of it now, for both kids. It can't be undone.", ok: "Clear", kind: "bad" })) return;
+    try { const r = await api(`/api/parent/history/${b.dataset.clearkind}`, { method: "DELETE" }); b.textContent = `Cleared ${r.deleted}`; b.disabled = true; } catch (err) { oops(err); }
+  }));
+}
+$("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention().catch(oops); };
+
+refresh().catch(() => {});
 };
 
 // Family chat ---------------------------------------------------------------

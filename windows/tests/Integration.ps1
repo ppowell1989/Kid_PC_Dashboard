@@ -145,10 +145,15 @@ Check "chrome allow-list includes wikipedia.org" (@($al.PSObject.Properties.Valu
 
 # Remote control from the dashboard: a message reaches the shell, pause locks, resume unlocks.
 $cmd = Invoke-RestMethod "$hub/api/parent/kids/adam/commands" -Method Post -WebSession $s -ContentType application/json -Body '{"kind":"message","arg":"Dinner in 5!"}'
-Start-Sleep 8
-$st = Pipe @{ op = "state" }
+# The helper polls for commands between other work (Chrome history upload, app installs), so wait up to 30 s
+# for the message rather than a fixed 8 s, which raced with that work on slow runners.
+for ($i = 0; $i -lt 30; $i++) {
+  Start-Sleep 1
+  $st = Pipe @{ op = "state" }
+  $act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
+  if (@($st.data.messages | Where-Object { $_.text -eq "Dinner in 5!" }).Count -eq 1 -and ($act.commands | Where-Object { $_.kind -eq "message" }).state -eq "done") { break }
+}
 Check "parent message reaches the shell" (@($st.data.messages | Where-Object { $_.text -eq "Dinner in 5!" }).Count -eq 1) ($st.data.messages | ConvertTo-Json)
-$act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
 Check "command marked done on the hub" (($act.commands | Where-Object { $_.kind -eq "message" }).state -eq "done")
 Invoke-RestMethod "$hub/api/parent/kids/adam/pause" -Method Post -WebSession $s -ContentType application/json -Body '{"minutes":0}' | Out-Null
 Start-Sleep 8
