@@ -29,6 +29,7 @@ public partial class MainWindow : Window
         };
         SizeChanged += (_, _) => DrawBackdrop();
         Theme.Changed += OnThemeChanged;
+        Launcher.Failed += msg => Dispatcher.Invoke(() => StatusLine.Text = msg);
     }
 
     private async Task RefreshAsync()

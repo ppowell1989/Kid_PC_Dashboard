@@ -161,7 +161,7 @@ async function refresh() {
   document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
     if (!d.open) return;
     const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
-    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", browser_blocked: "Closed other browser", web_filter: "Web filter set" };
+    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", browser_blocked: "Closed other browser", web_filter: "Web filter set", offline_play: "Played offline", tool_blocked: "Closed a Windows tool he shouldn't have" };
     const rows = [
       ...a.events.map((e) => ({ at: e.at, text: `${label[e.kind] || e.kind}: ${e.detail}` })),
       ...a.commands.map((c) => ({ at: c.created_at.replace(" ", "T") + "Z", text: `${c.created_by} sent ${c.kind}${c.arg ? ` "${c.arg}"` : ""} (${c.state}${c.result ? ": " + c.result : ""})` })),
@@ -479,7 +479,7 @@ function windowRow(w = { start: "15:30", end: "17:30" }) {
 }
 function wireWindows() {
   const box = $("#ptWindows");
-  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time before bedtime.</p>`;
+  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time from 6 AM until bedtime.</p>`;
   box.querySelectorAll("[data-delwin]").forEach((b) => (b.onclick = () => { b.closest(".winrow").remove(); wireWindows(); }));
 }
 

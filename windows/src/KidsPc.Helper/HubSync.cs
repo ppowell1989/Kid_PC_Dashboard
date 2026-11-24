@@ -56,10 +56,33 @@ public sealed class StateCache
 public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, ILogger<HubSync> log)
     : BackgroundService
 {
+    // Play the hub never heard about, because it couldn't be reached (network cable out, Wi-Fi off, hub down).
+    // Kept on disk so a restart doesn't forget it, and handed to the hub with the next heartbeat that gets
+    // through. Without this, unplugging the network was free play time: the PC locked itself once the
+    // minutes it knew about ran out, but the hub had counted none of them and unlocked it again.
+    private static readonly string OfflineFile = Path.Combine(DeviceConfig.Dir, "offline-seconds.txt");
+    private double _offlineSeconds = ReadOffline();
+
+    private static double ReadOffline()
+    {
+        try { return Math.Clamp(double.Parse(File.ReadAllText(OfflineFile), System.Globalization.CultureInfo.InvariantCulture), 0, 24 * 3600); }
+        catch { return 0; }
+    }
+
+    private void SaveOffline()
+    {
+        try { File.WriteAllText(OfflineFile, _offlineSeconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)); }
+        catch (Exception ex) { log.LogWarning("could not save offline play time: {Msg}", ex.Message); }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        var lastLoop = DateTimeOffset.UtcNow;
         while (!ct.IsCancellationRequested)
         {
+            // Time since the last look, capped so a PC that slept doesn't count the nap as play.
+            var elapsed = Math.Clamp((DateTimeOffset.UtcNow - lastLoop).TotalSeconds, 0, 60);
+            lastLoop = DateTimeOffset.UtcNow;
             var kidHere = Sessions.KidIsAtConsole(cfg.KidUser);
             var activity = kidHere ? library.CurrentActivity(cache.Rules, Sessions.ConsoleSessionId) : new Activity("", false, []);
             try
@@ -68,7 +91,14 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 var appStates = apps.Status.ToDictionary(kv => kv.Key, kv => new { state = kv.Value.State, detail = kv.Value.Detail });
                 appStates["kidspc"] = new { state = updater.Status.State, detail = updater.Status.Detail };
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
-                await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "" }, ct);
+                var owed = (int)(_offlineSeconds / 60);
+                var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed }, ct);
+                if (owed > 0 && hb.IsSuccessStatusCode)
+                {
+                    log.LogInformation("told the hub about {Minutes} minutes played while it was unreachable", owed);
+                    _offlineSeconds -= owed * 60;
+                    SaveOffline();
+                }
                 var rules = await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct);
                 if (rules is not null)
                 {
@@ -83,6 +113,11 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
             {
                 cache.MarkUnreachable();
                 log.LogWarning("hub unreachable: {Message}", ex.Message);
+                if (activity.Active)
+                {
+                    _offlineSeconds = Math.Min(_offlineSeconds + elapsed, 24 * 3600);
+                    SaveOffline();
+                }
             }
 
             var rulesNow = cache.Rules;
