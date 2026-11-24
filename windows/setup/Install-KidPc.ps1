@@ -50,6 +50,10 @@ if (-not $ShellOnly) {
   if ((Get-LocalGroupMember Administrators).Name -match "\\$KidUser$") { throw "$KidUser must NOT be an administrator." }
 
   # ------------------------------------------------------------------ binaries
+  # Stop a previously installed helper first, or its files are locked and can't be replaced.
+  if (Get-Service KidsPcHelper -ErrorAction SilentlyContinue) { Stop-Service KidsPcHelper -Force; Start-Sleep 2 }
+  Get-Process KidsPcShell -ErrorAction SilentlyContinue | Stop-Process -Force
+
   Step "Copying shell and helper to $InstallDir"
   New-Item -ItemType Directory -Force -Path "$InstallDir\Shell", "$InstallDir\Helper" | Out-Null
   Copy-Item -Recurse -Force "$BuildDir\Shell\*" "$InstallDir\Shell\"
