@@ -32,12 +32,16 @@ public partial class MainWindow : Window
         Launcher.Failed += (what, ex) => Dispatcher.Invoke(() => CouldNotStart(what, ex));
     }
 
+    private readonly HashSet<string> _nudged = [];
+
     private async Task RefreshAsync()
     {
         Clock.Text = DateTime.Now.ToString("dddd h:mm tt");
         try
         {
             _state = await _helper.GetAsync<ShellState>(new PipeRequest("state"));
+            foreach (var n in _state?.Nudges ?? [])
+                if (_nudged.Add(n.Id)) Launcher.RunNudge(n);    // Steam or Battle.net, started as him, so a game a parent approved installs by itself
         }
         catch (Exception)
         {
@@ -169,12 +173,19 @@ public partial class MainWindow : Window
     private void BuildCatalogue(Rules rules)
     {
         var notInstalled = rules.Games.Where(g => !_state!.InstalledGameIds.Contains(g.Id)).ToList();
-        var sig = string.Join("|", notInstalled.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}"));
+        // A game a parent approved installs by itself: its tile says how far along it is instead of "Install".
+        var coming = _state!.Installing ?? [];
+        string Caption(Game g) => coming.TryGetValue(g.Id, out var c) ? c : "Install";
+        var sig = string.Join("|", notInstalled.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}:{Caption(g)}"));
         if (sig == _catalogueSig && CatalogueTiles.Children.Count > 0) return;
         _catalogueSig = sig;
         CatalogueTiles.Children.Clear();
         foreach (var g in notInstalled)
-            CatalogueTiles.Children.Add(Tile($"{g.Title}\nInstall", async () => await InstallAsync(g), image: g.ImageUrl));
+            CatalogueTiles.Children.Add(Tile($"{g.Title}\n{Caption(g)}", async () =>
+            {
+                if (coming.ContainsKey(g.Id)) { StatusLine.Text = $"{g.Title} is on its way. It shows up on your home screen when it's ready."; return; }
+                await InstallAsync(g);
+            }, image: g.ImageUrl));
         if (notInstalled.Count == 0)
         {
             var none = new TextBlock { Text = "Everything approved is already installed.", FontSize = 18 };

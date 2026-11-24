@@ -49,7 +49,7 @@ document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
   if (b.dataset.tab === "chat") { chatSeen(); loadChat(); }
-  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites }[b.dataset.tab] || (() => {}))();
+  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites, pcs: loadPcs }[b.dataset.tab] || (() => {}))();
 }));
 
 function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}` : `${m}m`; }
@@ -85,6 +85,9 @@ async function refresh() {
     else if (pc && k.online && B.published && !pc.detail.includes(B.published.slice(0, 8)))
       newer = `A newer build${B.published_title ? ` (${esc(B.published_title)})` : ""} is on its way to this PC.`;
     if (newer) newer = `<div class="muted">${newer}</div>`;
+    const n = k.installs || {};
+    const gamesLine = n.needs || n.busy ? `<button class="ghost small ${n.needs ? "attn" : ""}" data-gopcs="1">${[
+      n.busy ? `${n.busy} game${n.busy > 1 ? "s" : ""} installing` : "", n.needs ? `${n.needs} need${n.needs > 1 ? "" : "s"} you` : ""].filter(Boolean).join(", ")}</button>` : "";
     return `<div class="card kid ${k.online ? "online" : ""}">
       <div class="kidhead">
         <div class="avatar">${esc(k.name.slice(0, 1))}</div>
@@ -108,7 +111,7 @@ async function refresh() {
         <button class="ghost small" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
         <button class="ghost small" data-setup="${k.id}">Set up a new PC</button>
       </div>
-      ${apps ? `<div class="chips">${apps}${how}</div>${newer}` : ""}
+      ${apps ? `<div class="chips">${apps}${how}${gamesLine}</div>${newer}` : gamesLine ? `<div class="chips">${gamesLine}</div>` : ""}
       <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
     </div>`;
   }).join("");
@@ -131,6 +134,9 @@ async function refresh() {
     if (!await sheet({ title: `${verb} ${kidName(b.dataset.kid)}'s PC?`, text: "He gets a 1-minute warning.", ok: verb, kind: "bad" })) return;
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
   }));
+  document.querySelectorAll("[data-gopcs]").forEach((b) => (b.onclick = () => document.querySelector('nav button[data-tab="pcs"]').click()));
+  const needs = o.kids.reduce((x, k) => x + ((k.installs || {}).needs || 0), 0);
+  $("#pcDot").textContent = needs || "";
   document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => {
     $("#webKid").value = b.dataset.seesearch; document.querySelector('nav button[data-tab="web"]').click();
   }));
@@ -161,7 +167,7 @@ async function refresh() {
   document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
     if (!d.open) return;
     const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
-    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", launcher_missing: "Needs a launcher", launch_failed: "Couldn't start", browser_blocked: "Closed other browser", web_filter: "Web filter set", offline_play: "Played offline", tool_blocked: "Closed a Windows tool he shouldn't have" };
+    const label = { game_installed: "Game installed", game_install_started: "Started installing", game_install_failed: "Game didn't install", game_install_no_space: "PC is full", game_install_not_owned: "Not in his library", game_install_needs_signin: "Store needs a sign-in", stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", launcher_missing: "Needs a launcher", launch_failed: "Couldn't start", browser_blocked: "Closed other browser", web_filter: "Web filter set", offline_play: "Played offline", tool_blocked: "Closed a Windows tool he shouldn't have" };
     const rows = [
       ...a.events.map((e) => ({ at: e.at, text: `${label[e.kind] || e.kind}: ${e.detail}` })),
       ...a.commands.map((c) => ({ at: c.created_at.replace(" ", "T") + "Z", text: `${c.created_by} sent ${c.kind}${c.arg ? ` "${c.arg}"` : ""} (${c.state}${c.result ? ": " + c.result : ""})` })),
@@ -340,6 +346,59 @@ $("#gameSearch").onsubmit = async (e) => {
   } catch (err) { note.textContent = err.message; }
   renderGameHits();
 };
+
+// PCs: like an IT office's view of its computers, in plain words. Every approved game on every PC, how far
+// along it is, and the one thing to do when it's stuck. The hub writes the words (installs.py).
+const APP_NAME = { steam: "Steam", battlenet: "Battle.net", chrome: "Chrome" };
+let pcTimer = 0;
+function gb(n) { return n == null ? "" : n >= 100 ? `${Math.round(n)} GB free` : `${n.toFixed(1)} GB free`; }
+async function loadPcs() {
+  clearTimeout(pcTimer);
+  const panel = document.querySelector('[data-panel="pcs"]');
+  if (panel.hidden) return;
+  let d;
+  try { d = await api("/api/parent/installs"); } catch (err) { if (err.message !== "login") $("#pcs").innerHTML = `<p class="muted">${esc(err.message)}</p>`; return; }
+  $("#pcSummary").textContent = d.summary;
+  $("#pcs").innerHTML = d.pcs.map((p) => {
+    const seen = p.online ? "On now" : p.seen_at ? `Off. Last on ${new Date(p.seen_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "Not set up yet";
+    const launchers = p.launchers.map((a) => `<span class="chip ${a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending"}" title="${esc(a.detail)}">${esc(APP_NAME[a.app] || a.app)} ${a.state === "installed" ? "ready" : esc(a.state)}</span>`).join("");
+    const rows = p.games.map((g) => {
+      const t = g.plain, pct = t.percent ?? null;
+      const btn = t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
+        : t.fix === "install" ? `<button class="small" data-pcinstall="${g.game_id}" data-kid="${p.id}">Install</button>`
+        : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>` : "";
+      return `<li class="inst t-${t.tone}">
+        ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
+        <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
+          ${pct !== null ? `<div class="bar"><div style="width:${pct}%"></div></div>` : t.tone === "busy" ? `<div class="bar busy"><div></div></div>` : ""}
+          <div class="muted">${esc(t.text)}</div></div>
+        <div class="do">${btn}</div></li>`;
+    }).join("") || `<li class="muted">No games approved for ${esc(p.name)} yet. Approve one in Games or Requests and it installs here by itself.</li>`;
+    return `<div class="card pc ${p.online ? "online" : ""}">
+      <div class="pchead"><div class="avatar">${esc(p.name.slice(0, 1))}</div>
+        <div><h2>${esc(p.name)}'s PC</h2><div class="status"><span class="dot ${p.online ? "on" : ""}"></span>${esc(seen)}${p.disk_free_gb != null ? ` · ${gb(p.disk_free_gb)}` : ""}</div></div></div>
+      ${launchers ? `<div class="chips">${launchers}</div>` : ""}
+      <ul class="list">${rows}</ul></div>`;
+  }).join("");
+  document.querySelectorAll("[data-pcretry]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = "Starting…";
+    try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcretry}/retry`, { method: "POST" }); } catch (err) { oops(err); }
+    loadPcs();
+  }));
+  document.querySelectorAll("[data-pcinstall]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = "Sending…";
+    try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcinstall}`, { method: "PUT", body: { install: true } }); } catch (err) { oops(err); }
+    loadPcs();
+  }));
+  document.querySelectorAll("[data-pchow]").forEach((b) => (b.onclick = () => {
+    const store = APP_NAME[b.dataset.pchow] || "the store", name = kidName(b.dataset.kid);
+    const text = b.dataset.pchow === "battlenet"
+      ? `This is the one step that needs someone at ${name}'s PC, once. Sign in to the parent account on the PC, open Battle.net, sign in with a Blizzard account and tick "Keep me logged in". Then come back here and press Try again. Every game after that installs by itself.`
+      : `This is the one step that needs someone at ${name}'s PC, once. On ${name}'s screen, Steam asks for a sign-in: use ${name}'s Steam account (a Steam Family child account is best) and tick "Remember me". Then press Try again here. Every game after that installs by itself.`;
+    sheet({ title: `Sign in to ${store} once`, text, cancel: "" });
+  }));
+  pcTimer = setTimeout(loadPcs, 10000);   // progress moves while the page is open
+}
 
 const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
 async function loadGames() {

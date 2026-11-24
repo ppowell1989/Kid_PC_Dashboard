@@ -59,6 +59,35 @@ public static class Launcher
 
     private const string Steam = @"C:\Program Files (x86)\Steam\steam.exe";
 
+    /// <summary>Something the helper needs done as the kid, in his session, so a game a parent approved installs
+    /// without anyone at the PC. Never shown to him; a failure only goes in the log via <see cref="Failed"/>'s caller.</summary>
+    public static void RunNudge(Nudge n)
+    {
+        if (App.DemoScene is not null) return;
+        try
+        {
+            switch (n.Kind)
+            {
+                case "steam_start" when File.Exists(Steam):
+                    Process.Start(new ProcessStartInfo(Steam, "-silent") { UseShellExecute = false });
+                    break;
+                case "steam_restart" when File.Exists(Steam):
+                    // Steam reads the games it has been given when it starts. Close it, wait, start it again in the tray.
+                    _ = Task.Run(async () =>
+                    {
+                        Process.Start(new ProcessStartInfo(Steam, "-shutdown") { UseShellExecute = false })?.Dispose();
+                        for (var i = 0; i < 30 && Process.GetProcessesByName("steam").Length > 0; i++) await Task.Delay(1000);
+                        Process.Start(new ProcessStartInfo(Steam, "-silent") { UseShellExecute = false })?.Dispose();
+                    });
+                    break;
+                case "battlenet_install" when File.Exists(BattleNet) && !string.IsNullOrWhiteSpace(n.Arg):
+                    Process.Start(new ProcessStartInfo(BattleNet, $"--exec=\"install {n.Arg}\"") { UseShellExecute = false })?.Dispose();   // GUESS: Battle.net CLI verb
+                    break;
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"nudge {n.Kind} failed: {ex.Message}"); }
+    }
+
     /// <summary>Opens a protocol URI. steam:// goes straight to steam.exe, because the protocol is often
     /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
     public static bool OpenUri(string uri, string what) => Try(what, () => Open(uri));

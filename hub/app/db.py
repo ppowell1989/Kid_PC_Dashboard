@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS playtimes (      -- per kid, per day of week; no row 
     updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (kid_id, weekday)
 );
+CREATE TABLE IF NOT EXISTS game_installs (  -- where each approved game stands on each kid's PC, as the helper last said
+    kid_id      TEXT NOT NULL,
+    game_id     INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    state       TEXT NOT NULL DEFAULT 'queued',   -- see installs.STATES
+    detail      TEXT DEFAULT '',                  -- the helper's own words, for the parents
+    done_bytes  INTEGER NOT NULL DEFAULT 0,
+    total_bytes INTEGER NOT NULL DEFAULT 0,
+    retry       INTEGER NOT NULL DEFAULT 0,       -- bumped by "Try again"; the helper starts over when it changes
+    at          TEXT NOT NULL DEFAULT '',         -- last report from the PC
+    PRIMARY KEY (kid_id, game_id)
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a new PC to make it a kid's PC
     code       TEXT PRIMARY KEY,
@@ -149,6 +160,9 @@ MIGRATIONS = [
     ("status", "game_id", "INTEGER"),            # catalogue game running now, so a brother can join it
     ("status", "voice", "TEXT DEFAULT ''"),      # voice room the kid is in: '', 'family' or 'friends'   # parent's note when deciding, shown to the kid   # e.g. "steam:291550" when the kid picked an exact game
     ("invites", "revoked_at", "TEXT DEFAULT ''"),   # when a parent revoked it; old revoked links are pruned
+    # 1 = the hub puts this game on the kid's PC by itself. Approvals made before automatic installs existed
+    # stay 0 (the kid installs them from Get more games), so an upgrade never starts a pile of big downloads.
+    ("approvals", "auto_install", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

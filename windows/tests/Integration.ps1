@@ -215,6 +215,29 @@ $kp = $apps | Where-Object { $_.app -eq "kidspc" }
 Check "helper reports its build" ($kp -ne $null -and $kp.state -eq "installed" -and $kp.detail -match "on build") ($kp | ConvertTo-Json)
 $act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
 Check "steam install reported in the activity feed" (($act.events | Where-Object { $_.kind -eq "app_installed" -and $_.detail -eq "steam" }) -ne $null)
+# Approving Portal 2 put it on the PC's install list: with Steam there, the helper tells Steam about it by itself
+# (a manifest marked "needs downloading") and reports where it stands. Nobody is signed in here, so it waits for the kid.
+$acf = "${env:ProgramFiles(x86)}\Steam\steamapps\appmanifest_620.acf"
+$pcRow = $null
+for ($i = 0; $i -lt 20; $i++) {
+  $inst = Invoke-RestMethod "$hub/api/parent/installs" -WebSession $s
+  $pcRow = @($inst.pcs | Where-Object { $_.id -eq "adam" })[0]
+  $p2 = @($pcRow.games | Where-Object { $_.title -eq "Portal 2" })[0]
+  if ((Test-Path $acf) -and $p2.state -notin "queued") { break }
+  Start-Sleep 3
+}
+Check "approved game: helper gave Steam its manifest by itself" ((Test-Path $acf) -and ((Get-Content $acf -Raw) -match '"StateFlags"\s+"1026"')) (Get-Content $acf -Raw -ErrorAction SilentlyContinue)
+Check "unapproved game: no manifest" (-not (Test-Path "${env:ProgramFiles(x86)}\Steam\steamapps\appmanifest_999999.acf"))
+Check "approved game: hub shows where it stands, in plain words" ($p2.state -in "waiting", "needs_signin" -and $p2.plain.text) ($p2 | ConvertTo-Json -Depth 4)
+Write-Host "INFO  Portal 2 on the PCs page: [$($p2.plain.label)] $($p2.plain.text)"
+$wowRow = @($pcRow.games | Where-Object { $_.title -eq "World of Warcraft" })[0]
+Write-Host "INFO  World of Warcraft on the PCs page: state=$($wowRow.state) [$($wowRow.plain.label)] $($wowRow.plain.text)"
+Check "battle.net game waits for Battle.net instead of failing" ($wowRow.state -notin "failed", "manual") ($wowRow | ConvertTo-Json -Depth 4)
+Check "hub knows the PC's free space" ($pcRow.disk_free_gb -gt 0) ($pcRow | ConvertTo-Json -Depth 2)
+$st = Pipe @{ op = "state" }
+Check "a game Steam hasn't downloaded yet is not on the home screen" (@($st.data.installedGameIds) -notcontains $g.id) ($st.data.installedGameIds -join ",")
+Check "its catalogue tile says it is on its way" ($st.data.installing."$($g.id)" -match "On its way|Downloading|Installing") ($st.data.installing | ConvertTo-Json)
+
 $ins = Pipe @{ op = "install"; gameId = $g.id }
 Check "install approved steam game once Steam is there -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
 if ($bnWaited) {

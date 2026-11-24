@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, gamesearch, retention, rules, updates
+from . import adguard, gamesearch, installs, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -247,6 +247,14 @@ class AppState(BaseModel):
     detail: str = Field(default="", max_length=300)
 
 
+class GameInstallState(BaseModel):
+    state: Literal[installs.REPORTABLE]  # type: ignore[valid-type]
+    detail: str = Field(default="", max_length=300)
+    done_bytes: int = Field(default=0, ge=0)
+    total_bytes: int = Field(default=0, ge=0)
+    retry: int = 0               # the "Try again" round this report belongs to; an older round's report is ignored
+
+
 class Heartbeat(BaseModel):
     running: str = ""            # title of the foreground game/app, "" when on the home screen
     active: bool = False         # true when a game or Chrome is in use (counts against time)
@@ -256,6 +264,8 @@ class Heartbeat(BaseModel):
     # Minutes played while the PC couldn't reach the hub (cable out, Wi-Fi off, hub down). The helper keeps
     # count and sends them with the first heartbeat that gets through, so going offline isn't free time.
     offline_minutes: int = Field(default=0, ge=0, le=24 * 60)
+    games: dict[int, GameInstallState] = Field(default_factory=dict)   # approved games by catalogue id: where each stands on this PC
+    disk_free_gb: float | None = Field(default=None, ge=0)              # free space on the drive games go to
 
 
 class KidRequest(BaseModel):
@@ -286,6 +296,11 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
     for launcher in ("steam", "battlenet"):
         if launcher not in managed and any(g["launcher"] == launcher for g in games):
             managed.append(launcher)
+    # The PC's install list: approved games the hub puts there by itself, and the "Try again" round of each.
+    ids = {g["id"] for g in games}
+    install = [{"game_id": r["game_id"], "retry": r["retry"] or 0} for r in db.q(
+        """SELECT a.game_id, i.retry FROM approvals a LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id
+           WHERE a.kid_id=? AND a.auto_install=1 ORDER BY a.game_id""", (kid.id,)) if r["game_id"] in ids]
     return {
         "kid": {"id": kid.id, "name": kid.name},
         "time": st.__dict__,
@@ -295,6 +310,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
                 "search": SEARCH[settings.decisions.search]},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": managed,
+        "installs": install,
         "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
@@ -323,6 +339,10 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO device_apps(kid_id,app,state,detail,at) VALUES(?,?,?,?,?)
                 ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",
              (kid.id, app_name[:30], a.state, a.detail, now.isoformat()))
+    save_install_reports(db, kid, hb, now)
+    if hb.disk_free_gb is not None:
+        db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+             (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
     st = today_state(db, settings, kid, now)
     game_id = hb.game_id if hb.game_id is not None and db.one("SELECT 1 FROM games WHERE id=?", (hb.game_id,)) else None
     db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked,game_id,voice) VALUES(?,?,?,?,?,?,?)
@@ -330,6 +350,27 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
             counted_at=excluded.counted_at, locked=excluded.locked, game_id=excluded.game_id, voice=excluded.voice""",
          (kid.id, now.isoformat(), hb.running, counted_at, int(st.locked), game_id, hb.voice if not st.locked else ""))
     return {"time": st.__dict__}
+
+
+def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None:
+    """Store where each approved game stands on the PC, and put the moments that matter in the activity feed."""
+    approved = {r["game_id"]: r for r in db.q(
+        """SELECT a.game_id, g.title, i.state, i.retry FROM approvals a JOIN games g ON g.id=a.game_id
+           LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id WHERE a.kid_id=?""", (kid.id,))}
+    for gid, rep in list(hb.games.items())[:200]:
+        cur = approved.get(gid)
+        if cur is None:
+            continue                       # not approved (any more): nothing to track
+        if rep.retry < (cur["retry"] or 0):
+            continue                       # from before the parent pressed Try again; the PC hasn't caught up
+        db.x("""INSERT INTO game_installs(kid_id,game_id,state,detail,done_bytes,total_bytes,at) VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(kid_id,game_id) DO UPDATE SET state=excluded.state, detail=excluded.detail,
+                done_bytes=excluded.done_bytes, total_bytes=excluded.total_bytes, at=excluded.at""",
+             (kid.id, gid, rep.state, rep.detail, rep.done_bytes, rep.total_bytes, now.isoformat()))
+        if rep.state != cur["state"] and cur["state"] is not None and rep.state in ("installed", "failed", "no_space", "not_owned", "needs_signin"):
+            kind = "game_installed" if rep.state == "installed" else "game_install_" + ("failed" if rep.state == "failed" else rep.state)
+            db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+                 (kid.id, kind, f"{cur['title']}{': ' + rep.detail if rep.detail and rep.state != 'installed' else ''}"[:300], now.isoformat()))
 
 
 @app.post("/api/device/requests", status_code=201)
@@ -634,10 +675,16 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "pending": db.one("SELECT COUNT(*) n FROM requests WHERE kid_id=? AND state='pending'", (kid.id,))["n"],
             "apps": db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=? ORDER BY app", (kid.id,)),
             "auto_update": auto_update(db, kid.id),
+            "installs": install_counts(installs_for(db, settings, kid, rules.local_now(settings.timezone))),
             "flagged_today": db.one("SELECT COUNT(*) n FROM searches WHERE kid_id=? AND flagged=1 AND at >= ?",
                                     (kid.id, rules.day_key(rules.local_now(settings.timezone))))["n"],
         })
     return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline()}
+
+
+def install_counts(pc: dict) -> dict:
+    tones = [g["plain"]["tone"] for g in pc["games"]]
+    return {"busy": tones.count("busy"), "needs": tones.count("needs") + tones.count("bad")}
 
 
 @app.get("/api/parent/searches/{kid_id}")
@@ -702,7 +749,7 @@ async def parent_decide(rid: int, d: Decision, parent: str = Depends(current_par
                 d.game_id = await add_game_from_ref(db, settings, d.ref)
             if d.game_id is None:
                 raise HTTPException(422, "pick or add the catalogue game to approve")
-            db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (kid.id, d.game_id))
+            approve(db, kid.id, d.game_id)
         elif r["kind"] == "site":
             db.x("INSERT OR IGNORE INTO sites(domain) VALUES(?)", (r["detail"].lower(),))
     db.x("UPDATE requests SET state=?, decided_by=?, decided_at=datetime('now'), reason=? WHERE id=?",
@@ -714,7 +761,7 @@ async def parent_decide(rid: int, d: Decision, parent: str = Depends(current_par
         what = g["title"] if g else what
     note = f" {parent} says: \"{d.reason.strip()}\"" if d.reason.strip() else ""
     if d.approve:
-        where = " It's in Get more games now." if r["kind"] == "game" else ""
+        where = " It's installing on your PC now. Look for it on your home screen." if r["kind"] == "game" else ""
         text = f"Yes! {what} is approved.{where}{note}"
     else:
         text = f"Not this time: {what}.{note}"
@@ -861,6 +908,75 @@ def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_
     return {"events": events, "commands": cmds}
 
 
+# Installs: every PC, every approved game, where it stands -----------------------------------
+
+def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
+    s = db.one("SELECT seen_at FROM status WHERE kid_id=?", (kid.id,))
+    on = installs.online(s["seen_at"] if s else None, now)
+    launchers = {a["app"]: a for a in db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=?", (kid.id,))}
+    rows = db.q("""SELECT g.id AS game_id, g.title, g.launcher, g.launch_ref, g.image_url, a.auto_install AS install,
+                          i.state, i.detail, i.done_bytes, i.total_bytes, i.at, i.retry
+                   FROM approvals a JOIN games g ON g.id=a.game_id
+                   LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id
+                   WHERE a.kid_id=? ORDER BY g.title""", (kid.id,))
+    if not settings.decisions.game_pass_enabled:
+        rows = [r for r in rows if r["launcher"] != "gamepass"]
+    games = []
+    for r in rows:
+        r = with_art(r)
+        r["install"] = bool(r["install"])
+        r["state"] = r["state"] or ("queued" if r["install"] else "not_installed")
+        r["plain"] = installs.plain(r, kid.name, on, launchers.get(r["launcher"]))
+        games.append(r)
+    free = (db.one("SELECT value FROM kv WHERE key=?", (f"disk_free_gb:{kid.id}",)) or {}).get("value")
+    return {"id": kid.id, "name": kid.name, "online": on, "seen_at": s["seen_at"] if s else None,
+            "disk_free_gb": float(free) if free else None,
+            "launchers": [{"app": k, "state": v["state"], "detail": v["detail"]} for k, v in sorted(launchers.items())
+                          if k in ("steam", "battlenet", "chrome")],
+            "games": games}
+
+
+@app.get("/api/parent/installs")
+def parent_installs(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The parents' view of every PC, like an IT office's: each approved game, installed or how far along, and what to do if stuck."""
+    now = rules.local_now(settings.timezone)
+    pcs = [installs_for(db, settings, kid, now) for kid in settings.kids]
+    return {"summary": installs.summary(pcs), "pcs": pcs}
+
+
+class InstallIn(BaseModel):
+    install: bool
+
+
+@app.put("/api/parent/installs/{kid_id}/{gid}")
+def parent_set_install(kid_id: str, gid: int, body: InstallIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Install: put an approved game on the PC now. Off: stop pushing it (it stays approved, and stays on the PC if it got there)."""
+    kid = kid_or_404(settings, kid_id)
+    if not db.one("SELECT 1 FROM approvals WHERE kid_id=? AND game_id=?", (kid.id, gid)):
+        raise HTTPException(404, "that game isn't approved for him")
+    if body.install:
+        approve(db, kid.id, gid)
+    else:
+        db.x("UPDATE approvals SET auto_install=0 WHERE kid_id=? AND game_id=?", (kid.id, gid))
+    return {"install": body.install}
+
+
+@app.post("/api/parent/installs/{kid_id}/{gid}/retry")
+def parent_retry_install(kid_id: str, gid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Try again: the PC starts this game's install over (restarting the store app if it has to), and its launcher too if that failed."""
+    kid = kid_or_404(settings, kid_id)
+    g = db.one("SELECT g.launcher FROM approvals a JOIN games g ON g.id=a.game_id WHERE a.kid_id=? AND a.game_id=?", (kid.id, gid))
+    if not g:
+        raise HTTPException(404, "that game isn't approved for him")
+    approve(db, kid.id, gid)
+    db.x("UPDATE game_installs SET retry=retry+1, state='queued', detail='', done_bytes=0, total_bytes=0 WHERE kid_id=? AND game_id=? AND state!='installed'",
+         (kid.id, gid))
+    launcher = db.one("SELECT state FROM device_apps WHERE kid_id=? AND app=?", (kid.id, g["launcher"]))
+    if launcher and launcher["state"] == "failed":
+        db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)", (kid.id, "install_app", g["launcher"], parent))
+    return installs_for(db, settings, kid, rules.local_now(settings.timezone))
+
+
 # Catalogue ------------------------------------------------------------------
 
 class Game(BaseModel):
@@ -888,7 +1004,7 @@ async def parent_add_game(g: Game, parent: str = Depends(current_parent), db: DB
         kid_or_404(settings, k)
     gid = await add_game(db, g)
     for k in g.approved_for:
-        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (k, gid))
+        approve(db, k, gid)
     return {"id": gid}
 
 
@@ -959,7 +1075,7 @@ async def parent_add_from_search(body: FromSearch, parent: str = Depends(current
         kid_or_404(settings, k)
     gid = await add_game_from_ref(db, settings, body.ref)
     for k in body.approved_for:
-        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (k, gid))
+        approve(db, k, gid)
     return {"id": gid}
 
 
@@ -984,10 +1100,21 @@ class Approval(BaseModel):
 def parent_set_approval(gid: int, kid_id: str, a: Approval, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
     if a.approved:
-        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (kid_id, gid))
+        approve(db, kid_id, gid)
     else:
         db.x("DELETE FROM approvals WHERE kid_id=? AND game_id=?", (kid_id, gid))
+        db.x("DELETE FROM game_installs WHERE kid_id=? AND game_id=?", (kid_id, gid))
     return {}
+
+
+def approve(db: DB, kid_id: str, gid: int) -> None:
+    """Approve a game for a kid and put it on his PC's install list: it installs there by itself."""
+    if not db.one("SELECT 1 FROM games WHERE id=?", (gid,)):
+        raise HTTPException(404, "no such game")
+    db.x("""INSERT INTO approvals(kid_id,game_id,auto_install) VALUES(?,?,1)
+            ON CONFLICT(kid_id,game_id) DO UPDATE SET auto_install=1""", (kid_id, gid))
+    db.x("""INSERT INTO game_installs(kid_id,game_id,state) VALUES(?,?,'queued') ON CONFLICT(kid_id,game_id)
+            DO UPDATE SET state=CASE WHEN state='installed' THEN state ELSE 'queued' END""", (kid_id, gid))
 
 
 @app.delete("/api/parent/games/{gid}")
