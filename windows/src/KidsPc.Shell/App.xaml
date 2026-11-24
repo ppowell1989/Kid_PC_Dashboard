@@ -105,7 +105,7 @@
     <!-- Game tile: a white card with the art on top and the name below. Lifts a little on hover.
          Background = the art (or a soft poster colour), Tag = an icon glyph for tiles with no art. -->
     <Style x:Key="Tile" TargetType="Button">
-      <Setter Property="Width" Value="342"/>
+      <Setter Property="Width" Value="338"/>
       <Setter Property="Height" Value="238"/>
       <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
       <Setter Property="Margin" Value="0,0,22,22"/>
