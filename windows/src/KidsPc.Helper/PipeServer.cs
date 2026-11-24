@@ -105,15 +105,29 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var found = await http.GetFromJsonAsync<List<GameHit>>($"/api/device/games/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
                 return Ok(found ?? []);
 
-            case "chat":      // family chat: messages after id Detail (works while locked, so he can talk to Mom and Dad)
+            // Chat: the family chat (works while locked, so he can always reach Mom and Dad), his brothers' chat and one
+            // per invited friend. The hub decides who may talk to whom and when; its "no" comes back as a plain sentence.
+            case "chat_convs":
+                return await HubJson<ChatList>(await http.GetAsync("/api/device/chats", ct), ct);
+
+            case "chat":      // messages in conversation Ref (default family) after id Detail
                 var after = long.TryParse(req.Detail, out var a) ? a : 0;
-                var msgs = await http.GetFromJsonAsync<List<ChatMessage>>($"/api/device/chat?after={after}", Json.Options, ct);
-                return Ok(msgs ?? []);
+                var conv = Uri.EscapeDataString(req.Ref ?? "family");
+                return await HubJson<List<ChatMessage>>(await http.GetAsync($"/api/device/chat?after={after}&conv={conv}", ct), ct);
 
             case "chat_send":
                 if (string.IsNullOrWhiteSpace(req.Detail) || req.Detail.Length > 500) return new(false, "Message is empty or too long.");
-                var cr = await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail }, ct);
-                return cr.IsSuccessStatusCode ? Ok(new { sent = true }) : new(false, "The hub did not accept the message.");
+                return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail, conv = req.Ref ?? "family" }, ct), ct);
+
+            case "chat_picture":   // Detail = the picture as base64 (the shell has already made it small), Note = words with it
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 12_000_000) return new(false, "That picture is too big. Try a smaller one.");
+                return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat/picture",
+                    new { data = req.Detail, text = req.Note ?? "", conv = req.Ref ?? "family" }, ct), ct);
+
+            case "chat_picture_get":   // Detail = message id
+                var pr = await http.GetAsync($"/api/device/chat/picture/{(long.TryParse(req.Detail, out var pid) ? pid : 0)}", ct);
+                if (!pr.IsSuccessStatusCode) return new(false, "That picture isn't there any more.");
+                return Ok(new ChatPicture(Convert.ToBase64String(await pr.Content.ReadAsByteArrayAsync(ct))));
 
             case "install":
                 return Ok(await InstallAsync(req.GameId ?? -1, ct));
@@ -125,6 +139,26 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             default:
                 return new(false, $"unknown op {req.Op}");
         }
+    }
+
+    /// <summary>The hub's answer as data, or its "no" as the sentence it wrote for the kid
+    /// ("This chat is off while the PC is locked."). A server error is not for his eyes.</summary>
+    private static async Task<PipeResponse> HubJson<T>(HttpResponseMessage r, CancellationToken ct)
+    {
+        using var _ = r;
+        if (r.IsSuccessStatusCode)
+            return Ok((await r.Content.ReadFromJsonAsync<T>(Json.Options, ct))!);
+        if ((int)r.StatusCode is 403 or 404 or 413 or 422 or 429)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct));
+                if (doc.RootElement.TryGetProperty("detail", out var d) && d.ValueKind == JsonValueKind.String)
+                    return new(false, d.GetString());
+            }
+            catch (JsonException) { }
+        }
+        return new(false, NotNow);
     }
 
     private async Task<InstallResult> InstallAsync(int gameId, CancellationToken ct)

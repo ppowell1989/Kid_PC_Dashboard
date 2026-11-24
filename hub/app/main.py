@@ -3,7 +3,7 @@
 Three audiences:
   /api/device/*  the shell, admin helper and Chrome extension on each PC (Bearer device token)
   /api/parent/*  the parents' phone dashboard (session cookie)
-  /join/*        friends joining voice chat from any browser (invite code)
+  /join/*        friends joining voice and text chat from any browser (invite code)
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, gamesearch, installs, retention, rules, updates
+from . import adguard, chat, gamesearch, installs, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -43,6 +43,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.db = DB(os.environ.get("HUB_DB", "hub.db"))
     app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
+    # Chat pictures sit next to the database, so a backup of the data folder has them too.
+    app.state.chat_dir = retention.PICTURES_DIR = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "chat-pictures"
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
@@ -58,6 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Kids PC hub", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(chat.router)
 
 
 @app.middleware("http")
@@ -315,7 +318,9 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
-        "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
+        # The friend's chat id, never the invite code: the PC has no use for the link, so a kid can't pass it on.
+        "friends": [{"code": chat.friend_conv(r["code"]), "friend_name": r["friend_name"]}
+                    for r in db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,))],
         "family": family_for(db, settings, kid),
         "family_voice": family_settings(db)["voice"],
         "timezone": settings.timezone,   # the PC's clock follows the hub, which decides "today" and bedtime
@@ -491,39 +496,6 @@ def device_events(events: list[Event], kid: Kid = Depends(current_device), db: D
     for e in events[:100]:
         db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
-
-
-# Family chat ----------------------------------------------------------------
-
-class ChatIn(BaseModel):
-    text: str = Field(min_length=1, max_length=500)
-
-
-def chat_since(db: DB, after: int) -> list[dict]:
-    rows = db.q("SELECT id, sender, kid_id, text, at FROM chat WHERE id>? ORDER BY id DESC LIMIT 100", (after,))
-    return rows[::-1]
-
-
-@app.get("/api/device/chat")
-def device_chat(after: int = 0, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
-    return [{**m, "mine": m["kid_id"] == kid.id} for m in chat_since(db, after)]
-
-
-@app.post("/api/device/chat", status_code=201)
-def device_chat_send(m: ChatIn, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
-    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (kid.name, kid.id, m.text.strip(), now))}
-
-
-@app.get("/api/parent/chat")
-def parent_chat(after: int = 0, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
-    return [{**m, "mine": m["kid_id"] is None and m["sender"] == parent} for m in chat_since(db, after)]
-
-
-@app.post("/api/parent/chat", status_code=201)
-def parent_chat_send(m: ChatIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
-    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (parent, None, m.text.strip(), now))}
 
 
 @app.get("/api/device/update")

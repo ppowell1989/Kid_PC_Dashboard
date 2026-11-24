@@ -40,7 +40,9 @@ def client(monkeypatch):
     # Freeze "now" at Tuesday noon so bedtime never interferes with the tests.
     monkeypatch.setattr(rules, "local_now", lambda tz: datetime(2026, 11, 24, 12, 0, tzinfo=ZoneInfo(tz)))
     config.get_settings.cache_clear()
+    from app import chat
     from app.main import app
+    chat._sent.clear()   # the per-sender message limit is kept in memory
     with TestClient(app, client=("192.168.1.20", 5000)) as c:
         yield c
     config.get_settings.cache_clear()

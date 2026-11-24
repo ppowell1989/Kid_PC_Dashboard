@@ -102,8 +102,21 @@ public static class Json
     };
 }
 
+/// <summary>One chat message. Friend = an invited friend wrote it from the invite page. Picture = fetch it with
+/// the "chat_picture_get" pipe op. Removed = a parent hid it (Text is then the hub's note saying so).</summary>
 public sealed record ChatMessage(long Id, string Sender,
-    [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine);
+    [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine,
+    string Conv = "family", bool Friend = false, bool Picture = false, List<string>? Links = null, bool Removed = false);
+
+/// <summary>A conversation the kid can open: the family chat, his brothers, or one invited friend.</summary>
+public sealed record ChatConv(string Id, string Title, string Kind,
+    [property: JsonPropertyName("last_id")] long LastId,
+    [property: JsonPropertyName("last_other_id")] long LastOtherId,
+    [property: JsonPropertyName("can_send")] bool CanSend, string Note = "");
+
+public sealed record ChatList(List<ChatConv> Convs, bool Pictures, bool Links);
+
+public sealed record ChatPicture(string Data);
 
 /// <summary>A match from the hub's kid-safe game search (Steam, Battle.net, PC Game Pass). Ref names the game and
 /// the store it would come from, "steam:620" or "battlenet:WoWC", and goes with his request to Mom or Dad.</summary>

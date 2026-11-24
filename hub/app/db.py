@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS searches (        -- search terms read from Chrome's 
     flagged INTEGER NOT NULL DEFAULT 0,
     UNIQUE (kid_id, term, at)
 );
-CREATE TABLE IF NOT EXISTS chat (           -- one family chat: parents and kids
+CREATE TABLE IF NOT EXISTS chat (           -- every chat message; conv says which conversation (see chat.py)
     id     INTEGER PRIMARY KEY,
     sender TEXT NOT NULL,                     -- display name
     kid_id TEXT,                              -- set when a kid sent it
@@ -168,6 +168,13 @@ MIGRATIONS = [
     ("game_installs", "stage", "TEXT DEFAULT ''"),
     ("game_installs", "changed_at", "TEXT DEFAULT ''"),
     ("game_installs", "rate", "REAL NOT NULL DEFAULT 0"),   # bytes per second, smoothed
+    # Chat beyond the one family room: the kids' own chat and one chat per invited friend, with pictures and links.
+    ("chat", "conv", "TEXT NOT NULL DEFAULT 'family'"),   # family / kids / friend-<hash of invite code>
+    ("chat", "friend", "INTEGER NOT NULL DEFAULT 0"),     # 1 = an invited friend sent it from the invite page
+    ("chat", "picture", "TEXT DEFAULT ''"),               # file name in chat-pictures/ next to the database
+    ("chat", "links", "TEXT DEFAULT '[]'"),               # JSON list of the links in the text
+    ("chat", "flagged", "INTEGER NOT NULL DEFAULT 0"),    # a word from the flag list (same list as searches)
+    ("chat", "removed_by", "TEXT DEFAULT ''"),            # parent who hid it from the kids
 ]
 
 
@@ -182,6 +189,7 @@ class DB:
             cols = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS chat_conv_id ON chat(conv, id)")
         self._lock = threading.Lock()
 
     @contextmanager
