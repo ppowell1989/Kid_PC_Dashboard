@@ -314,6 +314,10 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
         if (LauncherNotReady("battlenet", "Battle.net") is { } wait) return wait;
         if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC.");
+        // Battle.net says nothing about size before it starts, and a game that fills the drive breaks the whole PC.
+        // So check against a rough size first (GUESS: current install sizes, rounded up).
+        if (BattleNetSizesGb.TryGetValue(g.LaunchRef, out var needGb) && FreeBytes(cfg.BattleNetGamesRoot) is { } freeNow && freeNow < (long)(needGb * 1.1 * (1L << 30)))
+            return new("no_space", $"{g.Title} needs about {needGb} GB and the PC has {Gb(freeNow)} free. Remove a game he no longer plays, then press Try again.", 0, (long)needGb << 30);
         if (!BattleNetSignedIn())
             return new("needs_signin", $"Battle.net has to be signed in on {_kidName}'s PC once, with a Blizzard account (yours or his). Tick Keep me logged in. After that, games install by themselves.");
         if (at.KickedAt is null)      // once per attempt; "Try again" on the dashboard starts a new attempt
@@ -327,6 +331,12 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
             return new("stuck", "Battle.net didn't start the download. Press Try again. If that doesn't work, open Battle.net on the PC and press Install on the game.");
         return new("waiting", "Battle.net is getting ready to download it.");
     }
+
+    private static readonly Dictionary<string, int> BattleNetSizesGb = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["WoW"] = 100, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
+        ["W3"] = 30, ["D3"] = 25, ["OSI"] = 30, ["ANBS"] = 10, ["WLBY"] = 40, ["RTRO"] = 2,
+    };   // keep in step with BattleNetFolders in GameLibrary.cs
 
     /// <summary>Battle.net remembers who signed in, in the kid's Battle.net.config (SavedAccountNames). GUESS at the file and key.</summary>
     private bool BattleNetSignedIn()
