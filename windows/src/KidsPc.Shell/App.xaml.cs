@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using System.Windows;
 
 namespace KidsPc.Shell;
@@ -6,6 +7,7 @@ namespace KidsPc.Shell;
 public partial class App : Application
 {
     private static int _restarts;
+    private static Mutex? _single;
 
     /// <summary>Set by "--demo &lt;scene&gt;": canned data instead of the helper, for looking at the design (see Demo.cs).</summary>
     public static string? DemoScene { get; private set; }
@@ -27,6 +29,16 @@ public partial class App : Application
             Restart();
         };
         AppDomain.CurrentDomain.UnhandledException += (_, _) => Restart();
+        if (DemoScene is null)
+        {
+            // One screen per sign-in. The helper starts a new one if this one is ever closed (see ShellWatchdog),
+            // and a crash restart starts one too; a copy that finds another already up steps aside.
+            _single = new Mutex(false, "Local\\KidsPcShell");
+            bool mine;
+            try { mine = _single.WaitOne(TimeSpan.FromSeconds(5)); } catch (AbandonedMutexException) { mine = true; }
+            if (!mine) { Environment.Exit(0); return; }
+            KeyGuard.Start();
+        }
         base.OnStartup(e);
     }
 

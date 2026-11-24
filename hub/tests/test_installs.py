@@ -127,3 +127,35 @@ def test_world_of_warcraft_forever_is_its_own_game():
     assert {g["code"] for g in gamesearch.battlenet_search("wow")} >= {"WoW", "WoWF", "WoWC", "WoWCE", "WoWA"}
     assert [g["code"] for g in gamesearch.battlenet_search("burning crusade")] == ["WoWA"]
     assert [g["code"] for g in gamesearch.battlenet_search("season of discovery")] == ["WoWCE"]
+
+
+def test_status_says_what_the_store_is_doing_how_fast_and_when_it_last_moved(parent, client):
+    """Patrick: "on its way" made it hard to tell if Brawlhalla was really downloading."""
+    from datetime import timedelta
+    from app import installs
+    from app.main import get_db
+    gid = add(parent)
+    beat(client, {str(gid): {"state": "waiting", "stage": "Waiting for Steam",
+                             "detail": "Steam was restarted at 10:52 AM to pick it up. It hasn't started downloading yet."}})
+    g = pc(parent)["games"][0]
+    assert g["plain"]["label"] == "Waiting for Steam" and "restarted at 10:52" in g["plain"]["text"]
+    assert g["plain"]["since"].startswith("Last change just now")
+
+    # Two reports a minute apart, 600 MB apart: about 10 MB/s, and the time left from that.
+    beat(client, {str(gid): {"state": "installing", "stage": "Downloading", "done_bytes": 1 << 30, "total_bytes": 4 << 30}})
+    get_db().x("UPDATE game_installs SET at=?", ((installs.datetime.fromisoformat(get_db().one("SELECT at FROM game_installs")["at"]) - timedelta(seconds=60)).isoformat(),))
+    beat(client, {str(gid): {"state": "installing", "stage": "Downloading", "done_bytes": (1 << 30) + (600 << 20), "total_bytes": 4 << 30}})
+    t = pc(parent)["games"][0]["plain"]
+    assert t["label"].startswith("Downloading ") and t["label"].endswith("%")
+    assert "10.0 MB/s" in t["text"] and "min left" in t["text"], t["text"]
+
+    beat(client, {str(gid): {"state": "installing", "stage": "Installing", "done_bytes": 4 << 30, "total_bytes": 4 << 30,
+                             "detail": "Downloaded. Steam is unpacking it."}})
+    assert pc(parent)["games"][0]["plain"]["label"] == "Installing"
+
+
+def test_no_progress_since_the_last_check_is_said_plainly(parent, client):
+    gid = add(parent)
+    for _ in range(2):
+        beat(client, {str(gid): {"state": "installing", "stage": "Downloading", "done_bytes": 1 << 30, "total_bytes": 4 << 30}})
+    assert "hasn't moved" in pc(parent)["games"][0]["plain"]["text"]

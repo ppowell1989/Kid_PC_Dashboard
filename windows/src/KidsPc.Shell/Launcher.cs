@@ -28,7 +28,15 @@ public static class Launcher
         }
     }
 
-    public static bool LaunchGame(Game g) => Try(g.Title, () => StartGame(g));
+    /// <summary>When the kid last opened something that goes through Steam or Battle.net himself. Their windows are
+    /// his to see for a while after that, so <see cref="StrayWindows"/> leaves them alone.</summary>
+    public static DateTimeOffset KidOpenedStoreAt { get; private set; } = DateTimeOffset.MinValue;
+
+    public static bool LaunchGame(Game g)
+    {
+        if (g.Launcher is "steam" or "battlenet") KidOpenedStoreAt = DateTimeOffset.Now;
+        return Try(g.Title, () => StartGame(g));
+    }
 
     private static void StartGame(Game g)
     {
@@ -90,7 +98,11 @@ public static class Launcher
 
     /// <summary>Opens a protocol URI. steam:// goes straight to steam.exe, because the protocol is often
     /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
-    public static bool OpenUri(string uri, string what) => Try(what, () => Open(uri));
+    public static bool OpenUri(string uri, string what)
+    {
+        KidOpenedStoreAt = DateTimeOffset.Now;
+        return Try(what, () => Open(uri));
+    }
 
     private static void Open(string uri)
     {

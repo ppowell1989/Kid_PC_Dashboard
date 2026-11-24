@@ -72,7 +72,8 @@ internal sealed class DemoHelper(string scene) : IHelper
         var messages = scene == "warning" ? new List<ParentMessage> { new(1, "Mom", "Dinner in 10 minutes!", DateTimeOffset.Now) } : null;
         // Two games a parent approved, installing by themselves (the catalogue shows how far along).
         return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages,
-            Installing: new Dictionary<int, string> { [5] = "Downloading 45%", [6] = "On its way" });
+            Installing: new Dictionary<int, string> { [5] = "Downloading 45%", [6] = "Waiting for Steam" },
+            InstallPercent: new Dictionary<int, int> { [5] = 45 });
     }
 
     private static List<ChatMessage> Chat()

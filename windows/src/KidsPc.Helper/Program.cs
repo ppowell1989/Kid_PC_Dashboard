@@ -16,6 +16,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<StateCache>();
 builder.Services.AddSingleton<GameLibrary>();
 builder.Services.AddSingleton<Enforcer>();
+builder.Services.AddSingleton<KidLockdown>();
 builder.Services.AddSingleton<ChromePolicy>();
 builder.Services.AddSingleton<AppInstaller>();
 builder.Services.AddSingleton<GameDeployer>();

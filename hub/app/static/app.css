@@ -269,6 +269,7 @@ p.lead { font-size: 1.1rem; font-weight: 700; margin: 0 0 6px; }
 .list li.inst .what { grid-area: what; min-width: 0; }
 .list li.inst .do { grid-area: do; display: flex; gap: 8px; justify-content: flex-end; }
 .list li.inst .do:empty { display: none; }
+.list li.inst .since { font-size: .78rem; color: var(--muted); margin-top: 2px; opacity: .85; }
 .list li.inst.t-needs { box-shadow: inset 4px 0 0 var(--warn), 0 2px 8px #3a4a7814; }
 .list li.inst.t-bad { box-shadow: inset 4px 0 0 var(--bad), 0 2px 8px #3a4a7814; }
 .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .78rem; font-weight: 700; white-space: nowrap; background: var(--well); color: var(--muted); }

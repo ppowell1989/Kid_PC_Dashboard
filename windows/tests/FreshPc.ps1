@@ -82,6 +82,7 @@ try {
   $shell = (Get-ItemProperty "Registry::HKEY_USERS\FreshKid\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" -ErrorAction SilentlyContinue).Shell
   Check "kid shell replaces Explorer for him" ($shell -eq "C:\Program Files\KidsPc\Shell\KidsPcShell.exe") $shell
   Check "Task Manager off for him" ((Get-ItemProperty "Registry::HKEY_USERS\FreshKid\Software\Microsoft\Windows\CurrentVersion\Policies\System").DisableTaskMgr -eq 1)
+  Check "Windows key shortcuts and Quick Settings off for him" ((Get-ItemProperty "Registry::HKEY_USERS\FreshKid\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer").NoWinKeys -eq 1 -and (Get-ItemProperty "Registry::HKEY_USERS\FreshKid\Software\Policies\Microsoft\Windows\Explorer").DisableControlCenter -eq 1)
 } finally { [gc]::Collect(); reg unload "HKU\FreshKid" | Out-Null }
 Check "shell installed" (Test-Path "C:\Program Files\KidsPc\Shell\KidsPcShell.exe")
 Check "helper service running" ((Get-Service KidsPcHelper).Status -eq "Running")

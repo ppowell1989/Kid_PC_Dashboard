@@ -239,7 +239,12 @@ Check "battle.net game waits for Battle.net instead of failing" ($wowRow.state -
 Check "hub knows the PC's free space" ($pcRow.disk_free_gb -gt 0) ($pcRow | ConvertTo-Json -Depth 2)
 $st = Pipe @{ op = "state" }
 Check "a game Steam hasn't downloaded yet is not on the home screen" (@($st.data.installedGameIds) -notcontains $g.id) ($st.data.installedGameIds -join ",")
-Check "its catalogue tile says it is on its way" ($st.data.installing."$($g.id)" -match "On its way|Downloading|Installing") ($st.data.installing | ConvertTo-Json)
+Check "its tile says what is really happening" ($st.data.installing."$($g.id)" -match "Starting|Waiting|Downloading|Installing") ($st.data.installing | ConvertTo-Json)
+Write-Host "INFO  Portal 2 tile caption: $($st.data.installing."$($g.id)")"
+Check "PCs page says what Steam is doing and when it last moved" ($p2.plain.label -ne "Waiting" -and $p2.plain.since -match "Last change") ($p2 | ConvertTo-Json -Depth 4)
+if ($p2.state -eq "needs_signin") {
+  Check "Steam's windows stay on screen while it needs a sign-in" (@($st.data.signInNeeded) -contains "steam") ($st.data | ConvertTo-Json -Depth 2)
+}
 
 $ins = Pipe @{ op = "install"; gameId = $g.id }
 Check "install approved steam game once Steam is there -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
