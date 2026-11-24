@@ -17,6 +17,10 @@ public sealed record PipeRequest(string Op, string? Kind = null, string? Detail 
 
 public sealed record PipeResponse(bool Ok, string? Error = null, JsonElement? Data = null);
 
+/// <summary>The helper answered "no" with a sentence written for the kid ("Voice chat is off while the PC is locked.").
+/// Anything else that goes wrong (the pipe timing out, Windows refusing to start a program) is not for his eyes.</summary>
+public sealed class HelperSaidNo(string message) : InvalidOperationException(message);
+
 public sealed class HelperClient
 {
     public async Task<PipeResponse> SendAsync(PipeRequest req, CancellationToken ct = default)
@@ -33,7 +37,7 @@ public sealed class HelperClient
     public async Task<T?> GetAsync<T>(PipeRequest req, CancellationToken ct = default)
     {
         var res = await SendAsync(req, ct);
-        if (!res.Ok) throw new InvalidOperationException(res.Error ?? "helper error");
+        if (!res.Ok) throw new HelperSaidNo(res.Error ?? "That didn't work just now. Try again in a minute.");
         return res.Data is { } d ? d.Deserialize<T>(Json.Options) : default;
     }
 }

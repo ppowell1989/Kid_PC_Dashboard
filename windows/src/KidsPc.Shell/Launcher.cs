@@ -12,20 +12,23 @@ public static class Launcher
     private const string BattleNet = @"C:\Program Files (x86)\Battle.net\Battle.net.exe";
     private const string Chrome = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
 
-    /// <summary>A game, Chrome or a launcher would not start. The home screen shows the message.
-    /// Without this a tile for a launcher that isn't installed crashed the kid's screen on every press.</summary>
-    public static event Action<string>? Failed;
+    /// <summary>A game, Chrome or a launcher would not start: what it was, and why. The main window tells the
+    /// kid in plain words and tells his parents; Windows' own error text is never shown to him.
+    /// Without the catch a tile for a launcher that isn't installed crashed the kid's screen on every press.</summary>
+    public static event Action<string, Exception>? Failed;
 
-    private static void Try(string what, Action start)
+    /// <summary>False when it would not start (and <see cref="Failed"/> has said so).</summary>
+    private static bool Try(string what, Action start)
     {
-        try { start(); }
-        catch (Exception)   // not installed, moved, or Windows refused: none of these should take the screen down
+        try { start(); return true; }
+        catch (Exception ex)   // not installed, moved, or Windows refused: none of these should take the screen down
         {
-            Failed?.Invoke($"{what} wouldn't start. Ask Mom or Dad.");
+            Failed?.Invoke(what, ex);
+            return false;
         }
     }
 
-    public static void LaunchGame(Game g) => Try(g.Title, () => StartGame(g));
+    public static bool LaunchGame(Game g) => Try(g.Title, () => StartGame(g));
 
     private static void StartGame(Game g)
     {
@@ -33,7 +36,7 @@ public static class Launcher
         switch (g.Launcher)
         {
             case "steam":
-                OpenUri($"steam://rungameid/{g.LaunchRef}");
+                Open($"steam://rungameid/{g.LaunchRef}");
                 break;
             case "battlenet":
                 Process.Start(new ProcessStartInfo(BattleNet, $"--exec=\"launch {g.LaunchRef}\"") { UseShellExecute = false });
@@ -48,7 +51,7 @@ public static class Launcher
         }
     }
 
-    public static void LaunchChrome() => Try("Chrome", () =>
+    public static bool LaunchChrome() => Try("Chrome", () =>
     {
         if (App.DemoScene is not null) return;
         Process.Start(new ProcessStartInfo(Chrome, "--start-maximized") { UseShellExecute = false });
@@ -58,14 +61,16 @@ public static class Launcher
 
     /// <summary>Opens a protocol URI. steam:// goes straight to steam.exe, because the protocol is often
     /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
-    public static void OpenUri(string uri) => Try("That", () =>
+    public static bool OpenUri(string uri, string what) => Try(what, () => Open(uri));
+
+    private static void Open(string uri)
     {
         if (App.DemoScene is not null) return;
         if (uri.StartsWith("steam://", StringComparison.OrdinalIgnoreCase) && File.Exists(Steam))
             Process.Start(new ProcessStartInfo(Steam, uri) { UseShellExecute = false });
         else
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-    });
+    }
 }
 
 /// <summary>Launches a packaged (Store / Game Pass) app without explorer.exe.</summary>

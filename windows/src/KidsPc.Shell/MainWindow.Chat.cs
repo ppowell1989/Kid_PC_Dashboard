@@ -112,7 +112,7 @@ public partial class MainWindow
         catch (Exception ex)
         {
             ChatBox.Text = text;
-            ChatStatus.Text = $"Didn't send: {ex.Message}";
+            ChatStatus.Text = $"Didn't send. {Plain(ex)}";
             ChatStatus.Visibility = Visibility.Visible;
             return;
         }

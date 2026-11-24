@@ -3,8 +3,12 @@
   starts the hub, seeds it, runs the helper as a console app, talks to it over the named pipe
   exactly like the shell does, and starts the shell to make sure it stays up.
   Usage: .\windows\tests\Integration.ps1 -BuildDir windows\publish\win-x64
+  -LauncherInstall also waits for the helper to install Battle.net by itself (minutes, and it depends on
+  Blizzard's servers), so CI runs that in its own job where it cannot hold up a build.
+  -AsSystem starts the helper as the SYSTEM account with no desktop, the way the installed service runs,
+  instead of as the signed-in admin. That is the honest test of an installer that wants to show a window.
 #>
-param([Parameter(Mandatory)] [string] $BuildDir, [int] $Port = 8765)
+param([Parameter(Mandatory)] [string] $BuildDir, [int] $Port = 8765, [switch] $LauncherInstall, [switch] $AsSystem)
 $ErrorActionPreference = "Stop"
 $fail = 0
 trap {
@@ -53,6 +57,10 @@ $g = Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -Cont
   -Body '{"title":"Portal 2","launcher":"steam","launch_ref":"620","approved_for":["adam"]}'
 Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -ContentType application/json `
   -Body '{"title":"Not For Adam","launcher":"steam","launch_ref":"999999","approved_for":[]}' | Out-Null
+# A Battle.net game on a PC without Battle.net: approving it is what makes the helper fetch the launcher.
+$wow = Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -ContentType application/json `
+  -Body '{"title":"World of Warcraft","launcher":"battlenet","launch_ref":"WoW","approved_for":["adam"]}'
+$bnExe = "${env:ProgramFiles(x86)}\Battle.net\Battle.net.exe"
 
 # ------------------------------------------------------------------ helper (console mode)
 $dataDir = "$env:ProgramData\KidsPc"
@@ -82,8 +90,19 @@ db.commit()
 python "$work\mkhist.py" "$hist\History"
 Remove-Item -Recurse -Force "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist" -ErrorAction SilentlyContinue
 
-$helper = Start-Process "$BuildDir\Helper\KidsPcHelper.exe" -PassThru -NoNewWindow `
-  -RedirectStandardOutput "$work\helper.out.log" -RedirectStandardError "$work\helper.err.log"
+if ($AsSystem) {
+  $helperExe = (Resolve-Path "$BuildDir\Helper\KidsPcHelper.exe").Path
+  $run = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"`"$helperExe`" > `"$work\helper.out.log`" 2> `"$work\helper.err.log`"`""
+  Register-ScheduledTask -TaskName "KidsPcHelperTest" -Action $run -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+  Start-ScheduledTask "KidsPcHelperTest"
+  $helper = $null
+  for ($i = 0; $i -lt 20 -and -not $helper; $i++) { Start-Sleep 1; $helper = Get-Process KidsPcHelper -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  if (-not $helper) { throw "the helper did not start as SYSTEM" }
+  Write-Host "INFO  helper runs as SYSTEM in session $($helper.SessionId)"
+} else {
+  $helper = Start-Process "$BuildDir\Helper\KidsPcHelper.exe" -PassThru -NoNewWindow `
+    -RedirectStandardOutput "$work\helper.out.log" -RedirectStandardError "$work\helper.err.log"
+}
 Start-Sleep 8
 Check "helper stays up" ($helper.HasExited -eq $false) (Get-Content "$work\helper.err.log" -Raw -ErrorAction SilentlyContinue)
 
@@ -101,12 +120,27 @@ function Pipe($obj) {
 $st = Pipe @{ op = "state" }
 Check "pipe: state ok" $st.ok ($st | ConvertTo-Json -Depth 6)
 Check "pipe: rules came from hub (kid name)" ($st.data.rules.kid.name -eq "Adam")
-Check "pipe: only Adam's approved game listed" (($st.data.rules.games | Measure-Object).Count -eq 1 -and $st.data.rules.games[0].title -eq "Portal 2")
+Check "pipe: only Adam's approved games listed" ((@($st.data.rules.games.title) -join ",") -eq "Portal 2,World of Warcraft") ($st.data.rules.games | ConvertTo-Json)
+Check "pipe: an approved Battle.net game puts Battle.net on the list of apps to install" (@($st.data.rules.managed_apps) -contains "battlenet") ($st.data.rules.managed_apps -join ",")
 Check "pipe: not locked with time left" ($st.data.locked -eq $false)
 Check "pipe: hub reachable" ($st.data.hubReachable -eq $true)
 
+# A game whose launcher is not on the PC yet: the kid is asked to come back, in plain words, and the shell
+# is never pointed at a program that is not there (that is what put Windows' error text on his screen).
+# (steam.exe appears before Steam's installer is done, so "is the file there" does not say which answer is right.)
 $ins = Pipe @{ op = "install"; gameId = $g.id }
-Check "install approved steam game -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
+if ($ins.data.action -ne "wait") {
+  Check "install approved steam game -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
+} else {
+  Check "install while Steam is being set up -> wait, in plain words" (-not $ins.data.uri -and $ins.data.message -match "Steam is being set up") ($ins | ConvertTo-Json)
+}
+$bn = Pipe @{ op = "install"; gameId = $wow.id }
+$bnWaited = $bn.data.action -eq "wait"
+if ($bnWaited) {
+  Check "install a Battle.net game without Battle.net -> wait, in plain words" ($bn.data.action -eq "wait" -and -not $bn.data.uri -and $bn.data.message -match "Battle.net (is being set up|needs a parent)") ($bn | ConvertTo-Json)
+}
+$oops = Pipe @{ op = "problem"; detail = "Chrome could not start: The system cannot find the file specified." }
+Check "the shell can report something that would not start" $oops.ok ($oops | ConvertTo-Json)
 $bad = Pipe @{ op = "install"; gameId = 9999 }
 Check "install unapproved game refused" ($bad.data.action -eq "refused")
 
@@ -181,6 +215,34 @@ $kp = $apps | Where-Object { $_.app -eq "kidspc" }
 Check "helper reports its build" ($kp -ne $null -and $kp.state -eq "installed" -and $kp.detail -match "on build") ($kp | ConvertTo-Json)
 $act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
 Check "steam install reported in the activity feed" (($act.events | Where-Object { $_.kind -eq "app_installed" -and $_.detail -eq "steam" }) -ne $null)
+$ins = Pipe @{ op = "install"; gameId = $g.id }
+Check "install approved steam game once Steam is there -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
+if ($bnWaited) {
+  Check "parents are told a launcher is missing" (($act.events | Where-Object { $_.kind -eq "launcher_missing" -and $_.detail -match "World of Warcraft" }) -ne $null) ($act.events | ConvertTo-Json)
+}
+Check "parents are told when something would not start" (($act.events | Where-Object { $_.kind -eq "launch_failed" -and $_.detail -match "Chrome could not start" }) -ne $null) ($act.events | ConvertTo-Json)
+
+if ($LauncherInstall) {
+  # Battle.net has no silent installer. The helper runs it unattended, waits for the app to appear and
+  # closes the sign-in window it leaves open. This is the only place that is tried on a real Windows.
+  $bnApp = $null; $began = Get-Date; $exeAfter = $null
+  for ($i = 0; $i -lt 240; $i++) {   # up to 20 minutes; the helper gives up by itself after 15
+    # The installer restarts network pieces of Windows; a dropped connection to the hub here is not a result.
+    try { $ov = Invoke-RestMethod "$hub/api/parent/overview" -WebSession $s } catch { Write-Host "INFO  hub did not answer once: $_"; Start-Sleep 5; continue }
+    $bnApp = @($ov.kids[0].apps) | Where-Object { $_.app -eq "battlenet" }
+    if (-not $exeAfter -and (Test-Path $bnExe)) { $exeAfter = [int]((Get-Date) - $began).TotalSeconds }
+    if ($bnApp.state -in "installed", "failed") { break }
+    Start-Sleep 5
+  }
+  Write-Host "INFO  Battle.net: state=$($bnApp.state) detail=$($bnApp.detail) exe=$(Test-Path $bnExe) program appeared after ${exeAfter}s, finished after $([int]((Get-Date) - $began).TotalSeconds)s"
+  Get-ChildItem (Split-Path $bnExe) -ErrorAction SilentlyContinue | Select-Object -First 12 | ForEach-Object { Write-Host "INFO    $($_.Name)" }
+  Get-Process "Battle.net*", "Agent" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "INFO    still running: $($_.Name) in session $($_.SessionId)" }
+  Check "helper installed Battle.net by itself and reported it" ($bnApp.state -eq "installed" -and (Test-Path $bnExe)) ($bnApp | ConvertTo-Json)
+  # "installed" is only said once the installer and the sign-in window it opens have been closed.
+  Check "the install left no Battle.net window or installer running" (@(Get-Process "Battle.net", "Battle.net-Setup" -ErrorAction SilentlyContinue).Count -eq 0) ((Get-Process "Battle.net*" -ErrorAction SilentlyContinue | ForEach-Object Name) -join ",")
+  $bn = Pipe @{ op = "install"; gameId = $wow.id }
+  Check "install a Battle.net game once Battle.net is there -> starts Battle.net" ($bn.data.action -eq "exec" -and $bn.data.uri -eq $bnExe) ($bn | ConvertTo-Json)
+}
 
 # Lock: a parent sets every day to 0 minutes in Playtimes (the hub's DB owns the rules, not config.yaml).
 Invoke-RestMethod "$hub/api/parent/playtimes/adam" -Method Put -WebSession $s -ContentType application/json `
@@ -205,6 +267,7 @@ try {
 
 Get-Process KidsPcShell -ErrorAction SilentlyContinue | Stop-Process -Force
 Stop-Process $helper -Force -ErrorAction SilentlyContinue
+if ($AsSystem) { Unregister-ScheduledTask -TaskName "KidsPcHelperTest" -Confirm:$false -ErrorAction SilentlyContinue }
 Stop-Process $hubProc -Force -ErrorAction SilentlyContinue
 Write-Host "`n--- helper log ---"; Get-Content "$work\helper.out.log" -ErrorAction SilentlyContinue | Select-Object -Last 30
 if ($fail) { Write-Host "$fail check(s) failed" -ForegroundColor Red; exit 1 }
