@@ -86,6 +86,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     public void Tick(Rules rules, bool kidHere, bool gameRunning)
     {
         _kidName = rules.Kid.Name;
+        ReportBattleNetProducts();
         var wanted = (rules.Installs ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First().Retry);
         var installed = library.InstalledGameIds(rules).ToHashSet();
         var steamHere = kidHere && SteamRunning();
@@ -334,9 +335,31 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
     private static readonly Dictionary<string, int> BattleNetSizesGb = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["WoW"] = 100, ["WoWF"] = 70, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
+        ["WoW"] = 100, ["WoWF"] = 70, ["WoWC"] = 60, ["WoWCE"] = 15, ["WoWA"] = 20, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
         ["W3"] = 30, ["D3"] = 25, ["OSI"] = 30, ["ANBS"] = 10, ["WLBY"] = 40, ["RTRO"] = 2,
     };   // keep in step with BattleNetFolders in GameLibrary.cs
+
+    private string _productsTold = "";
+
+    /// <summary>Tells the parents' activity feed which World of Warcraft versions Battle.net itself knows about on this PC
+    /// (its codes and folders, read from its own product.db), so the guessed codes above can be checked against the
+    /// real ones. Once per change.</summary>
+    private void ReportBattleNetProducts()
+    {
+        try
+        {
+            var db = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Battle.net", "Agent", "product.db");
+            if (!File.Exists(db)) return;
+            var text = System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(db));
+            var found = Regex.Matches(text, @"wow[a-z_]*|World of Warcraft[\\/]_[a-z_]+_", RegexOptions.IgnoreCase)
+                .Select(m => m.Value).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).Take(20).ToList();
+            var line = string.Join(", ", found);
+            if (line == "" || line == _productsTold) return;
+            _productsTold = line;
+            events.Add("battlenet_products", line.Length > 290 ? line[..290] : line);
+        }
+        catch (Exception ex) { log.LogDebug("product.db: {Msg}", ex.Message); }
+    }
 
     /// <summary>Battle.net remembers who signed in, in the kid's Battle.net.config (SavedAccountNames). GUESS at the file and key.</summary>
     private bool BattleNetSignedIn()

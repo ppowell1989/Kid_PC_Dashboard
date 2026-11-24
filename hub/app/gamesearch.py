@@ -26,10 +26,17 @@ from .db import DB
 # GUESS on some codes and folders: extend here and in windows/src/KidsPc.Helper/GameLibrary.cs together.
 # steam: the same game's Steam app id, where it has one, so results merge and get Steam's art.
 BATTLENET = [
-    {"code": "WoW",  "title": "World of Warcraft",          "esrb": "T", "aliases": ["wow", "warcraft", "wow retail"]},
-    # Battle.net shows these as "Game Version" choices under World of Warcraft; here each one is its own game, so
-    # parents approve exactly the version they mean. GUESS: "WoWF" is a fan-reported code; Blizzard hasn't published it.
-    {"code": "WoWF", "title": "World of Warcraft: Forever",  "esrb": "T", "aliases": ["wow forever", "warcraft forever", "wow"]},
+    # Battle.net shows World of Warcraft's versions as "Game Version" choices under one game. Here each version is
+    # its own game, so parents approve exactly the one they mean. Each has its own install folder (GameLibrary.cs).
+    # GUESS: only "WoW" (retail) is a known Battle.net code; the others are best guesses until the test PC's
+    # Battle.net reports its own list (GameDeployer reports it to the activity feed as battlenet_products).
+    {"code": "WoW",   "title": "World of Warcraft (Midnight, current)",            "esrb": "T", "aliases": ["wow", "warcraft", "retail", "midnight"]},
+    {"code": "WoWF",  "title": "World of Warcraft: Forever",                       "esrb": "T", "aliases": ["wow forever", "warcraft forever", "wow"]},
+    {"code": "WoWC",  "title": "World of Warcraft: Mists of Pandaria Classic",     "esrb": "T", "aliases": ["wow classic", "mists classic", "mop classic", "wow"]},
+    {"code": "WoWCE", "title": "World of Warcraft Classic Era (Hardcore, Season of Discovery)", "esrb": "T",
+     "aliases": ["wow classic", "classic era", "vanilla", "hardcore", "season of discovery", "sod", "wow"]},
+    {"code": "WoWA",  "title": "World of Warcraft: Burning Crusade Classic Anniversary", "esrb": "T",
+     "aliases": ["wow classic", "tbc", "burning crusade", "anniversary", "wow"]},
     {"code": "Pro",  "title": "Overwatch 2",                 "esrb": "T", "steam": "2357570", "aliases": ["overwatch"]},
     {"code": "WTCG", "title": "Hearthstone",                 "esrb": "T"},
     {"code": "Hero", "title": "Heroes of the Storm",         "esrb": "T"},
