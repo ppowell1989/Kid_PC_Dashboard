@@ -53,7 +53,7 @@ public sealed class StateCache
 }
 
 /// <summary>Every PollSeconds: report what is running, pull rules, enforce them.</summary>
-public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, GameDeployer deployer, ILogger<HubSync> log)
+public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, GameDeployer deployer, KidLockdown lockdown, ILogger<HubSync> log)
     : BackgroundService
 {
     // Play the hub never heard about, because it couldn't be reached (network cable out, Wi-Fi off, hub down).
@@ -132,6 +132,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
 
             cache.SetLocked(locked);
             if (kidHere) enforcer.Enforce(locked, activity);
+            lockdown.Tick(kidHere, Sessions.ConsoleSessionId, updater.Status.State == "installing");
             await Task.Delay(TimeSpan.FromSeconds(cfg.PollSeconds), ct);
         }
     }
