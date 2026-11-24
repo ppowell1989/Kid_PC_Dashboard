@@ -16,8 +16,9 @@
     </Style>
 
     <Style x:Key="Tile" TargetType="Button">
-      <Setter Property="Width" Value="220"/>
+      <Setter Property="Width" Value="300"/>
       <Setter Property="Height" Value="140"/>
+      <Setter Property="Background" Value="{StaticResource Card}"/>
       <Setter Property="Margin" Value="0,0,16,16"/>
       <Setter Property="Foreground" Value="{StaticResource Text}"/>
       <Setter Property="FontSize" Value="20"/>
@@ -25,12 +26,12 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="b" CornerRadius="14" Background="{StaticResource Card}" Padding="16">
+            <Border x:Name="b" CornerRadius="14" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Accent}" BorderThickness="0" Padding="16">
               <ContentPresenter VerticalAlignment="Bottom"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="b" Property="Background" Value="#26303B"/>
+                <Setter TargetName="b" Property="BorderThickness" Value="3"/>
               </Trigger>
               <Trigger Property="IsKeyboardFocused" Value="True">
                 <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>

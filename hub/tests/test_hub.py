@@ -212,3 +212,24 @@ def test_fetch_builds_from_github_release(tmp_path):
     assert first == ["arm64@sha1"] and second == []
     assert (tmp_path / "kidspc-win-arm64.zip").read_bytes() == b"ZIPDATA"
     assert updates.current(tmp_path, "arm64")["version"] == "sha1"
+
+
+def test_steam_game_from_store_link_gets_title_and_art(parent, monkeypatch):
+    from app import main
+
+    async def fake_lookup(appid):
+        assert appid == "291550"
+        return {"name": "Brawlhalla", "header_image": "https://example/291550/header.jpg"}
+    monkeypatch.setattr(main, "steam_lookup", fake_lookup)
+    r = parent.post("/api/parent/games", json={"launcher": "steam", "launch_ref": "https://store.steampowered.com/app/291550/Brawlhalla/", "approved_for": ["adam"]})
+    assert r.status_code == 201
+    g = next(g for g in parent.get("/api/parent/games").json() if g["launch_ref"] == "291550")
+    assert g["title"] == "Brawlhalla" and g["image_url"].endswith("header.jpg")
+    # Steam unreachable and no title: refuse rather than add a nameless game
+    async def offline(appid): return {}
+    monkeypatch.setattr(main, "steam_lookup", offline)
+    assert parent.post("/api/parent/games", json={"launcher": "steam", "launch_ref": "440"}).status_code == 400
+    # existing game without art gets the CDN header
+    parent.post("/api/parent/games", json={"title": "TF2", "launcher": "steam", "launch_ref": "440"})
+    tf2 = next(g for g in parent.get("/api/parent/games").json() if g["launch_ref"] == "440")
+    assert "/apps/440/header.jpg" in tf2["image_url"]

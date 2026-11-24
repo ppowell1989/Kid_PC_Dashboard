@@ -78,12 +78,33 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     return rules.compute(kid, now, used, g["m"] if g else 0, late_until, paused_until)
 
 
+STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
+
+
+def with_art(g: dict) -> dict:
+    """Steam games get their store header image unless the parent set one."""
+    if not g.get("image_url") and g["launcher"] == "steam" and g["launch_ref"].isdigit():
+        g["image_url"] = STEAM_ART.format(g["launch_ref"])
+    return g
+
+
+async def steam_lookup(appid: str) -> dict:
+    """Name and header image from the Steam store. Best effort: {} if Steam is unreachable."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get("https://store.steampowered.com/api/appdetails", params={"appids": appid, "filters": "basic"})
+            d = r.json().get(appid, {})
+        return d.get("data", {}) if d.get("success") else {}
+    except Exception:
+        return {}
+
+
 def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
     rows = db.q("""SELECT g.* FROM games g JOIN approvals a ON a.game_id = g.id
                    WHERE a.kid_id=? ORDER BY g.title""", (kid_id,))
     if not settings.decisions.game_pass_enabled:
         rows = [r for r in rows if r["launcher"] != "gamepass"]
-    return rows
+    return [with_art(r) for r in rows]
 
 
 def allowed_sites(db: DB, settings: Settings) -> list[str]:
@@ -396,7 +417,7 @@ def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_
 # Catalogue ------------------------------------------------------------------
 
 class Game(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+    title: str = Field("", max_length=120)  # blank for a Steam game: looked up from the store
     launcher: Literal["steam", "battlenet", "gamepass", "direct"]
     launch_ref: str = Field(min_length=1, max_length=300)
     rating: str = ""
@@ -410,11 +431,23 @@ def parent_games(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     appr = db.q("SELECT * FROM approvals")
     for g in games:
         g["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == g["id"]]
+        with_art(g)
     return games
 
 
 @app.post("/api/parent/games", status_code=201)
-def parent_add_game(g: Game, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+async def parent_add_game(g: Game, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    g.launch_ref = g.launch_ref.strip()
+    if g.launcher == "steam":
+        g.launch_ref = g.launch_ref.rstrip("/").split("/app/")[-1].split("/")[0]  # accept a pasted store link
+        if not g.launch_ref.isdigit():
+            raise HTTPException(400, "Steam games need the app id (the number in the store link)")
+        if not g.title.strip() or not g.image_url:
+            info = await steam_lookup(g.launch_ref)
+            g.title = g.title.strip() or info.get("name", "")
+            g.image_url = g.image_url or info.get("header_image", "")
+    if not g.title.strip():
+        raise HTTPException(400, "Give the game a title")
     gid = db.x("INSERT INTO games(title,launcher,launch_ref,rating,image_url) VALUES(?,?,?,?,?)",
                (g.title, g.launcher, g.launch_ref, g.rating, g.image_url))
     for k in g.approved_for:

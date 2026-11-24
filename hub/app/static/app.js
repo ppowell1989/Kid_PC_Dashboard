@@ -147,7 +147,7 @@ $("#siteForm").onsubmit = async (e) => { e.preventDefault(); await api("/api/par
 
 async function loadGames() {
   const games = await api("/api/parent/games");
-  $("#games").innerHTML = games.map((g) => `<li><b>${esc(g.title)}</b> <span class="muted">${g.launcher} ${esc(g.launch_ref)} ${esc(g.rating)}</span>
+  $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> <span class="muted">${g.launcher} ${esc(g.launch_ref)} ${esc(g.rating)}</span>
     <div class="actions">${state.kids.map((k) => `<label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${g.approved_for.includes(k.id) ? "checked" : ""}> ${esc(k.name)}</label>`).join("")}
     <button class="ghost" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
   document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = () => api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } })));
@@ -156,10 +156,17 @@ async function loadGames() {
 $("#gameForm").onsubmit = async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  await api("/api/parent/games", { method: "POST", body: {
-    title: f.get("title"), launcher: f.get("launcher"), launch_ref: f.get("launch_ref"), rating: f.get("rating"), approved_for: f.getAll("kid"),
-  } });
+  try {
+    await api("/api/parent/games", { method: "POST", body: {
+      title: f.get("title"), launcher: f.get("launcher"), launch_ref: f.get("launch_ref"), rating: f.get("rating"), approved_for: f.getAll("kid"),
+    } });
+  } catch (err) { alert(err.message); return; }
   e.target.reset(); loadGames();
+};
+$("#gameForm [name=launcher]").onchange = (e) => {
+  const steam = e.target.value === "steam";
+  $("#gameForm [name=launch_ref]").closest("label").firstChild.textContent = steam ? "Steam store link or app id " : "Launch reference ";
+  $("#gameForm [name=title]").placeholder = steam ? "Leave blank for Steam: filled in from the store" : "";
 };
 
 async function loadInvites() {

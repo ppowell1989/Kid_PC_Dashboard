@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using KidsPc.Shared;
 
@@ -103,7 +105,7 @@ public partial class MainWindow : Window
     {
         HomeTiles.Children.Clear();
         foreach (var g in rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id)))
-            HomeTiles.Children.Add(Tile(g.Title, () => Launcher.LaunchGame(g)));
+            HomeTiles.Children.Add(Tile(g.Title, () => Launcher.LaunchGame(g), image: g.ImageUrl));
         HomeTiles.Children.Add(Tile("Web (Chrome)", Launcher.LaunchChrome));
         HomeTiles.Children.Add(Tile("Chat with a friend", OpenVoice, enabled: rules.Friends.Count > 0));
     }
@@ -113,19 +115,51 @@ public partial class MainWindow : Window
         CatalogueTiles.Children.Clear();
         var notInstalled = rules.Games.Where(g => !_state!.InstalledGameIds.Contains(g.Id)).ToList();
         foreach (var g in notInstalled)
-            CatalogueTiles.Children.Add(Tile($"{g.Title}\nInstall", async () => await InstallAsync(g)));
+            CatalogueTiles.Children.Add(Tile($"{g.Title}\nInstall", async () => await InstallAsync(g), image: g.ImageUrl));
         if (notInstalled.Count == 0)
             CatalogueTiles.Children.Add(new TextBlock { Text = "Everything approved is already installed.", FontSize = 16 });
     }
 
-    private static Button Tile(string text, Action onClick, bool enabled = true)
+    private static readonly Dictionary<string, ImageSource?> Art = [];
+
+    /// <summary>Game art (the Steam store header for Steam games), loaded once per URL and kept for the session.</summary>
+    private static ImageSource? LoadArt(string? url)
     {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (Art.TryGetValue(url, out var cached)) return cached;
+        try
+        {
+            var img = new BitmapImage();
+            img.BeginInit();
+            img.UriSource = new Uri(url);
+            img.DecodePixelWidth = 600;
+            img.CacheOption = BitmapCacheOption.OnLoad;
+            img.DownloadFailed += (_, _) => Art[url] = null;
+            img.EndInit();
+            return Art[url] = img;
+        }
+        catch { return Art[url] = null; }
+    }
+
+    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null)
+    {
+        var art = LoadArt(image);
+        UIElement label = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = art is null ? 20 : 16 };
+        if (art is not null)
+            label = new Border
+            {
+                Child = label, Padding = new Thickness(8, 3, 8, 3), CornerRadius = new CornerRadius(8),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Color.FromArgb(0xC0, 0x10, 0x12, 0x16)),
+            };
         var b = new Button
         {
             Style = (Style)Application.Current.Resources["Tile"],
-            Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 20 },
+            Content = label,
             IsEnabled = enabled,
+            ToolTip = text,
         };
+        if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
         b.Click += (_, _) => onClick();
         return b;
     }
