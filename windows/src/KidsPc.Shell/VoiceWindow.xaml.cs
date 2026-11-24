@@ -14,9 +14,10 @@ public partial class VoiceWindow : Window
 {
     private const string Host = "kidspc.local";
 
-    public VoiceWindow(VoiceToken vt, string kidName, string theme)
+    public VoiceWindow(VoiceToken vt, string kidName, string theme, bool family = false)
     {
         InitializeComponent();
+        if (family) Title = VoiceTitle.Text = "Family voice";   // the brothers' room: no invite links, just family
         Loaded += async (_, _) =>
         {
           try
@@ -38,7 +39,7 @@ public partial class VoiceWindow : Window
             core.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith($"https://{Host}/")) e.Cancel = true; };
             core.NewWindowRequested += (_, e) => e.Handled = true;
 
-            var hash = $"url={Uri.EscapeDataString(vt.Url)}&token={Uri.EscapeDataString(vt.Token)}&name={Uri.EscapeDataString(kidName)}&theme={Uri.EscapeDataString(theme)}";
+            var hash = $"url={Uri.EscapeDataString(vt.Url)}&token={Uri.EscapeDataString(vt.Token)}&name={Uri.EscapeDataString(kidName)}&theme={Uri.EscapeDataString(theme)}" + (family ? "&room=family" : "");
             if (DemoOut is not null) core.NavigationCompleted += async (_, e) => await SaveDemoShotAsync(core, e);
             core.Navigate($"https://{Host}/voice.html#{hash}");
           }

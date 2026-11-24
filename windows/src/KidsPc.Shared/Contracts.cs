@@ -36,6 +36,13 @@ public sealed record PendingRequest(int Id, string Kind, string Detail, string S
 
 public sealed record Friend(string Code, [property: JsonPropertyName("friend_name")] string FriendName);
 
+/// <summary>A brother, as the Family row shows him. JoinGame is set only when his game is approved for this kid too.</summary>
+public sealed record FamilyMember(string Id, string Name, bool Online, string Running, bool Locked,
+    [property: JsonPropertyName("in_family_voice")] bool InFamilyVoice,
+    [property: JsonPropertyName("game_title")] string GameTitle,
+    [property: JsonPropertyName("join_game")] Game? JoinGame,
+    [property: JsonPropertyName("ask_ref")] string AskRef);
+
 public sealed record Rules(
     KidInfo Kid,
     TimeState Time,
@@ -46,7 +53,9 @@ public sealed record Rules(
     [property: JsonPropertyName("pending_requests")] List<PendingRequest> PendingRequests,
     List<Friend> Friends,
     [property: JsonPropertyName("managed_apps")] List<string>? ManagedApps = null,
-    List<HubCommand>? Commands = null);
+    List<HubCommand>? Commands = null,
+    List<FamilyMember>? Family = null,
+    [property: JsonPropertyName("family_voice")] bool FamilyVoice = true);
 
 /// <summary>A one-off action a parent sent from the dashboard.</summary>
 public sealed record HubCommand(int Id, string Kind, string Arg, [property: JsonPropertyName("created_by")] string CreatedBy);

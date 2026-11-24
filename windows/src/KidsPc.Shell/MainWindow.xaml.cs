@@ -110,6 +110,7 @@ public partial class MainWindow : Window
         }
 
         BuildHomeTiles(rules);
+        BuildFamily(rules);
         BuildCatalogue(rules);
     }
 
@@ -273,6 +274,7 @@ public partial class MainWindow : Window
     {
         DrawBackdrop();
         Recolour(HomeTiles); Recolour(CatalogueTiles); Recolour(SearchResults);
+        RedrawFamily();   // family cards set a few colours in code: rebuild them in the new look
         if (_state?.Rules is { } rules) { SetTicker(rules.Kid.Name); ShowFuel(rules.Time); }
         if (ThemeOverlay.Visibility == Visibility.Visible) BuildThemeChoices();
     }
@@ -303,8 +305,8 @@ public partial class MainWindow : Window
         MessageBanner.Visibility = LockMessage.Visibility = Visibility.Collapsed;
     }
 
-    private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; NavHome.Tag = "on"; NavMore.Tag = null; }
-    private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; NavHome.Tag = null; NavMore.Tag = "on"; }
+    private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; NavHome.Tag = "on"; NavMore.Tag = null; ShowFamilyPanel(); }
+    private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; NavHome.Tag = null; NavMore.Tag = "on"; FamilyPanel.Visibility = Visibility.Collapsed; }
 
     private async Task InstallAsync(Game g)
     {
@@ -416,14 +418,35 @@ public partial class MainWindow : Window
         catch (Exception ex) { target.Text = $"Couldn't send: {ex.Message}"; }
     }
 
-    private async void OpenVoice()
+    private void OpenVoice() => _ = OpenVoiceAsync(family: false);
+
+    private string _voiceRoom = "";
+
+    /// <summary>Opens the voice window: his own room (friends join with invite links) or the family room
+    /// (both brothers, no link). Only one at a time, so switching rooms leaves the other one.</summary>
+    private async Task OpenVoiceAsync(bool family)
     {
-        if (_voice is { IsLoaded: true }) { _voice.Activate(); return; }
+        var room = family ? "family" : "friends";
+        if (_voice is { IsLoaded: true })
+        {
+            if (_voiceRoom == room) { _voice.Activate(); return; }
+            _voice.Close();
+        }
         try
         {
-            var vt = await _helper.GetAsync<VoiceToken>(new PipeRequest("voice_token"));
-            _voice = new VoiceWindow(vt!, _state!.Rules!.Kid.Name, Theme.Current) { Owner = this };
-            _voice.Show();
+            var vt = await _helper.GetAsync<VoiceToken>(new PipeRequest(family ? "family_voice_token" : "voice_token"));
+            var w = new VoiceWindow(vt!, _state!.Rules!.Kid.Name, Theme.Current, family) { Owner = this };
+            w.Closed += async (_, _) =>
+            {
+                if (_voice != w) return;
+                _voice = null; _voiceRoom = "";
+                RedrawFamily();
+                try { await _helper.GetAsync<object>(new PipeRequest("voice_state", Detail: "")); } catch { /* helper restarting */ }
+            };
+            _voice = w; _voiceRoom = room;
+            w.Show();
+            RedrawFamily();   // the Talk button turns into "You're in family voice" straight away
+            try { await _helper.GetAsync<object>(new PipeRequest("voice_state", Detail: room)); } catch { /* only feeds the Family row */ }
         }
         catch (Exception ex) { StatusLine.Text = ex.Message; }
     }

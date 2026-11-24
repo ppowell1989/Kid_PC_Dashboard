@@ -12,6 +12,10 @@ public sealed class StateCache
     private bool _reachable;
     private bool _locked = true;
     private readonly List<ParentMessage> _messages = [];
+    private string _voice = "";
+
+    /// <summary>Which voice room the shell has open ("", "family" or "friends"), reported to the hub for the Family row.</summary>
+    public string Voice { get { lock (_gate) return _voice; } set { lock (_gate) _voice = value; } }
 
     public void AddMessage(ParentMessage m) { lock (_gate) { _messages.Add(m); if (_messages.Count > 5) _messages.RemoveAt(0); } }
 
@@ -64,7 +68,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 var appStates = apps.Status.ToDictionary(kv => kv.Key, kv => new { state = kv.Value.State, detail = kv.Value.Detail });
                 appStates["kidspc"] = new { state = updater.Status.State, detail = updater.Status.Detail };
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
-                await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates }, ct);
+                await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "" }, ct);
                 var rules = await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct);
                 if (rules is not null)
                 {

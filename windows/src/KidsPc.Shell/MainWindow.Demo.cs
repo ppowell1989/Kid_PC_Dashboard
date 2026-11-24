@@ -33,6 +33,9 @@ public partial class MainWindow
             case "voice":
                 OpenVoice();   // voice.html shows a made-up room when the token says "demo"
                 break;
+            case "family":
+                await OpenVoiceAsync(family: true);   // Barrett is "in family voice" on the card behind it
+                break;
         }
     }
 }

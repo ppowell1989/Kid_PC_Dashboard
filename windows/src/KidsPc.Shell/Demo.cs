@@ -17,7 +17,7 @@ internal sealed class PipeHelper : IHelper
 /// <summary>
 /// Stand-in helper for "KidsPcShell.exe --demo &lt;scene&gt;": canned data, no hub, no helper, nothing launches.
 /// Used by windows\tests\Screenshots.ps1 so every screen of the design can be looked at on real Windows pixels.
-/// Scenes: home, catalogue, ask, chat, voice, warning, lock, themes, power. Add "--theme &lt;id&gt;" to see one in another look.
+/// Scenes: home, catalogue, ask, chat, voice, family, warning, lock, themes, power. Add "--theme &lt;id&gt;" to see one in another look.
 /// </summary>
 internal sealed class DemoHelper(string scene) : IHelper
 {
@@ -49,7 +49,7 @@ internal sealed class DemoHelper(string scene) : IHelper
             },
             "chat" => req.Detail == "0" ? Chat() : new List<ChatMessage>(),
             "install" => new InstallResult("none", null, "Demo mode: nothing was installed."),
-            "voice_token" => scene == "voice" ? new VoiceToken("demo", "demo", "demo") : throw new InvalidOperationException("Voice chat is off in demo mode."),
+            "voice_token" or "family_voice_token" => scene is "voice" or "family" ? new VoiceToken("demo", "demo", "demo") : throw new InvalidOperationException("Voice chat is off in demo mode."),
             _ => null,
         };
         return Task.FromResult((T?)result);
@@ -66,7 +66,9 @@ internal sealed class DemoHelper(string scene) : IHelper
         var games = Catalogue.Select((g, i) => new Game(i + 1, g.Title, "steam", g.Appid.ToString(), g.Rating, ArtFor(g.Appid))).ToList();
         var rules = new Rules(new KidInfo("adam", "Adam"), time, 10, games, new WebRules("filtered", []), false,
             scene == "lock" ? new List<PendingRequest> { new(1, "time", "15", "pending", DateTime.UtcNow.ToString("u")) } : new List<PendingRequest>(),
-            [new Friend("demo", "Max")]);
+            [new Friend("demo", "Max")],
+            Family: [new FamilyMember("barrett", "Barrett", true, "Brawlhalla", false, InFamilyVoice: scene == "family",
+                GameTitle: "Brawlhalla", JoinGame: games[0], AskRef: "")]);
         var messages = scene == "warning" ? new List<ParentMessage> { new(1, "Mom", "Dinner in 10 minutes!", DateTimeOffset.Now) } : null;
         return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages);
     }
