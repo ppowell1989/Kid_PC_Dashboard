@@ -273,7 +273,7 @@ class KidRequest(BaseModel):
     kind: Literal["game", "time", "site"]
     detail: str = Field(min_length=1, max_length=200)
     note: str = Field(default="", max_length=500)
-    ref: str = Field(default="", pattern=r"^(steam:\d{1,10})?$")   # the exact game the kid picked from search
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")   # the exact game (and store) the kid picked from search
 
 
 class Visit(BaseModel):
@@ -318,6 +318,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
         "family": family_for(db, settings, kid),
         "family_voice": family_settings(db)["voice"],
+        "timezone": settings.timezone,   # the PC's clock follows the hub, which decides "today" and bedtime
     }
 
 
@@ -390,9 +391,31 @@ def device_request(req: KidRequest, kid: Kid = Depends(current_device), db: DB =
     return {"id": rid}
 
 
+@app.get("/api/device/games/search")
+async def device_game_search(q: str, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Game search for the kid's "Get more games" screen: Steam, Battle.net and (when it's on) PC Game Pass,
+    one row per game, the same merge as the parent search. Each row carries the store it would come from
+    ("battlenet:WoWC"), so the request names the exact game. Adult-only titles and non-games are left out."""
+    q = q.strip()[:100]
+    if len(q) < 2:
+        return []
+    gp = settings.decisions.game_pass_enabled
+    steam, xbox_cat = await asyncio.gather(steam_search(q, db, kid_safe=True),
+                                           gamesearch.gamepass_catalogue(db) if gp else asyncio.sleep(0, None))
+    rows = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []), gp, {})
+    out = []
+    for r in rows:
+        if r["default"] is None or r["adult"]:
+            continue
+        p = r["platforms"][r["default"]]
+        out.append({"ref": f"{p['launcher']}:{p['launch_ref']}", "name": r["title"], "image_url": r["image_url"],
+                    "esrb": r["esrb"], "description": (r["details"] or {}).get("description") or "", "store": p["label"]})
+    return out
+
+
 @app.get("/api/device/steam/search")
 async def device_steam_search(q: str, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
-    """Game search for the kid's "Get more games" screen. Adult-only titles and non-games are filtered out."""
+    """Steam-only kid search, kept for helpers older than /api/device/games/search."""
     if len(q.strip()) < 2:
         return []
     return await steam_search(q, db, kid_safe=True)
@@ -569,7 +592,8 @@ def family_for(db: DB, settings: Settings, kid: Kid) -> list[dict]:
         p["game_title"] = game["title"] if game else ""
         p["join_game"] = mine.get(p["game_id"]) if fam["join"] and p["game_id"] and not p["locked"] else None
         # Not approved for him: the shell can turn the Join into a request to Mom or Dad.
-        p["ask_ref"] = f"steam:{game['launch_ref']}" if game and not p["join_game"] and game["launcher"] == "steam" else ""
+        p["ask_ref"] = (f"{game['launcher']}:{game['launch_ref']}" if game and not p["join_game"]
+                        and game["launcher"] in ("steam", "battlenet", "gamepass") else "")
         del p["game_id"]
         out.append(p)
     return out

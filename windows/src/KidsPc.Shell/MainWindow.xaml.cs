@@ -53,6 +53,7 @@ public partial class MainWindow : Window
 
     private async Task RefreshAsync()
     {
+        TimeZoneInfo.ClearCachedData();   // the helper may have just set the PC to the family's time zone
         Clock.Text = DateTime.Now.ToString("dddd h:mm tt");
         try
         {
@@ -429,12 +430,13 @@ public partial class MainWindow : Window
         SearchResults.Children.Clear();
         try
         {
-            var hits = await _helper.GetAsync<List<SteamGame>>(new PipeRequest("game_search", Detail: q)) ?? [];
+            var hits = await _helper.GetAsync<List<GameHit>>(new PipeRequest("game_search", Detail: q)) ?? [];
             SearchStatus.Text = hits.Count == 0 ? "Nothing found. You can still ask for it by name." : "Tap a game to ask Mom or Dad for it.";
             foreach (var g in hits)
             {
                 var asked = AlreadyAsked(g.Name);
-                var label = (string.IsNullOrEmpty(g.Esrb) ? g.Name : $"{g.Name}\nRated {g.Esrb}") + (asked ? "\nAsked, waiting" : "");
+                var facts = string.Join(" · ", new[] { g.Store, string.IsNullOrEmpty(g.Esrb) ? null : $"Rated {g.Esrb}" }.Where(x => !string.IsNullOrEmpty(x)));
+                var label = (facts.Length == 0 ? g.Name : $"{g.Name}\n{facts}") + (asked ? "\nAsked, waiting" : "");
                 SearchResults.Children.Add(Tile(label, () => ShowAsk(g), enabled: !asked, image: g.ImageUrl));
             }
             Recolour(SearchResults);
@@ -447,13 +449,13 @@ public partial class MainWindow : Window
         || _askedThisSession.Contains(title);
 
     private readonly HashSet<string> _askedThisSession = new(StringComparer.OrdinalIgnoreCase);
-    private SteamGame? _asking;
+    private GameHit? _asking;
 
-    private void ShowAsk(SteamGame g)
+    private void ShowAsk(GameHit g)
     {
         _asking = g;
         AskTitle.Text = g.Name;
-        AskRating.Text = string.IsNullOrEmpty(g.Esrb) ? "No rating listed" : $"Rated {g.Esrb}";
+        AskRating.Text = (string.IsNullOrEmpty(g.Esrb) ? "No rating listed" : $"Rated {g.Esrb}") + (string.IsNullOrEmpty(g.Store) ? "" : $" · {g.Store}");
         AskBlurb.Text = System.Net.WebUtility.HtmlDecode(g.Description ?? "");
         AskArt.ImageSource = LoadArt(g.ImageUrl);
         AskNote.Text = AskStatus.Text = "";
@@ -471,7 +473,7 @@ public partial class MainWindow : Window
         AskStatus.Text = "Sending…";
         try
         {
-            await _helper.GetAsync<object>(new PipeRequest("request", Kind: "game", Detail: g.Name, Note: AskNote.Text.Trim(), Ref: $"steam:{g.Appid}"));
+            await _helper.GetAsync<object>(new PipeRequest("request", Kind: "game", Detail: g.Name, Note: AskNote.Text.Trim(), Ref: g.Ref));
             _askedThisSession.Add(g.Name);
             AskOverlay.Visibility = Visibility.Collapsed;
             await SearchGamesAsync();   // redraw so the tile shows "Asked, waiting"

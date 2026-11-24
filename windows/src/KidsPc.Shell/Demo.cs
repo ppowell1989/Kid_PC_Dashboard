@@ -40,12 +40,12 @@ internal sealed class DemoHelper(string scene) : IHelper
         object? result = req.Op switch
         {
             "state" => State(),
-            "game_search" => new List<SteamGame>
+            "game_search" => new List<GameHit>
             {
-                new("427520", "Factorio", ArtFor(427520), "E10+", "Build and maintain factories on an alien planet. Mine resources, research technology and automate production."),
-                new("544550", "Stationeers", ArtFor(544550), "", "Construct and manage your own space station."),
-                new("220200", "Kerbal Space Program", ArtFor(220200), "E", "Take charge of the space program for the alien race known as the Kerbals. Build spacecraft that fly (or don't) based on realistic physics."),
-                new("275850", "No Man's Sky", ArtFor(275850), "T", "A game about exploration and survival in an infinite procedurally generated universe."),
+                new("steam:427520", "Factorio", ArtFor(427520), "E10+", "Build and maintain factories on an alien planet. Mine resources, research technology and automate production."),
+                new("steam:544550", "Stationeers", ArtFor(544550), "", "Construct and manage your own space station."),
+                new("steam:220200", "Kerbal Space Program", ArtFor(220200), "E", "Take charge of the space program for the alien race known as the Kerbals. Build spacecraft that fly (or don't) based on realistic physics."),
+                new("steam:275850", "No Man's Sky", ArtFor(275850), "T", "A game about exploration and survival in an infinite procedurally generated universe."),
             },
             "chat" => req.Detail == "0" ? Chat() : new List<ChatMessage>(),
             "install" => new InstallResult("none", null, "Demo mode: nothing was installed."),

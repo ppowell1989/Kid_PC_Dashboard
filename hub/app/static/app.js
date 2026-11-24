@@ -236,9 +236,9 @@ async function loadRequests() {
     const inCat = games.find((g) => g.title.toLowerCase() === r.detail.toLowerCase());
     if (inCat) sel.value = inCat.id;
     let hits = [];
-    const picked = (r.ref || "").startsWith("steam:") ? r.ref : "";
+    const picked = r.ref || "";   // the exact game and store he picked on his screen, e.g. "battlenet:WoWC"
     try {
-      if (picked) {   // the exact Steam game he picked on his screen goes first
+      if (picked.startsWith("steam:")) {   // a Steam pick goes first even if his words match other games better
         const a = await api(`/api/parent/steam/app/${picked.slice(6)}`);
         if (a.appid) hits.push(...(await api(`/api/parent/games/search?q=${encodeURIComponent(a.name)}`)).results
           .filter((h) => h.platforms.some((p) => `steam:${p.launch_ref}` === picked)).slice(0, 1));
@@ -246,17 +246,20 @@ async function loadRequests() {
       const more = (await api(`/api/parent/games/search?q=${encodeURIComponent(r.detail)}`)).results;
       hits = hits.concat(more.filter((h) => !hits.some((x) => x.title === h.title)));
     } catch {}
+    // The platform to add: the one he picked when this game has it, otherwise the game's default store.
+    const platOf = (h) => h.platforms.find((p) => p.addable && `${p.launcher}:${p.launch_ref}` === picked) || h.platforms[h.default];
     hits = hits.filter((h) => h.default !== null);
-    const refOf = (h) => `${h.platforms[h.default].launcher}:${h.platforms[h.default].launch_ref}`;
+    const refOf = (h) => { const p = platOf(h); return `${p.launcher}:${p.launch_ref}`; };
+    hits.sort((a, b) => (refOf(b) === picked) - (refOf(a) === picked));   // his pick first
     const byRef = Object.fromEntries(hits.map((h) => [refOf(h), h]));
     const info = $(`[data-infofor="${r.id}"]`);
     group.label = hits.length ? "Add from the stores" : "No store matches";
-    group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(h.platforms[h.default].label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
+    group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(platOf(h).label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
     const showArt = () => {
       const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
       img.hidden = !src; if (src) img.src = src;
       const h = byRef[sel.value];
-      info.innerHTML = h ? gameFacts(h, h.platforms[h.default]) : "";
+      info.innerHTML = h ? gameFacts(h, platOf(h)) : "";
     };
     if (picked && byRef[picked]) sel.value = picked;
     else if (!sel.value && hits.length) sel.value = refOf(hits[0]);
