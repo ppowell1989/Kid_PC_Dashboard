@@ -15,7 +15,9 @@ public sealed class StateCache
 
     public void AddMessage(ParentMessage m) { lock (_gate) { _messages.Add(m); if (_messages.Count > 5) _messages.RemoveAt(0); } }
 
-    public void Set(Rules rules) { lock (_gate) { _rules = rules; _fetchedAt = DateTimeOffset.Now; _reachable = true; } }
+    // The lock comes with the rules. Setting it later left a gap after every start-up and sign-in in which the
+    // shell had today's rules but still the "locked" this cache starts with, and showed "time's up" with time left.
+    public void Set(Rules rules) { lock (_gate) { _rules = rules; _fetchedAt = DateTimeOffset.Now; _reachable = true; _locked = rules.Time.Locked; } }
     public void MarkUnreachable() { lock (_gate) _reachable = false; }
     public void SetLocked(bool locked) { lock (_gate) _locked = locked; }
 

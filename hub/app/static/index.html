@@ -76,22 +76,33 @@
   <section data-panel="games" hidden>
     <h2 class="title">Games</h2>
     <ul id="games" class="list"></ul>
-    <form id="gameForm" class="card">
-      <h2>Add a game to the catalogue</h2>
-      <label>Launcher
-        <select name="launcher">
-          <option value="steam">Steam</option>
-          <option value="battlenet">Battle.net (product code)</option>
-          <option value="gamepass">Game Pass (app id)</option>
-          <option value="direct">Direct (exe path)</option>
-        </select>
-      </label>
-      <label>Steam store link or app id <input name="launch_ref" placeholder="store.steampowered.com/app/291550 or 291550" required></label>
-      <label>Title <input name="title" placeholder="Leave blank for Steam: filled in from the store"></label>
-      <label>Rating <input name="rating" placeholder="E10+"></label>
-      <fieldset id="gameKids"><legend>Approved for</legend></fieldset>
-      <button class="wide">Add game</button>
-    </form>
+    <div class="card">
+      <h2>Add a game</h2>
+      <form id="gameSearch" class="row" role="search">
+        <input name="q" type="search" placeholder="Type a game's name, like Minecraft" autocomplete="off" required>
+        <button>Search</button>
+      </form>
+      <p class="muted" id="gameSearchNote">Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.</p>
+      <ul id="gameResults" class="list results"></ul>
+      <details>
+        <summary>Add one by hand (launcher and id)</summary>
+        <form id="gameForm">
+          <label>Launcher
+            <select name="launcher">
+              <option value="steam">Steam</option>
+              <option value="battlenet">Battle.net (product code)</option>
+              <option value="gamepass">Game Pass (app id)</option>
+              <option value="direct">Direct (exe path)</option>
+            </select>
+          </label>
+          <label>Steam store link or app id <input name="launch_ref" placeholder="store.steampowered.com/app/291550 or 291550" required></label>
+          <label>Title <input name="title" placeholder="Leave blank for Steam: filled in from the store"></label>
+          <label>Rating <input name="rating" placeholder="E10+"></label>
+          <fieldset id="gameKids"><legend>Approved for</legend></fieldset>
+          <button class="wide">Add game</button>
+        </form>
+      </details>
+    </div>
   </section>
 
   <section data-panel="chat" hidden>

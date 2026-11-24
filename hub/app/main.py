@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, rules, updates
+from . import adguard, gamesearch, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -70,9 +70,11 @@ async def remote_access_gate(request: Request, call_next):
     response = await call_next(request)
     # Pages and their scripts change with every hub update. Without this a browser keeps showing
     # its saved copy for a while; with it the browser asks each time and usually gets a quick "unchanged".
+    # "private" is for Cloudflare, which the friend's page goes through: with "no-cache" alone it kept the
+    # stylesheet and told browsers to hold it for 4 hours, so friends saw a new page with the old look.
     path = request.url.path
     if path == "/" or path.startswith(("/join/", "/static/")):
-        response.headers.setdefault("Cache-Control", "no-cache")
+        response.headers.setdefault("Cache-Control", "no-cache, private")
     return response
 
 
@@ -524,6 +526,7 @@ class Decision(BaseModel):
     minutes: int | None = None     # for time requests, override the requested minutes
     game_id: int | None = None     # for game requests, the catalogue game to approve
     steam_appid: str | None = None  # ...or a Steam app to add to the catalogue and approve in one step
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")  # ...or any search result
     reason: str = Field(default="", max_length=200)   # shown to the kid, e.g. why it's a no
 
 
@@ -541,7 +544,9 @@ async def parent_decide(rid: int, d: Decision, parent: str = Depends(current_par
             grant_time(db, settings, kid, minutes, parent)
         elif r["kind"] == "game":
             if d.game_id is None and d.steam_appid:
-                d.game_id = await add_game(db, Game(launcher="steam", launch_ref=d.steam_appid))
+                d.ref = f"steam:{d.steam_appid}"
+            if d.game_id is None and d.ref:
+                d.game_id = await add_game_from_ref(db, settings, d.ref)
             if d.game_id is None:
                 raise HTTPException(422, "pick or add the catalogue game to approve")
             db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (kid.id, d.game_id))
@@ -720,15 +725,19 @@ async def parent_add_game(g: Game, parent: str = Depends(current_parent), db: DB
 
 
 async def add_game(db: DB, g: Game) -> int:
-    """Insert a catalogue game (or return the existing one for the same Steam app)."""
+    """Insert a catalogue game (or return the existing one for the same launcher and reference)."""
     g.launch_ref = g.launch_ref.strip()
     if g.launcher == "steam":
         g.launch_ref = g.launch_ref.rstrip("/").split("/app/")[-1].split("/")[0]  # accept a pasted store link
         if not g.launch_ref.isdigit():
             raise HTTPException(400, "Steam games need the app id (the number in the store link)")
-        existing = db.one("SELECT id FROM games WHERE launcher='steam' AND launch_ref=?", (g.launch_ref,))
-        if existing:
-            return existing["id"]
+    if g.launcher == "battlenet" and g.launch_ref.lower() in gamesearch.BATTLENET_BY_CODE:
+        b = gamesearch.BATTLENET_BY_CODE[g.launch_ref.lower()]   # known product code: canonical case, title and rating
+        g.launch_ref, g.title, g.rating = b["code"], g.title.strip() or b["title"], g.rating or b["esrb"]
+    existing = db.one("SELECT id FROM games WHERE launcher=? AND launch_ref=?", (g.launcher, g.launch_ref))
+    if existing:
+        return existing["id"]
+    if g.launcher == "steam":
         if not g.title.strip() or not g.image_url:
             info = await steam_lookup(g.launch_ref)
             g.title = g.title.strip() or info.get("name", "")
@@ -737,6 +746,53 @@ async def add_game(db: DB, g: Game) -> int:
         raise HTTPException(400, "Give the game a title")
     return db.x("INSERT INTO games(title,launcher,launch_ref,rating,image_url) VALUES(?,?,?,?,?)",
                 (g.title.strip(), g.launcher, g.launch_ref, g.rating, g.image_url))
+
+
+async def add_game_from_ref(db: DB, settings: Settings, ref: str) -> int:
+    """Add a game picked from search, by "steam:620", "battlenet:WoW" or "gamepass:9NBLGGH4R315"."""
+    launcher, _, code = ref.partition(":")
+    if launcher == "steam":
+        return await add_game(db, Game(launcher="steam", launch_ref=code))
+    if launcher == "battlenet":
+        if code.lower() not in gamesearch.BATTLENET_BY_CODE:
+            raise HTTPException(400, "That isn't a Battle.net game the hub knows")
+        return await add_game(db, Game(launcher="battlenet", launch_ref=code))
+    if not settings.decisions.game_pass_enabled:
+        raise HTTPException(400, "Game Pass is switched off on the hub (decisions.game_pass_enabled)")
+    hit = next((x for x in await gamesearch.gamepass_catalogue(db) or [] if x["id"] == code), None)
+    if not hit:
+        raise HTTPException(400, "That game isn't in PC Game Pass")
+    return await add_game(db, Game(launcher="gamepass", launch_ref=code, title=hit["title"], rating=hit["esrb"], image_url=hit["image_url"]))
+
+
+@app.get("/api/parent/games/search")
+async def parent_game_search(q: str, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Every store at once: one row per game with art, rating and the platforms it's on.
+    Each platform says which launcher and reference to add, so nobody needs to know an id. Best effort."""
+    q = q.strip()[:100]
+    if len(q) < 2:
+        return {"results": [], "xbox": "skipped"}
+    steam, xbox_cat = await asyncio.gather(steam_search(q, db, kid_safe=False), gamesearch.gamepass_catalogue(db))
+    in_cat = {(g["launcher"], g["launch_ref"]): g["id"] for g in db.q("SELECT id, launcher, launch_ref FROM games")}
+    results = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []),
+                               settings.decisions.game_pass_enabled, in_cat)
+    return {"results": results, "xbox": "ok" if xbox_cat is not None else "unavailable"}
+
+
+class FromSearch(BaseModel):
+    ref: str = Field(pattern=r"^(steam|battlenet|gamepass):[A-Za-z0-9]{1,20}$")   # a platform's launcher:launch_ref
+    approved_for: list[str] = Field(default_factory=list)
+
+
+@app.post("/api/parent/games/from-search", status_code=201)
+async def parent_add_from_search(body: FromSearch, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Add a search result to the catalogue and approve it for the chosen kids in one step."""
+    for k in body.approved_for:
+        kid_or_404(settings, k)
+    gid = await add_game_from_ref(db, settings, body.ref)
+    for k in body.approved_for:
+        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (k, gid))
+    return {"id": gid}
 
 
 @app.get("/api/parent/steam/search")

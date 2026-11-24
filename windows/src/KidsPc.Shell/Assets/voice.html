@@ -99,7 +99,10 @@ if (demo) {
 } else if (!LK) {
   $("#status").textContent = "Voice chat couldn't load. Ask Mom or Dad."; $("#status").className = "bad";
 } else {
-  const room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+  // The browser's own microphone clean-up: echo, steady background noise and level. voiceIsolation asks for the
+  // stronger filter some systems have; a browser without it ignores the request.
+  const MIC = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: true };
+  const room = new LK.Room({ audioCaptureDefaults: MIC });
   let micNote = "";   // set when the microphone can't be switched on, shown in place of the status
   const render = () => {
     if (room.state !== LK.ConnectionState.Connected) return;
