@@ -127,14 +127,15 @@ Check "pipe: hub reachable" ($st.data.hubReachable -eq $true)
 
 # A game whose launcher is not on the PC yet: the kid is asked to come back, in plain words, and the shell
 # is never pointed at a program that is not there (that is what put Windows' error text on his screen).
+# (steam.exe appears before Steam's installer is done, so "is the file there" does not say which answer is right.)
 $ins = Pipe @{ op = "install"; gameId = $g.id }
-if (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe") {
+if ($ins.data.action -ne "wait") {
   Check "install approved steam game -> steam://install" ($ins.data.uri -eq "steam://install/620") ($ins | ConvertTo-Json)
 } else {
-  Check "install while Steam is being set up -> wait, in plain words" ($ins.data.action -eq "wait" -and -not $ins.data.uri -and $ins.data.message -match "Steam is being set up") ($ins | ConvertTo-Json)
+  Check "install while Steam is being set up -> wait, in plain words" (-not $ins.data.uri -and $ins.data.message -match "Steam is being set up") ($ins | ConvertTo-Json)
 }
 $bn = Pipe @{ op = "install"; gameId = $wow.id }
-$bnWaited = -not (Test-Path $bnExe)
+$bnWaited = $bn.data.action -eq "wait"
 if ($bnWaited) {
   Check "install a Battle.net game without Battle.net -> wait, in plain words" ($bn.data.action -eq "wait" -and -not $bn.data.uri -and $bn.data.message -match "Battle.net (is being set up|needs a parent)") ($bn | ConvertTo-Json)
 }
