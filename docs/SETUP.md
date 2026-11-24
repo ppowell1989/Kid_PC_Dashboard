@@ -15,20 +15,30 @@ Target: both PCs working by about 20 December, leaving a few days of slack befor
 5. Open `http://<truenas>:8080` on your phone, sign in, add games on the Games tab.
 6. AdGuard: `http://<truenas>:3000`, then follow `network/README.md`.
 
-## 2. Each PC (about an hour each, after the hardware is built)
+## 2. Each PC (about 20 minutes each, mostly downloads)
 
-1. Install Windows 11 with a **local parent admin account**. Setup pushes hard for a Microsoft account
-   and the workarounds change between releases; check the current method when you install (on Pro,
-   look for a "domain join instead" or offline-account option). GUESS: Windows 11 Pro, for the policy
-   and app control options.
-2. Install GPU drivers, Chrome, Steam and Battle.net as the admin.
-3. Steam: create a Steam account for the kid inside your **Steam Family**, with store and library
-   restrictions on. Battle.net: create a child account under your Blizzard parental controls.
-4. Build the Windows code on any Windows PC with the .NET 8 SDK: `windows\build.ps1`.
-5. Run `windows\setup\Install-KidPc.ps1` (see `windows/README.md`).
-6. Sign in as the kid once, sign out, run the script again with `-ShellOnly`.
-7. Run Sysinternals **Autologon** for the kid's account. Reboot. The shell should appear.
-8. Sign in to Steam and Battle.net once as the kid, with "remember me", so the launchers start signed in.
+1. Install Windows 11 and finish its setup with a **parent admin account**. Your Microsoft account
+   is fine for this parent account; the kid accounts are local and are made by step 3.
+   Let Windows Update finish (it brings the NVIDIA driver), and plug in Ethernet if you can.
+2. On your phone, dashboard: the kid's card, **Set up a new PC**. It shows one line, good for 12 hours.
+3. On the new PC, right-click Start, **Terminal (Admin)**, type or paste that line, press Enter:
+
+   ```powershell
+   irm http://192.168.4.54:8088/setup/ABCD2345 | iex
+   ```
+
+   It asks for a password for the kid's account (he only needs it if he signs out), then by itself:
+   downloads the newest build from the hub (x64 or ARM, picked automatically), makes the kid's
+   standard account and profile, installs the shell and helper, applies the Chrome policies and
+   lockdown, turns on automatic sign-in, waits for the helper to install Steam and Chrome, checks
+   everything, and restarts into the kid's screen. Re-running the same line is safe.
+4. The dashboard shows the PC online with its build within a minute.
+5. Sign in to Steam and Battle.net once as the kid, with "remember me". Steam: a child account
+   in your **Steam Family**. Battle.net: a child account under Blizzard parental controls.
+
+The old manual way still works: `windows\setup\Install-KidPc.ps1 -KidUser adam -KidName Adam -HubUrl ...
+-DeviceToken ... -ExtensionToken ... -AutoLogon` from the unzipped CI bundle. CI runs the one-line path
+on a clean Windows machine on every push (`windows/tests/FreshPc.ps1`).
 
 ## 3. Voice chat from outside the house (needs your go-ahead: outward-facing)
 

@@ -238,7 +238,7 @@ dialog {
 }
 dialog::backdrop { background: #18213a80; }
 dialog h2 { margin: 0 0 6px; font-size: 1.15rem; }
-dialog p.muted { margin: 0 0 12px; padding: 0; text-align: left; }
+dialog p.muted { margin: 0 0 12px; padding: 0; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
 dialog p:empty, dialog input[hidden], dialog button[hidden] { display: none; }
 dialog .actions > button { flex: 1; }
 @media (min-width: 600px) { dialog { margin: auto; } }
