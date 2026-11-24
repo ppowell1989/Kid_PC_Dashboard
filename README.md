@@ -17,7 +17,7 @@ PC, a small hub on the TrueNAS, and a phone dashboard for Patrick and Barbara.
 
 | Folder | What |
 |---|---|
-| `hub/` | Python FastAPI service: rules, time accounting, requests, web history, voice invites, parent dashboard. Tested (`pytest`). |
+| `hub/` | Python FastAPI service: rules, time accounting, requests, web history, voice invites, family (brothers see each other, join the same game, family voice room), parent dashboard. Tested (`pytest`). |
 | `windows/` | .NET 8 kid shell (WPF) and admin helper (Windows service), plus PowerShell setup. |
 | `chrome/` | Chrome lockdown policies and the page-reporting extension. |
 | `network/` | AdGuard Home per-kid setup. |

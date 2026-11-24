@@ -138,7 +138,9 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 MIGRATIONS = [
     ("requests", "ref", "TEXT DEFAULT ''"),
     ("requests", "reason", "TEXT DEFAULT ''"),
-    ("invites", "revoked_at", "TEXT DEFAULT ''"),   # when a parent revoked it; old revoked links are pruned   # parent's note when deciding, shown to the kid   # e.g. "steam:291550" when the kid picked an exact game
+    ("status", "game_id", "INTEGER"),            # catalogue game running now, so a brother can join it
+    ("status", "voice", "TEXT DEFAULT ''"),      # voice room the kid is in: '', 'family' or 'friends'   # parent's note when deciding, shown to the kid   # e.g. "steam:291550" when the kid picked an exact game
+    ("invites", "revoked_at", "TEXT DEFAULT ''"),   # when a parent revoked it; old revoked links are pruned
 ]
 
 

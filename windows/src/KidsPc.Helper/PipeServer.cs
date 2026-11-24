@@ -83,6 +83,16 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var vt = await http.GetFromJsonAsync<VoiceToken>("/api/device/voice-token", Json.Options, ct);
                 return Ok(vt!);
 
+            case "family_voice_token":   // the brothers' shared room; no invite link needed
+                if (cache.Snapshot([]).Locked) return new(false, "Voice chat is off while the PC is locked.");
+                var fr = await http.GetAsync("/api/device/family-voice-token", ct);
+                if (!fr.IsSuccessStatusCode) return new(false, fr.StatusCode == System.Net.HttpStatusCode.Forbidden ? "Family voice is turned off right now." : "The home server didn't answer.");
+                return Ok((await fr.Content.ReadFromJsonAsync<VoiceToken>(Json.Options, ct))!);
+
+            case "voice_state":   // the shell opened or closed a voice window
+                cache.Voice = req.Detail is "family" or "friends" ? req.Detail : "";
+                return Ok(new { });
+
             case "game_search":   // Steam search for "Get more games"; the hub filters out adult-only titles
                 if (string.IsNullOrWhiteSpace(req.Detail)) return Ok(Array.Empty<SteamGame>());
                 var found = await http.GetFromJsonAsync<List<SteamGame>>($"/api/device/steam/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);

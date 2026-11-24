@@ -12,7 +12,7 @@
               Padding="22,12,14,12" Cursor="SizeAll" MouseLeftButtonDown="DragWindow">
         <DockPanel>
           <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="18,8,18,9" Background="{DynamicResource Bad}" Foreground="White" Cursor="Hand" Content="Leave" Click="Leave"/>
-          <TextBlock Text="Chat with a friend" FontSize="22" FontFamily="{DynamicResource Display}" VerticalAlignment="Center"/>
+          <TextBlock x:Name="VoiceTitle" Text="Chat with a friend" FontSize="22" FontFamily="{DynamicResource Display}" VerticalAlignment="Center"/>
         </DockPanel>
       </Border>
       <wv2:WebView2 x:Name="Web"/>

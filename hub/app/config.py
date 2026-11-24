@@ -71,6 +71,7 @@ class Updates(BaseModel):
     enabled: bool = False
     github_repo: str = "ppowell1989/Kid_PC_Dashboard"
     release_tag: str = "test-build"
+    branch: str = "main"              # the branch the builds are made from
     github_token: str = ""            # fine-grained token, this repo only, Contents: read
     poll_minutes: int = 1             # a merged change should reach the PCs soon after its build finishes
 

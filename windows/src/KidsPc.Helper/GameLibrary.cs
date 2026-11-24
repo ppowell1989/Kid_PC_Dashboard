@@ -4,7 +4,8 @@ using KidsPc.Shared;
 
 namespace KidsPc.Helper;
 
-public sealed record Activity(string Title, bool Active, List<GameProcess> Processes);
+/// <summary>GameId is the catalogue id of the running game (null for unapproved games and Chrome), so a brother can join it.</summary>
+public sealed record Activity(string Title, bool Active, List<GameProcess> Processes, int? GameId = null);
 
 /// <summary>A running process the helper recognises, and the catalogue game it belongs to (if any).</summary>
 public sealed record GameProcess(int Pid, string Path, string Kind, string? SteamAppId, Game? Approved);
@@ -139,6 +140,6 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
         var title = game?.Approved?.Title
                     ?? (game?.SteamAppId is { } id ? steam.Values.FirstOrDefault(v => v.AppId == id).Name : null)
                     ?? (found.Any(p => p.Kind == "chrome") ? "Chrome" : "");
-        return new Activity(title ?? "", found.Count > 0, found);
+        return new Activity(title ?? "", found.Count > 0, found, game?.Approved?.Id);
     }
 }

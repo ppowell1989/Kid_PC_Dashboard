@@ -68,9 +68,23 @@ async function refresh() {
     const apps = (k.apps || []).map((a) => {
       const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
       const retry = !sys && a.state === "failed" ? `<button class="ghost small" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
+      // A downloaded build waits for a restart or sign-in unless a parent sends it in now.
+      const install = a.app === "kidspc" && k.online && / ready/.test(a.detail) ? `<button class="ghost small" data-update="${k.id}">Install now</button>` : "";
       const cls = a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending";
-      return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || a.app)} ${esc(sys ? a.detail : a.state)}${retry}</span>`;
+      return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || a.app)} ${esc(sys ? a.detail : a.state)}${retry}${install}</span>`;
     }).join("");
+    const hasPc = (k.apps || []).some((a) => a.app === "kidspc");
+    const how = hasPc ? `<span class="chip">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${k.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
+    // "On build X" is only half the story: say when something newer is still being built or on its way.
+    const pc = (k.apps || []).find((a) => a.app === "kidspc"), B = o.builds || {}, b = B.building;
+    const late = b && b.waiting_minutes >= 15;
+    let newer = "";
+    if (pc && b) newer = `${late ? "A newer build should have arrived by now" : "A newer build is being made"}${b.title ? `: ${esc(b.title)}` : ""}. ${late
+      ? `It has been ${b.waiting_minutes} minutes, so its build may have failed on GitHub.`
+      : "It reaches this PC about 5 minutes after a merge."}`;
+    else if (pc && k.online && B.published && !pc.detail.includes(B.published.slice(0, 8)))
+      newer = `A newer build${B.published_title ? ` (${esc(B.published_title)})` : ""} is on its way to this PC.`;
+    if (newer) newer = `<div class="muted">${newer}</div>`;
     return `<div class="card kid ${k.online ? "online" : ""}">
       <div class="kidhead">
         <div class="avatar">${esc(k.name.slice(0, 1))}</div>
@@ -93,7 +107,7 @@ async function refresh() {
         <button class="ghost small" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
         <button class="ghost small" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
       </div>
-      ${apps ? `<div class="chips">${apps}</div>` : ""}
+      ${apps ? `<div class="chips">${apps}${how}</div>${newer}` : ""}
       <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
     </div>`;
   }).join("");
@@ -119,6 +133,19 @@ async function refresh() {
   document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => {
     $("#webKid").value = b.dataset.seesearch; document.querySelector('nav button[data-tab="web"]').click();
   }));
+  document.querySelectorAll("[data-update]").forEach((b) => (b.onclick = async () => {
+    const name = kidName(b.dataset.update);
+    if (!await sheet({ title: `Install the update on ${name}'s PC now?`, text: "He is signed out for about a minute, even in the middle of a game, and the PC restarts.", ok: "Install now", kind: "bad" })) return;
+    await api(`/api/parent/kids/${b.dataset.update}/commands`, { method: "POST", body: { kind: "install_app", arg: "kidspc" } }); b.textContent = "Sent";
+  }));
+  document.querySelectorAll("[data-autoupdate]").forEach((b) => (b.onclick = async () => {
+    const on = b.dataset.on !== "1", name = kidName(b.dataset.autoupdate);
+    const text = on
+      ? "A new build goes in the moment it arrives. He is signed out for about a minute unless a game is running. Good for a test PC."
+      : "A new build waits for the next restart or sign-in, so it never interrupts him.";
+    if (!await sheet({ title: on ? `Install updates on ${name}'s PC right away?` : `Wait for a restart on ${name}'s PC?`, text, ok: on ? "Right away" : "At the next restart" })) return;
+    await api(`/api/parent/kids/${b.dataset.autoupdate}/auto-update`, { method: "PUT", body: { on } }); refresh();
+  }));
   document.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
   }));
@@ -133,6 +160,31 @@ async function refresh() {
     d.querySelector("ul").innerHTML = rows.map((r) => `<li>${esc(r.text)}<div class="muted">${new Date(r.at).toLocaleString()}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   }));
   fillKidSelects();
+  loadFamily().catch(() => {});
+}
+
+// Family: what the brothers are doing together, and the parents' switches for it.
+async function loadFamily() {
+  const f = await api("/api/parent/family");
+  const on = f.kids.filter((k) => k.online);
+  const names = (ks) => ks.map((k) => esc(k.name)).join(" and ");
+  const voice = f.kids.filter((k) => k.in_family_voice);
+  const together = f.playing_together ? `${names(on.filter((k) => k.running))} are playing <b>${esc(on.find((k) => k.running).running)}</b> together.`
+    : on.length ? on.map((k) => `${esc(k.name)}: ${k.locked ? "done for today" : k.running ? `playing <b>${esc(k.running)}</b>` : "home screen"}`).join(" · ")
+    : "Nobody's PC is on.";
+  const sw = (key, label, hint) => `<label class="switch"><input type="checkbox" data-family="${key}" ${f.settings[key] ? "checked" : ""}>
+      <span><b>${label}</b><small class="muted">${hint}</small></span></label>`;
+  $("#family").innerHTML = `<div class="card family">
+    <h2>Family</h2>
+    <p>${together}</p>
+    <div class="muted">${voice.length ? `In family voice: <b>${names(voice)}</b>` : "Nobody is in family voice."}</div>
+    ${sw("see", "See each other", "Each PC shows what his brother is playing.")}
+    ${sw("join", "Join each other's games", "One tap starts the same game, only if it's approved for both.")}
+    ${sw("voice", "Family voice", "A voice room just for the brothers, no invite link. Turning it off ends a call.")}
+  </div>`;
+  document.querySelectorAll("[data-family]").forEach((c) => (c.onchange = async () => {
+    try { await api("/api/parent/family", { method: "PUT", body: { [c.dataset.family]: c.checked } }); } catch (err) { c.checked = !c.checked; oops(err); }
+  }));
 }
 
 function fillKidSelects() {

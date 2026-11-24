@@ -90,9 +90,14 @@ discord_oauth:                    # only used when friend_verification = discord
 # Auto-update: the hub pulls the latest Windows build from the GitHub release and the PCs
 # fetch it from the hub (the PCs never talk to GitHub). The repo is private, so this needs a
 # fine-grained GitHub token with read-only "Contents" access to this one repo.
+# A downloaded build installs at the PC's next restart or sign-in. On the dashboard a parent can
+# press "Install now", or set one PC (a test PC, say) to take every build the moment it arrives.
+# The dashboard also says when a newer build is still being made, by comparing the release with
+# the newest change on `branch`.
 updates:
   enabled: false
   github_repo: ppowell1989/Kid_PC_Dashboard
   release_tag: test-build
+  branch: main
   github_token: ""
   poll_minutes: 1
