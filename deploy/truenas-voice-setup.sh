@@ -32,8 +32,12 @@ CFG="$DATA/hub/config.yaml"
 [ -f "$CFG" ] || { echo "No $CFG yet. Run deploy/truenas-test-setup.sh first."; exit 1; }
 docker image inspect kidspc-hub:local >/dev/null 2>&1 || { echo "Hub image missing. Run deploy/truenas-test-setup.sh first."; exit 1; }
 
+# shellcheck source=hub-run.sh
+. "$REPO/deploy/hub-run.sh"
+mkdir -p "$DATA/updater"
+hub_lock "$DATA/updater"   # waits if an automatic hub update is running right now
 echo "==> Rebuilding the hub from this copy of the code"
-docker build -q -t kidspc-hub:local "$REPO/hub" >/dev/null
+hub_build "$REPO/hub" kidspc-hub:local "$(hub_repo_version "$REPO")"
 
 echo "==> Reading the voice keys from the hub config"
 read -r KEY SECRET < <(docker run --rm -v "$DATA/hub:/data:ro" kidspc-hub:local \
@@ -97,11 +101,8 @@ if [ "$HTTPS_PORT" != "tunnel" ]; then
 fi
 
 echo "==> Restarting the hub"
-docker rm -f kidspc-hub >/dev/null 2>&1 || true
-docker run -d --name kidspc-hub --restart unless-stopped -p "$PORT:8080" \
-  --add-host host.docker.internal:host-gateway -v "$DATA/hub:/data" kidspc-hub:local >/dev/null
-for _ in $(seq 30); do curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null && break; sleep 1; done
-curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null || { docker logs kidspc-hub | tail -30; exit 1; }
+hub_start kidspc-hub:local "$PORT" "$DATA"
+hub_healthy "$PORT" "" 30 || { docker logs kidspc-hub | tail -30; exit 1; }
 sleep 3
 docker ps --format '{{.Names}}' | grep -q '^kidspc-livekit$' || { echo "The voice server did not stay up:"; docker logs kidspc-livekit | tail -20; exit 1; }
 
