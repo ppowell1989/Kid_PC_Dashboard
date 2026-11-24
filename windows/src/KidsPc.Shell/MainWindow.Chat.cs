@@ -295,7 +295,7 @@ public partial class MainWindow
         return b;
     }
 
-    private void ShowBig(BitmapSource? picture, Uri? video)
+    private void ShowBig(ImageSource? picture, Uri? video)
     {
         PictureBigImage.Source = picture;
         PictureBigImage.Visibility = video is null ? Visibility.Visible : Visibility.Collapsed;
