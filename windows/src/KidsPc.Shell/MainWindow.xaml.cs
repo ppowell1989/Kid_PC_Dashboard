@@ -204,7 +204,7 @@ public partial class MainWindow : Window
     {
         var title = AskGameBox.Text.Trim();
         if (title.Length == 0) return;
-        await SendRequest("game", title, $"Sent! Mom or Dad will look at \"{title}\".");
+        await SendRequest("game", title, $"Sent! Mom or Dad will look at \"{title}\".", SearchStatus);
         AskGameBox.Clear();
     }
 
@@ -233,12 +233,54 @@ public partial class MainWindow : Window
             SearchStatus.Text = hits.Count == 0 ? "Nothing found. You can still ask for it by name." : "Tap a game to ask Mom or Dad for it.";
             foreach (var g in hits)
             {
-                var label = string.IsNullOrEmpty(g.Esrb) ? g.Name : $"{g.Name}\nRated {g.Esrb}";
-                SearchResults.Children.Add(Tile(label, async () =>
-                    await SendRequest("game", g.Name, $"Sent! Mom or Dad will look at \"{g.Name}\".", SearchStatus, $"steam:{g.Appid}"), image: g.ImageUrl));
+                var asked = AlreadyAsked(g.Name);
+                var label = (string.IsNullOrEmpty(g.Esrb) ? g.Name : $"{g.Name}\nRated {g.Esrb}") + (asked ? "\nAsked, waiting" : "");
+                SearchResults.Children.Add(Tile(label, () => ShowAsk(g), enabled: !asked, image: g.ImageUrl));
             }
         }
         catch (Exception ex) { SearchStatus.Text = $"Search isn't working right now: {ex.Message}"; }
+    }
+
+    private bool AlreadyAsked(string title) =>
+        _state?.Rules?.PendingRequests.Any(r => r.Kind == "game" && r.Detail.Equals(title, StringComparison.OrdinalIgnoreCase)) == true
+        || _askedThisSession.Contains(title);
+
+    private readonly HashSet<string> _askedThisSession = new(StringComparer.OrdinalIgnoreCase);
+    private SteamGame? _asking;
+
+    private void ShowAsk(SteamGame g)
+    {
+        _asking = g;
+        AskTitle.Text = g.Name;
+        AskRating.Text = string.IsNullOrEmpty(g.Esrb) ? "No rating listed" : $"Rated {g.Esrb}";
+        AskBlurb.Text = System.Net.WebUtility.HtmlDecode(g.Description ?? "");
+        AskArt.ImageSource = LoadArt(g.ImageUrl);
+        AskNote.Text = AskStatus.Text = "";
+        AskSend.IsEnabled = true;
+        AskOverlay.Visibility = Visibility.Visible;
+        AskNote.Focus();
+    }
+
+    private void CancelAsk(object s, RoutedEventArgs e) { AskOverlay.Visibility = Visibility.Collapsed; _asking = null; }
+
+    private async void ConfirmAsk(object s, RoutedEventArgs e)
+    {
+        if (_asking is not { } g) return;
+        AskSend.IsEnabled = false;
+        AskStatus.Text = "Sending…";
+        try
+        {
+            await _helper.GetAsync<object>(new PipeRequest("request", Kind: "game", Detail: g.Name, Note: AskNote.Text.Trim(), Ref: $"steam:{g.Appid}"));
+            _askedThisSession.Add(g.Name);
+            AskOverlay.Visibility = Visibility.Collapsed;
+            await SearchGamesAsync();   // redraw so the tile shows "Asked, waiting"
+            SearchStatus.Text = $"Sent! Mom or Dad will look at \"{g.Name}\". If they say yes, it shows up in the approved games above.";
+        }
+        catch (Exception ex)
+        {
+            AskStatus.Text = $"Couldn't send: {ex.Message}";
+            AskSend.IsEnabled = true;
+        }
     }
 
     private async Task SendRequest(string kind, string detail, string okText, TextBlock? target = null, string? reference = null)

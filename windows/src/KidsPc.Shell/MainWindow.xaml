@@ -79,6 +79,29 @@
       </StackPanel>
     </Grid>
 
+    <!-- ======================= "Ask Mom or Dad for this game?" ======================= -->
+    <Grid x:Name="AskOverlay" Background="#CC05041A" Visibility="Collapsed">
+      <Border Width="560" Background="#F21C1452" BorderBrush="{StaticResource Cyan}" BorderThickness="2" CornerRadius="24" Padding="28"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Border.Effect><DropShadowEffect Color="#22E4FF" BlurRadius="30" ShadowDepth="0" Opacity="0.6"/></Border.Effect>
+        <StackPanel>
+          <Border CornerRadius="14" Height="230" ClipToBounds="True" Margin="0,0,0,18">
+            <Border.Background><ImageBrush x:Name="AskArt" Stretch="UniformToFill"/></Border.Background>
+          </Border>
+          <TextBlock x:Name="AskTitle" FontSize="30" FontFamily="{StaticResource Display}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="AskRating" FontSize="16" Foreground="{StaticResource Warn}" Margin="0,4,0,0"/>
+          <TextBlock x:Name="AskBlurb" FontSize="15" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" MaxHeight="90"/>
+          <TextBlock FontSize="16" Margin="0,18,0,6" Text="Why do you want it? (optional)"/>
+          <TextBox x:Name="AskNote" FontSize="16" Padding="8,6" MaxLength="200"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button Style="{StaticResource Pill}" Background="#4B3BB0" Content="Never mind" Click="CancelAsk"/>
+            <Button x:Name="AskSend" Style="{StaticResource Pill}" Margin="0" Content="Ask Mom or Dad" Click="ConfirmAsk"/>
+          </StackPanel>
+          <TextBlock x:Name="AskStatus" FontSize="15" Foreground="{StaticResource Muted}" Margin="0,12,0,0" HorizontalAlignment="Right"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+
     <!-- ======================= Family chat (above the lock screen, so he can always reach Mom and Dad) ======================= -->
     <Grid HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,32,28">
       <Button x:Name="ChatPill" Style="{StaticResource Pill}" Click="ToggleChat" HorizontalAlignment="Right">
