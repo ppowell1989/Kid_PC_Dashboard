@@ -132,6 +132,14 @@ CREATE TABLE IF NOT EXISTS playtimes (      -- per kid, per day of week; no row 
     PRIMARY KEY (kid_id, weekday)
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a new PC to make it a kid's PC
+    code       TEXT PRIMARY KEY,
+    kid_id     TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    expires_at REAL NOT NULL,             -- unix time
+    used_at    TEXT DEFAULT '',           -- last time a PC used it (it keeps working until it expires, so a failed run can be repeated)
+    used_by    TEXT DEFAULT ''            -- the PC's computer name
+);
 """
 
 
@@ -140,6 +148,7 @@ MIGRATIONS = [
     ("requests", "reason", "TEXT DEFAULT ''"),
     ("status", "game_id", "INTEGER"),            # catalogue game running now, so a brother can join it
     ("status", "voice", "TEXT DEFAULT ''"),      # voice room the kid is in: '', 'family' or 'friends'   # parent's note when deciding, shown to the kid   # e.g. "steam:291550" when the kid picked an exact game
+    ("invites", "revoked_at", "TEXT DEFAULT ''"),   # when a parent revoked it; old revoked links are pruned
 ]
 
 

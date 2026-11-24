@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, gamesearch, rules, updates
+from . import adguard, gamesearch, retention, rules, updates
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
+    tasks.append(asyncio.create_task(retention.prune_forever(app.state.db, lambda: rules.local_now(settings.timezone))))
     if settings.adguard.enabled and pollers_on:
         tasks.append(asyncio.create_task(adguard.poll_forever(app.state.db, settings)))
     if settings.updates.enabled and settings.updates.github_token and pollers_on:
@@ -633,16 +634,26 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
 
 
 @app.get("/api/parent/searches/{kid_id}")
-def parent_searches(kid_id: str, limit: int = 200, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+def parent_searches(kid_id: str, limit: int = 200, days: int = 0,
+                    parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    return db.q("SELECT term, at, flagged FROM searches WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 1000)))
+    return db.q("SELECT term, at, flagged FROM searches WHERE kid_id=? AND at >= ? ORDER BY at DESC LIMIT ?",
+                (kid_id, since(settings, days), min(limit, 1000)))
+
+
+def since(settings: Settings, days: int) -> str:
+    """Start of the window the dashboard asked for: 1 = today, 7 = the last week, 0 = everything kept.
+    A day prefix, so it compares against every timestamp shape in the DB (see retention._cutoff)."""
+    if days <= 0:
+        return ""
+    return (rules.local_now(settings.timezone) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
 
 @app.get("/api/parent/visits/{kid_id}")
-def parent_visits(kid_id: str, source: str | None = None, limit: int = 200,
+def parent_visits(kid_id: str, source: str | None = None, limit: int = 200, days: int = 0,
                   parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    sql, args = "SELECT * FROM visits WHERE kid_id=?", [kid_id]
+    sql, args = "SELECT * FROM visits WHERE kid_id=? AND at >= ?", [kid_id, since(settings, days)]
     if source in ("chrome", "dns"):
         sql += " AND source=?"
         args.append(source)
@@ -1003,6 +1014,38 @@ def parent_del_site(domain: str, parent: str = Depends(current_parent), db: DB =
 
 # Voice invites --------------------------------------------------------------
 
+# History: how long it is kept, and clearing it --------------------------------
+
+@app.get("/api/parent/retention")
+def parent_retention(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    days = retention.get(db)
+    return {"days": days, "choices": list(retention.CHOICES),
+            "kinds": [{"kind": k, "label": label, "days": days[k]} for k, (label, _) in retention.KINDS.items()]}
+
+
+class RetentionIn(BaseModel):
+    days: dict[str, int]
+
+
+@app.put("/api/parent/retention")
+def parent_set_retention(r: RetentionIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    bad = [k for k, v in r.days.items() if k not in retention.KINDS or v not in retention.CHOICES]
+    if bad:
+        raise HTTPException(422, f"unknown kind or number of days: {', '.join(bad)}")
+    days = retention.put(db, r.days)
+    retention.prune(db, rules.local_now(settings.timezone))   # a shorter window takes effect now, not in an hour
+    return {"days": days}
+
+
+@app.delete("/api/parent/history/{kind}")
+def parent_clear_history(kind: str, kid_id: str | None = None, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    if kind not in retention.KINDS:
+        raise HTTPException(404)
+    if kid_id:
+        kid_or_404(settings, kid_id)
+    return {"deleted": retention.clear(db, kind, kid_id=kid_id)}
+
+
 class InviteIn(BaseModel):
     kid_id: str
     friend_name: str = Field(min_length=1, max_length=60)
@@ -1029,7 +1072,7 @@ def parent_revoke_invite(code: str, parent: str = Depends(current_parent), db: D
     inv = db.one("SELECT * FROM invites WHERE code=?", (code,))
     if not inv:
         raise HTTPException(404)
-    db.x("UPDATE invites SET revoked=1 WHERE code=?", (code,))
+    db.x("UPDATE invites SET revoked=1, revoked_at=datetime('now') WHERE code=? AND revoked=0", (code,))
     # Kick the friend if they are in the room right now. Best effort: LiveKit may be down.
     room = f"room-{inv['kid_id']}"
     try:
@@ -1068,6 +1111,74 @@ def voice_join(code: str, db: DB = Depends(get_db), settings: Settings = Depends
     # Identity is tied to the invite, so revoking it lets the hub kick that friend (see voice/README).
     return {"url": settings.livekit.url, "room": room, "kid_name": kid.name, "friend_name": inv["friend_name"],
             "token": livekit_token(settings, f"friend-{code[:8]}", inv["friend_name"], room, ttl=3 * 3600)}
+
+
+
+# New-PC setup: one line a parent pastes into PowerShell on a fresh Windows PC ---------------------
+#   irm http://<hub>/setup/<code> | iex
+# The code names the kid; the script it returns claims the PC's tokens, downloads the newest build
+# from this hub and runs the installer. Codes expire, so a code seen over someone's shoulder goes stale.
+
+SETUP_CODE_HOURS = 12
+SETUP_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I, it gets read off a phone
+SETUP_SCRIPT = Path(__file__).parent / "setup_pc.ps1"
+
+
+def setup_code_row(db: DB, code: str) -> dict | None:
+    r = db.one("SELECT * FROM setup_codes WHERE code=?", (code.strip().upper(),))
+    return r if r and r["expires_at"] > time.time() else None
+
+
+def hub_base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+@app.post("/api/parent/kids/{kid_id}/setup-code", status_code=201)
+def parent_setup_code(kid_id: str, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                      settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    code = "".join(secrets.choice(SETUP_ALPHABET) for _ in range(8))
+    expires = time.time() + SETUP_CODE_HOURS * 3600
+    db.x("INSERT INTO setup_codes(code,kid_id,created_by,expires_at) VALUES(?,?,?,?)", (code, kid.id, parent, expires))
+    have = {a: updates.current(app.state.updates_dir, a) is not None for a in updates.ARCHES}
+    return {"code": code, "kid_id": kid.id, "command": f"irm {hub_base(request)}/setup/{code} | iex",
+            "expires_at": datetime.fromtimestamp(expires).astimezone().isoformat(timespec="minutes"),
+            "builds": have}
+
+
+@app.get("/setup/{code}")
+def setup_script(code: str, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The bootstrap script. Holds no secret itself: it trades the code for the tokens when it runs."""
+    row = setup_code_row(db, code)
+    if not row or not settings.kid(row["kid_id"]):
+        body = ('Write-Host "This setup code is not valid any more. Make a new one on the dashboard: '
+                'the kid\'s card, Set up a new PC." -ForegroundColor Red\n')
+        return Response(body, media_type="text/plain; charset=utf-8", status_code=200)
+    kid = settings.kid(row["kid_id"])
+    script = (SETUP_SCRIPT.read_text(encoding="utf-8")
+              .replace("__HUB__", hub_base(request)).replace("__CODE__", row["code"]).replace("__KIDNAME__", kid.name))
+    return Response(script, media_type="text/plain; charset=utf-8")
+
+
+class SetupClaimIn(BaseModel):
+    computer: str = Field(default="", max_length=64)
+    arch: Literal["x64", "arm64"] = "x64"
+
+
+@app.post("/api/setup/{code}/claim")
+def setup_claim(code: str, body: SetupClaimIn, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    row = setup_code_row(db, code)
+    kid = settings.kid(row["kid_id"]) if row else None
+    if not kid:
+        raise HTTPException(404, "setup code not valid any more")
+    build = updates.current(app.state.updates_dir, body.arch)
+    if not build:
+        raise HTTPException(409, f"the hub has no {body.arch} PC build yet; turn on updates in config.yaml")
+    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
+    db.x("UPDATE setup_codes SET used_at=?, used_by=? WHERE code=?", (now, body.computer, row["code"]))
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, "pc_setup", f"setup started on {body.computer or 'a PC'}", now))
+    return {"kid_id": kid.id, "kid_name": kid.name, "windows_user": kid.id, "device_token": kid.device_token,
+            "extension_token": kid.extension_token, "web_mode": settings.decisions.web_mode, "build": build}
 
 
 # --------------------------------------------------------------------------- dashboard

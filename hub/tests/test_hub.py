@@ -541,3 +541,101 @@ def test_time_requests_and_answers_stay_in_range(parent):
     rid = parent.post("/api/device/requests", headers=ADAM, json={"kind": "time", "detail": "30"}).json()["id"]
     assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "minutes": -5}).status_code == 422
     assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "minutes": 20}).status_code == 200
+
+
+def test_new_pc_setup_code(parent):
+    """A parent's setup code turns into a script, and the script's claim returns that kid's tokens and build."""
+    import json as _json
+    from app.main import app as _app
+    d = _app.state.updates_dir
+    (d / "kidspc-win-x64.zip").write_bytes(b"PK-fake")
+    (d / "x64.json").write_text(_json.dumps({"version": "abc123def456", "sha256": "00", "size": 7}))
+
+    made = parent.post("/api/parent/kids/barrett/setup-code").json()
+    code = made["code"]
+    assert len(code) == 8 and made["command"] == f"irm http://testserver/setup/{code} | iex"
+    assert made["builds"] == {"x64": True, "arm64": False}
+    assert parent.post("/api/parent/kids/nobody/setup-code").status_code == 404
+
+    script = parent.get(f"/setup/{code.lower()}").text      # read off a phone: case doesn't matter
+    assert "http://testserver" in script and code in script and "Barrett" in script and "tok-barrett" not in script
+    assert "not valid" in parent.get("/setup/NOPE1234").text
+
+    claim = parent.post(f"/api/setup/{code}/claim", json={"computer": "BARRETT-PC", "arch": "x64"}).json()
+    assert claim["device_token"] == "tok-barrett" and claim["windows_user"] == "barrett" and claim["build"]["version"] == "abc123def456"
+    # Usable again until it expires, so a run that failed half-way can simply be repeated.
+    assert parent.post(f"/api/setup/{code}/claim", json={"computer": "BARRETT-PC", "arch": "x64"}).status_code == 200
+    assert parent.post(f"/api/setup/{code}/claim", json={"arch": "arm64"}).status_code == 409    # no ARM build on this hub
+    assert parent.post("/api/setup/NOPE1234/claim", json={}).status_code == 404
+    events = parent.get("/api/parent/kids/barrett/activity").json()["events"]
+    assert any(e["kind"] == "pc_setup" and "BARRETT-PC" in e["detail"] for e in events)
+
+    # Expired codes stop working.
+    _app.state.db.x("UPDATE setup_codes SET expires_at=0 WHERE code=?", (code,))
+    assert parent.post(f"/api/setup/{code}/claim", json={}).status_code == 404
+
+
+def test_setup_is_home_network_only(client):
+    from fastapi.testclient import TestClient
+    from app.main import app as _app
+    with TestClient(_app, client=("8.8.8.8", 5000)) as outside:
+        assert outside.get("/setup/ABCDEFGH").status_code == 403
+        assert outside.post("/api/setup/ABCDEFGH/claim", json={}).status_code == 403
+
+
+def test_history_is_pruned_and_can_be_cleared(parent):
+    from app import retention
+    from app.main import app
+    db = app.state.db
+    h = {"visits": [{"url": "https://old.example/a", "at": "2026-09-01T10:00:00Z"},
+                    {"url": "https://new.example/b", "at": "2026-11-24T10:00:00Z"}],
+         "searches": [{"term": "old thing", "at": "2026-08-01T10:00:00Z"}, {"term": "new thing", "at": "2026-11-23T10:00:00Z"}]}
+    assert parent.post("/api/device/history", headers=ADAM, json=h).status_code == 204
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES('adam','game_blocked','x','2026-09-01T10:00:00Z')")
+    db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES('Adam','adam','hi','2026-01-01T10:00:00')")
+    db.x("INSERT INTO requests(kid_id,kind,detail,state,created_at,decided_at) VALUES('adam','time','15','declined','2026-09-01 10:00:00','2026-09-01 10:05:00')")
+    db.x("INSERT INTO requests(kid_id,kind,detail,created_at) VALUES('adam','time','15','2026-09-01 10:00:00')")   # still pending: kept
+
+    r = parent.get("/api/parent/retention").json()
+    assert r["days"]["visits"] == 30 and r["days"]["invites"] == 7
+    # Saving the settings prunes straight away with the defaults.
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 30}}).status_code == 200
+    assert [v["domain"] for v in parent.get("/api/parent/visits/adam").json()] == ["new.example"]
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam").json()] == ["new thing"]   # 90 days: Aug 1 is gone
+    assert db.one("SELECT COUNT(*) n FROM events")["n"] == 0
+    assert db.one("SELECT COUNT(*) n FROM chat")["n"] == 0
+    assert [q["state"] for q in db.q("SELECT state FROM requests")] == ["pending"]
+
+    # "Today" and "last 7 days" windows on the Web tab.
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam?days=1").json()] == []
+    assert [s["term"] for s in parent.get("/api/parent/searches/adam?days=7").json()] == ["new thing"]
+
+    # Keep forever (0) and bad values.
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 0}}).json()["days"]["visits"] == 0
+    assert parent.put("/api/parent/retention", json={"days": {"visits": 5}}).status_code == 422
+    assert parent.put("/api/parent/retention", json={"days": {"nope": 7}}).status_code == 422
+
+    # Clear by hand, for one kid.
+    parent.post("/api/device/history", headers={"Authorization": "Bearer tok-barrett"}, json={"visits": [{"url": "https://b.example", "at": "2026-11-24T09:00:00Z"}]})
+    assert parent.delete("/api/parent/history/visits?kid_id=adam").json() == {"deleted": 1}
+    assert parent.get("/api/parent/visits/adam").json() == []
+    assert len(parent.get("/api/parent/visits/barrett").json()) == 1
+    assert parent.delete("/api/parent/history/everything").status_code == 404
+    assert retention.get(db)["visits"] == 0
+
+
+def test_revoked_invites_can_be_cleared(parent):
+    from app.main import app
+    a = parent.post("/api/parent/invites", json={"kid_id": "adam", "friend_name": "Sam"}).json()
+    b = parent.post("/api/parent/invites", json={"kid_id": "adam", "friend_name": "Max"}).json()
+    parent.delete(f"/api/parent/invites/{a['code']}")
+    rows = parent.get("/api/parent/invites").json()
+    assert {r["friend_name"]: r["revoked"] for r in rows} == {"Sam": 1, "Max": 0}
+    assert [r for r in rows if r["revoked"]][0]["revoked_at"]
+    # Old revoked links go on their own once past the window.
+    app.state.db.x("UPDATE invites SET revoked_at='2026-11-01 10:00:00' WHERE code=?", (a["code"],))
+    parent.put("/api/parent/retention", json={"days": {"invites": 7}})
+    assert [r["friend_name"] for r in parent.get("/api/parent/invites").json()] == ["Max"]
+    parent.delete(f"/api/parent/invites/{b['code']}")
+    assert parent.delete("/api/parent/history/invites").json() == {"deleted": 1}
+    assert parent.get("/api/parent/invites").json() == []
