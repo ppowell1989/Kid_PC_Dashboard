@@ -136,6 +136,7 @@ details .list { margin-top: 10px; }
 details .list li { background: var(--well); box-shadow: none; padding: 8px 12px; font-size: .9rem; }
 .art { display: block; width: 100%; aspect-ratio: 460 / 215; object-fit: cover; border-radius: 12px; margin: 0 0 10px; background: var(--well); }
 select + .art { margin-top: 10px; }
+.art[hidden] { display: none; }   /* no art yet (or no store match): no empty grey box */
 
 /* ---------------------------------------------------------------- "Now": one card per kid */
 .kid { --c: var(--accent); }
