@@ -24,6 +24,9 @@ public partial class MainWindow
             case "chat":
                 ToggleChat(this, new RoutedEventArgs());
                 break;
+            case "power":
+                OpenPower(this, new RoutedEventArgs());
+                break;
             case "themes":
                 OpenThemes(this, new RoutedEventArgs());
                 break;

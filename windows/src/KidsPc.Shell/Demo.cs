@@ -17,7 +17,7 @@ internal sealed class PipeHelper : IHelper
 /// <summary>
 /// Stand-in helper for "KidsPcShell.exe --demo &lt;scene&gt;": canned data, no hub, no helper, nothing launches.
 /// Used by windows\tests\Screenshots.ps1 so every screen of the design can be looked at on real Windows pixels.
-/// Scenes: home, catalogue, ask, chat, voice, warning, lock, themes. Add "--theme &lt;id&gt;" to see one in another look.
+/// Scenes: home, catalogue, ask, chat, voice, warning, lock, themes, power. Add "--theme &lt;id&gt;" to see one in another look.
 /// </summary>
 internal sealed class DemoHelper(string scene) : IHelper
 {

@@ -57,6 +57,13 @@
 
       <DockPanel DockPanel.Dock="Top" Margin="0,0,0,26">
         <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}"
+                ToolTip="Power" Click="OpenPower">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE7E8;" FontFamily="{DynamicResource Icons}" FontSize="18" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,1,10,0"/>
+            <TextBlock Text="Power" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0,0,12,0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}"
                 Tag="15" Click="AskForTimeHome">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE916;" FontFamily="{DynamicResource Icons}" FontSize="18" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,1,10,0"/>
@@ -169,6 +176,44 @@
               <TextBlock FontSize="30" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="Pick your look"/>
             </DockPanel>
             <WrapPanel x:Name="ThemeChoices"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!-- ======================= Power: sleep, restart, shut down, sign out ======================= -->
+    <Grid x:Name="PowerOverlay" Background="{DynamicResource Scrim}" Visibility="Collapsed">
+      <Grid Width="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Border Style="{DynamicResource Shadow}"/>
+        <Border Style="{DynamicResource CardBox}" Padding="30,26,30,26">
+          <StackPanel>
+            <TextBlock FontSize="30" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" Text="Done for now?"/>
+            <TextBlock FontSize="18" Foreground="{DynamicResource Muted}" Margin="0,6,0,22" TextWrapping="Wrap" Text="Save your game first. Anything not saved will be lost."/>
+            <Button Style="{DynamicResource Pill}" Margin="0,0,0,12" FontSize="20" Padding="24,15,24,16" HorizontalContentAlignment="Left" Tag="shutdown" Click="DoPower">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7E8;" FontFamily="{DynamicResource Icons}" FontSize="22" VerticalAlignment="Center" Margin="0,1,14,0"/>
+                <TextBlock Text="Shut down" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{DynamicResource Pill}" Margin="0,0,0,12" FontSize="20" Padding="24,15,24,16" HorizontalContentAlignment="Left" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Tag="sleep" Click="DoPower">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE708;" FontFamily="{DynamicResource Icons}" FontSize="22" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,1,14,0"/>
+                <TextBlock Text="Sleep" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{DynamicResource Pill}" Margin="0,0,0,12" FontSize="20" Padding="24,15,24,16" HorizontalContentAlignment="Left" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Tag="restart" Click="DoPower">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE777;" FontFamily="{DynamicResource Icons}" FontSize="22" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,1,14,0"/>
+                <TextBlock Text="Restart" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{DynamicResource Pill}" Margin="0,0,0,22" FontSize="20" Padding="24,15,24,16" HorizontalContentAlignment="Left" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Tag="signout" Click="DoPower">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE77B;" FontFamily="{DynamicResource Icons}" FontSize="22" Foreground="{DynamicResource Accent}" VerticalAlignment="Center" Margin="0,1,14,0"/>
+                <TextBlock Text="Sign out" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Style="{DynamicResource Pill}" Margin="0" HorizontalAlignment="Right" Background="{DynamicResource Well}" Foreground="{DynamicResource Muted}" BorderBrush="{DynamicResource Line}" Content="Never mind" Click="ClosePower"/>
           </StackPanel>
         </Border>
       </Grid>
