@@ -87,7 +87,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             if git fetch -q --depth 1 "$url" ci-screenshots; then git checkout -q -b ci-screenshots FETCH_HEAD; else git checkout -q --orphan ci-screenshots; fi
-            rm -rf "$slug" && mkdir -p "$slug" && cp ../shots/*.png "$slug/"
+            rm -rf "$slug" && mkdir -p "$slug" && cp ../shots/* "$slug/"
             git add -A
             git commit -q -m "Shell screenshots: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}" || { echo "No change"; exit 0; }
             if git push -q "$url" ci-screenshots; then exit 0; fi

@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $scenes = "home", "catalogue", "ask", "chat", "voice", "warning", "lock"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $exe = (Resolve-Path "$BuildDir\Shell\KidsPcShell.exe").Path
+$env:KIDSPC_DEMO_OUT = (Resolve-Path $Out).Path
 
 # CI runners start at 1024x768. The kids' monitors are 1080p, so look at the design at that size.
 try { Set-DisplayResolution -Width $Width -Height $Height -Force | Out-Null } catch { Write-Host "Could not change the resolution: $_" }
@@ -22,6 +23,13 @@ $fail = 0
 foreach ($scene in $scenes) {
   $p = Start-Process $exe -ArgumentList "--demo", $scene -PassThru
   Start-Sleep 9     # window up, game art downloaded
+  if ($scene -eq "voice") {
+    # The voice room is a WebView2 page. Its first start on a fresh machine is slow, and a screen grab can miss its
+    # GPU surface, so the shell also saves the page as WebView2 drew it (voice-page.png).
+    for ($i = 0; $i -lt 40 -and -not (Test-Path "$Out\voice-page.txt"); $i++) { Start-Sleep 1 }
+    if (Test-Path "$Out\voice-page.txt") { Write-Host "voice page: $(Get-Content "$Out\voice-page.txt" -Raw)" } else { Write-Host "voice page: nothing reported after 49 s" }
+    Start-Sleep 2
+  }
   if ($p.HasExited) { Write-Host "FAIL  ${scene}: the shell exited with code $($p.ExitCode)" -ForegroundColor Red; $fail++; continue }
   $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
   $g = [System.Drawing.Graphics]::FromImage($bmp)
