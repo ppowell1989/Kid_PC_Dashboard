@@ -132,6 +132,14 @@ CREATE TABLE IF NOT EXISTS playtimes (      -- per kid, per day of week; no row 
     PRIMARY KEY (kid_id, weekday)
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a new PC to make it a kid's PC
+    code       TEXT PRIMARY KEY,
+    kid_id     TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    expires_at REAL NOT NULL,             -- unix time
+    used_at    TEXT DEFAULT '',           -- last time a PC used it (it keeps working until it expires, so a failed run can be repeated)
+    used_by    TEXT DEFAULT ''            -- the PC's computer name
+);
 """
 
 

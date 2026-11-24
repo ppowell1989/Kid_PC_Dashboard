@@ -461,3 +461,43 @@ def test_approve_game_request_with_a_battlenet_pick(parent):
     rid = parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "Hearthstone"}).json()["id"]
     assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "ref": "battlenet:WTCG"}).status_code == 200
     assert [x["launch_ref"] for x in parent.get("/api/device/rules", headers=ADAM).json()["games"]] == ["WTCG"]
+
+
+def test_new_pc_setup_code(parent):
+    """A parent's setup code turns into a script, and the script's claim returns that kid's tokens and build."""
+    import json as _json
+    from app.main import app as _app
+    d = _app.state.updates_dir
+    (d / "kidspc-win-x64.zip").write_bytes(b"PK-fake")
+    (d / "x64.json").write_text(_json.dumps({"version": "abc123def456", "sha256": "00", "size": 7}))
+
+    made = parent.post("/api/parent/kids/barrett/setup-code").json()
+    code = made["code"]
+    assert len(code) == 8 and made["command"] == f"irm http://testserver/setup/{code} | iex"
+    assert made["builds"] == {"x64": True, "arm64": False}
+    assert parent.post("/api/parent/kids/nobody/setup-code").status_code == 404
+
+    script = parent.get(f"/setup/{code.lower()}").text      # read off a phone: case doesn't matter
+    assert "http://testserver" in script and code in script and "Barrett" in script and "tok-barrett" not in script
+    assert "not valid" in parent.get("/setup/NOPE1234").text
+
+    claim = parent.post(f"/api/setup/{code}/claim", json={"computer": "BARRETT-PC", "arch": "x64"}).json()
+    assert claim["device_token"] == "tok-barrett" and claim["windows_user"] == "barrett" and claim["build"]["version"] == "abc123def456"
+    # Usable again until it expires, so a run that failed half-way can simply be repeated.
+    assert parent.post(f"/api/setup/{code}/claim", json={"computer": "BARRETT-PC", "arch": "x64"}).status_code == 200
+    assert parent.post(f"/api/setup/{code}/claim", json={"arch": "arm64"}).status_code == 409    # no ARM build on this hub
+    assert parent.post("/api/setup/NOPE1234/claim", json={}).status_code == 404
+    events = parent.get("/api/parent/kids/barrett/activity").json()["events"]
+    assert any(e["kind"] == "pc_setup" and "BARRETT-PC" in e["detail"] for e in events)
+
+    # Expired codes stop working.
+    _app.state.db.x("UPDATE setup_codes SET expires_at=0 WHERE code=?", (code,))
+    assert parent.post(f"/api/setup/{code}/claim", json={}).status_code == 404
+
+
+def test_setup_is_home_network_only(client):
+    from fastapi.testclient import TestClient
+    from app.main import app as _app
+    with TestClient(_app, client=("8.8.8.8", 5000)) as outside:
+        assert outside.get("/setup/ABCDEFGH").status_code == 403
+        assert outside.post("/api/setup/ABCDEFGH/claim", json={}).status_code == 403
