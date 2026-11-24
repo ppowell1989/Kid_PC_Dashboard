@@ -3,106 +3,68 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
   <Application.Resources>
-    <!-- Retro space theme: black sky, neon planets, chunky glowing tiles and buttons with a hard "3D" edge.
-         Display type is Bungee (SIL Open Font License, Assets\Fonts\OFL.txt), built into the exe. -->
-    <RadialGradientBrush x:Key="Bg" Center="0.25,0.1" GradientOrigin="0.25,0.1" RadiusX="1.1" RadiusY="1.1">
-      <GradientStop Color="#1B0B4A" Offset="0"/>
-      <GradientStop Color="#0B0628" Offset="0.5"/>
-      <GradientStop Color="#03020F" Offset="1"/>
-    </RadialGradientBrush>
-    <SolidColorBrush x:Key="Card" Color="#F2140C44"/>
-    <SolidColorBrush x:Key="Panel" Color="#F21A1060"/>
-    <SolidColorBrush x:Key="Well" Color="#E60A0630"/>
-    <SolidColorBrush x:Key="Line" Color="#4B3BB0"/>
-    <SolidColorBrush x:Key="Text" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="Muted" Color="#B3A9E8"/>
-    <SolidColorBrush x:Key="Accent" Color="#FF2E97"/>
-    <SolidColorBrush x:Key="Cyan" Color="#22E4FF"/>
-    <SolidColorBrush x:Key="Warn" Color="#FFD23F"/>
-    <SolidColorBrush x:Key="Lime" Color="#7DFF5A"/>
-    <SolidColorBrush x:Key="Orange" Color="#FF8A00"/>
-    <SolidColorBrush x:Key="Violet" Color="#9B5CFF"/>
-    <SolidColorBrush x:Key="Ink" Color="#06122B"/>
-    <LinearGradientBrush x:Key="Neon" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#FF6AB5" Offset="0"/>
-      <GradientStop Color="#FF2E97" Offset="1"/>
+    <!-- Clean, light theme: a soft backdrop, white rounded cards with gentle shadows, one blue accent, and
+         green / amber / red only where they carry meaning. Type is Nunito (SIL Open Font License,
+         Assets\Fonts\OFL.txt), built into the exe in two weights: "Nunito Text" for reading, "Nunito Display"
+         for headings and buttons. Don't set FontWeight on top of them: Windows would fake the bold. -->
+    <LinearGradientBrush x:Key="Bg" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#F8FAFE" Offset="0"/>
+      <GradientStop Color="#EDF2FB" Offset="1"/>
     </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Rainbow" StartPoint="0,0" EndPoint="1,0">
-      <GradientStop Color="#22E4FF" Offset="0"/>
-      <GradientStop Color="#FF2E97" Offset="0.5"/>
-      <GradientStop Color="#FFD23F" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Gold" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#FFF48A" Offset="0.1"/>
-      <GradientStop Color="#FFD23F" Offset="0.5"/>
-      <GradientStop Color="#FF8A00" Offset="0.95"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="CyanFace" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#7DF1FF" Offset="0"/>
-      <GradientStop Color="#22E4FF" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="FuelOk" StartPoint="0,0" EndPoint="1,0">
-      <GradientStop Color="#7DFF5A" Offset="0"/>
-      <GradientStop Color="#C8FF5A" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="FuelLow" StartPoint="0,0" EndPoint="1,0">
-      <GradientStop Color="#FF8A00" Offset="0"/>
-      <GradientStop Color="#FFD23F" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="FuelEmpty" StartPoint="0,0" EndPoint="1,0">
-      <GradientStop Color="#C4102C" Offset="0"/>
-      <GradientStop Color="#FF4D5E" Offset="1"/>
-    </LinearGradientBrush>
-    <!-- Black and yellow caution stripes for the "time is nearly up" banner. -->
-    <LinearGradientBrush x:Key="Hazard" StartPoint="0,0" EndPoint="24,24" MappingMode="Absolute" SpreadMethod="Repeat">
-      <GradientStop Color="#FFD23F" Offset="0"/>
-      <GradientStop Color="#FFD23F" Offset="0.5"/>
-      <GradientStop Color="#1B1D21" Offset="0.5"/>
-      <GradientStop Color="#1B1D21" Offset="1"/>
-    </LinearGradientBrush>
-    <!-- Little planets used as button icons. -->
-    <RadialGradientBrush x:Key="PlanetPink" GradientOrigin="0.3,0.28" Center="0.4,0.4" RadiusX="0.75" RadiusY="0.75">
-      <GradientStop Color="#FFD1EC" Offset="0"/><GradientStop Color="#FF2E97" Offset="0.5"/><GradientStop Color="#6A0DAD" Offset="1"/>
-    </RadialGradientBrush>
-    <RadialGradientBrush x:Key="PlanetCyan" GradientOrigin="0.3,0.28" Center="0.4,0.4" RadiusX="0.75" RadiusY="0.75">
-      <GradientStop Color="#D9FBFF" Offset="0"/><GradientStop Color="#22E4FF" Offset="0.5"/><GradientStop Color="#1B3BFF" Offset="1"/>
-    </RadialGradientBrush>
-    <RadialGradientBrush x:Key="PlanetGold" GradientOrigin="0.3,0.28" Center="0.4,0.4" RadiusX="0.75" RadiusY="0.75">
-      <GradientStop Color="#FFF7C2" Offset="0"/><GradientStop Color="#FFD23F" Offset="0.5"/><GradientStop Color="#FF6A00" Offset="1"/>
-    </RadialGradientBrush>
-    <RadialGradientBrush x:Key="PlanetLime" GradientOrigin="0.3,0.28" Center="0.4,0.4" RadiusX="0.75" RadiusY="0.75">
-      <GradientStop Color="#E2FFD9" Offset="0"/><GradientStop Color="#7DFF5A" Offset="0.5"/><GradientStop Color="#0A7A4A" Offset="1"/>
-    </RadialGradientBrush>
+    <SolidColorBrush x:Key="Card" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Well" Color="#EFF3FA"/>
+    <SolidColorBrush x:Key="Line" Color="#E1E7F2"/>
+    <SolidColorBrush x:Key="Text" Color="#18213A"/>
+    <SolidColorBrush x:Key="Muted" Color="#67718B"/>
+    <SolidColorBrush x:Key="Accent" Color="#3D6BF5"/>
+    <SolidColorBrush x:Key="AccentSoft" Color="#E7EDFF"/>
+    <SolidColorBrush x:Key="Good" Color="#1FA971"/>
+    <SolidColorBrush x:Key="Bad" Color="#E5484D"/>
+    <SolidColorBrush x:Key="WarnSoft" Color="#FFF3D1"/>
+    <SolidColorBrush x:Key="WarnLine" Color="#F2C14E"/>
+    <SolidColorBrush x:Key="WarnText" Color="#6B4700"/>
+    <SolidColorBrush x:Key="Scrim" Color="#8018213A"/>
+    <!-- Time-left bar: green, then amber, then red. -->
+    <SolidColorBrush x:Key="FuelOk" Color="#1FA971"/>
+    <SolidColorBrush x:Key="FuelLow" Color="#F2A20C"/>
+    <SolidColorBrush x:Key="FuelEmpty" Color="#E5484D"/>
 
-    <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Bungee, Bahnschrift SemiBold, Segoe UI Black, Segoe UI</FontFamily>
-    <FontFamily x:Key="Body">Bahnschrift, Segoe UI Variable, Segoe UI</FontFamily>
-    <FontFamily x:Key="Icons">Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol</FontFamily>
+    <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Nunito Display, Segoe UI Variable Display Semibold, Segoe UI Semibold, Segoe UI</FontFamily>
+    <FontFamily x:Key="Body">/KidsPcShell;component/Assets/Fonts/#Nunito Text, Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="Icons">Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Symbol</FontFamily>
 
     <!-- No implicit TextBlock style on purpose: it would override the font and colour that buttons hand down
-         to their labels. The window sets the body font and white text; everything inherits from there. -->
+         to their labels. The window sets the body font and text colour; everything inherits from there. -->
 
-    <!-- Section heading: chunky cyan caps. -->
     <Style x:Key="Heading" TargetType="TextBlock">
       <Setter Property="FontFamily" Value="{StaticResource Display}"/>
-      <Setter Property="FontSize" Value="26"/>
-      <Setter Property="Foreground" Value="{StaticResource Cyan}"/>
+      <Setter Property="FontSize" Value="24"/>
+      <Setter Property="Foreground" Value="{StaticResource Text}"/>
     </Style>
 
-    <!-- Scroll bars: a slim violet thumb instead of the grey Windows one. -->
+    <!-- A white card's soft shadow, drawn on its own plain shape behind the card so the card's contents stay crisp. -->
+    <Style x:Key="Shadow" TargetType="Border">
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="CornerRadius" Value="22"/>
+      <Setter Property="Effect">
+        <Setter.Value><DropShadowEffect Color="#3A4A78" BlurRadius="28" ShadowDepth="6" Direction="270" Opacity="0.14"/></Setter.Value>
+      </Setter>
+    </Style>
+
     <Style TargetType="ScrollBar">
-      <Setter Property="Width" Value="12"/>
-      <Setter Property="MinWidth" Value="12"/>
+      <Setter Property="Width" Value="10"/>
+      <Setter Property="MinWidth" Value="10"/>
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ScrollBar">
-            <Border Background="#660A0630" CornerRadius="6">
+            <Border Background="Transparent" CornerRadius="5">
               <Track x:Name="PART_Track" IsDirectionReversed="True">
                 <Track.Thumb>
                   <Thumb>
                     <Thumb.Template>
                       <ControlTemplate TargetType="Thumb">
-                        <Border CornerRadius="6" Background="#9B5CFF"/>
+                        <Border CornerRadius="5" Background="#C5CEDF"/>
                       </ControlTemplate>
                     </Thumb.Template>
                   </Thumb>
@@ -114,14 +76,13 @@
       </Setter>
     </Style>
 
-    <!-- Text boxes: dark well, neon edge when typing. -->
     <Style TargetType="TextBox">
-      <Setter Property="Background" Value="{StaticResource Well}"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="CaretBrush" Value="#22E4FF"/>
-      <Setter Property="SelectionBrush" Value="#FF2E97"/>
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="Foreground" Value="{StaticResource Text}"/>
+      <Setter Property="CaretBrush" Value="#18213A"/>
+      <Setter Property="SelectionBrush" Value="#3D6BF5"/>
       <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
-      <Setter Property="BorderThickness" Value="3"/>
+      <Setter Property="BorderThickness" Value="2"/>
       <Setter Property="FontFamily" Value="{StaticResource Body}"/>
       <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="Template">
@@ -133,7 +94,7 @@
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Cyan}"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -141,14 +102,13 @@
       </Setter>
     </Style>
 
-    <!-- Game tile: art on top, name plate below, thick neon frame with a hard lower edge. Lifts and glows on hover.
-         Background = the art (or a poster colour), BorderBrush = the frame colour, Tag = an icon glyph for tiles with no art. -->
+    <!-- Game tile: a white card with the art on top and the name below. Lifts a little on hover.
+         Background = the art (or a soft poster colour), Tag = an icon glyph for tiles with no art. -->
     <Style x:Key="Tile" TargetType="Button">
       <Setter Property="Width" Value="342"/>
-      <Setter Property="Height" Value="240"/>
-      <Setter Property="Background" Value="{StaticResource PlanetCyan}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource Cyan}"/>
-      <Setter Property="Margin" Value="0,0,22,20"/>
+      <Setter Property="Height" Value="238"/>
+      <Setter Property="Background" Value="{StaticResource AccentSoft}"/>
+      <Setter Property="Margin" Value="0,0,22,22"/>
       <Setter Property="Foreground" Value="{StaticResource Text}"/>
       <Setter Property="FontSize" Value="20"/>
       <Setter Property="Cursor" Value="Hand"/>
@@ -159,17 +119,14 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Grid>
-              <Border Margin="0,10,0,0" CornerRadius="24" Background="{TemplateBinding BorderBrush}" Opacity="0.4"/>
-              <Border x:Name="b" Margin="0,0,0,10" CornerRadius="24" Background="{StaticResource Card}"
-                      BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="4">
-                <Border.Effect><DropShadowEffect Color="#22E4FF" BlurRadius="0" ShadowDepth="0" Opacity="0.9"/></Border.Effect>
+              <Border x:Name="sh" Style="{StaticResource Shadow}" Opacity="0.75"/>
+              <Border x:Name="b" CornerRadius="22" Background="{StaticResource Card}" BorderBrush="Transparent" BorderThickness="3">
                 <Grid>
                   <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                   <Border CornerRadius="19,19,0,0" Background="{TemplateBinding Background}"/>
                   <TextBlock Text="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" FontFamily="{StaticResource Icons}"
-                             FontSize="72" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                  <Border CornerRadius="19,19,0,0" BorderBrush="#50FFFFFF" BorderThickness="0,2,0,0"/>
-                  <Border Grid.Row="1" MinHeight="62" Padding="16,8,16,10" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="0,3,0,0">
+                             FontSize="64" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  <Border Grid.Row="1" MinHeight="68" Padding="18,10,18,12">
                     <ContentPresenter VerticalAlignment="Center"/>
                   </Border>
                 </Grid>
@@ -180,70 +137,24 @@
                 <Trigger.EnterActions>
                   <BeginStoryboard>
                     <Storyboard>
-                      <DoubleAnimation Storyboard.TargetName="b" Storyboard.TargetProperty="(Border.Effect).(DropShadowEffect.BlurRadius)" To="34" Duration="0:0:0.15"/>
-                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.05" Duration="0:0:0.15"/>
-                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.05" Duration="0:0:0.15"/>
+                      <DoubleAnimation Storyboard.TargetName="sh" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.03" Duration="0:0:0.12"/>
+                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.03" Duration="0:0:0.12"/>
                     </Storyboard>
                   </BeginStoryboard>
                 </Trigger.EnterActions>
                 <Trigger.ExitActions>
                   <BeginStoryboard>
                     <Storyboard>
-                      <DoubleAnimation Storyboard.TargetName="b" Storyboard.TargetProperty="(Border.Effect).(DropShadowEffect.BlurRadius)" To="0" Duration="0:0:0.2"/>
-                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.2"/>
-                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.2"/>
+                      <DoubleAnimation Storyboard.TargetName="sh" Storyboard.TargetProperty="Opacity" To="0.75" Duration="0:0:0.18"/>
+                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.18"/>
+                      <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.18"/>
                     </Storyboard>
                   </BeginStoryboard>
                 </Trigger.ExitActions>
               </Trigger>
-              <Trigger Property="IsPressed" Value="True">
-                <Setter TargetName="b" Property="Margin" Value="0,7,0,3"/>
-              </Trigger>
               <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="b" Property="BorderBrush" Value="White"/>
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.45"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <!-- Chunky push button. Background = the face colour; it sinks onto its dark edge when pressed. -->
-    <Style x:Key="Pill" TargetType="Button">
-      <Setter Property="Padding" Value="22,10,22,9"/>
-      <Setter Property="Margin" Value="0,0,12,0"/>
-      <Setter Property="FontSize" Value="17"/>
-      <Setter Property="FontFamily" Value="{StaticResource Display}"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Background" Value="{StaticResource Neon}"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Grid>
-              <Border Margin="0,6,0,0" CornerRadius="16" Background="{TemplateBinding Background}"/>
-              <Border Margin="0,6,0,0" CornerRadius="16" Background="#99000000"/>
-              <Border x:Name="p" Margin="0,0,0,6" CornerRadius="16" Background="{TemplateBinding Background}"
-                      BorderBrush="#66FFFFFF" BorderThickness="0,2,0,0" Padding="{TemplateBinding Padding}">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              </Border>
-            </Grid>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="p" Property="Effect">
-                  <Setter.Value><DropShadowEffect Color="#FFFFFF" BlurRadius="18" ShadowDepth="0" Opacity="0.55"/></Setter.Value>
-                </Setter>
-              </Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="p" Property="BorderBrush" Value="White"/>
-                <Setter TargetName="p" Property="BorderThickness" Value="2"/>
-              </Trigger>
-              <Trigger Property="IsPressed" Value="True">
-                <Setter TargetName="p" Property="Margin" Value="0,5,0,1"/>
+                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.5"/>
@@ -254,47 +165,71 @@
       </Setter>
     </Style>
 
-    <!-- Top navigation: a planet and a label on a console button. Tag="on" marks the page you are on.
-         Background = the planet, BorderBrush = its colour. -->
-    <Style x:Key="Nav" TargetType="Button">
-      <Setter Property="Height" Value="70"/>
-      <Setter Property="Margin" Value="0,0,16,0"/>
-      <Setter Property="FontSize" Value="19"/>
+    <!-- Button. Blue by default; set Background and Foreground for a quiet (Well + Text) or a red one. -->
+    <Style x:Key="Pill" TargetType="Button">
+      <Setter Property="Padding" Value="22,11,22,12"/>
+      <Setter Property="Margin" Value="0,0,12,0"/>
+      <Setter Property="FontSize" Value="17"/>
       <Setter Property="FontFamily" Value="{StaticResource Display}"/>
       <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Background" Value="{StaticResource PlanetCyan}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource Cyan}"/>
+      <Setter Property="Background" Value="{StaticResource Accent}"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Grid>
-              <Border Margin="0,7,0,0" CornerRadius="32" Background="{TemplateBinding BorderBrush}" Opacity="0.4"/>
-              <Border x:Name="f" Margin="0,0,0,7" CornerRadius="32" Background="{StaticResource Card}"
-                      BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="3" Padding="10,0,26,0">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                  <Grid Width="42" Height="42" Margin="0,0,12,0">
-                    <Ellipse Fill="{TemplateBinding Background}"/>
-                    <Ellipse Stroke="#33000000" StrokeThickness="2"/>
-                  </Grid>
-                  <ContentPresenter VerticalAlignment="Center"/>
-                </StackPanel>
-              </Border>
+              <Border x:Name="p" CornerRadius="14" Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="2"/>
+              <Border x:Name="o" CornerRadius="14" Background="#18213A" Opacity="0"/>
+              <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="f" Property="Background" Value="#FF2A1A7A"/>
-              </Trigger>
-              <Trigger Property="Tag" Value="on">
-                <Setter TargetName="f" Property="Background" Value="{Binding BorderBrush, RelativeSource={RelativeSource TemplatedParent}}"/>
-                <Setter Property="Foreground" Value="{StaticResource Ink}"/>
-              </Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="f" Property="BorderBrush" Value="White"/>
+                <Setter TargetName="o" Property="Opacity" Value="0.07"/>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
-                <Setter TargetName="f" Property="Margin" Value="0,5,0,2"/>
+                <Setter TargetName="o" Property="Opacity" Value="0.16"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="p" Property="BorderBrush" Value="#18213A"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.5"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Top tabs. Tag="on" marks the page you are on. -->
+    <Style x:Key="Nav" TargetType="Button">
+      <Setter Property="Height" Value="50"/>
+      <Setter Property="Padding" Value="24,0"/>
+      <Setter Property="FontSize" Value="18"/>
+      <Setter Property="FontFamily" Value="{StaticResource Display}"/>
+      <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="f" CornerRadius="14" Background="Transparent" BorderBrush="Transparent" BorderThickness="2" Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="f" Property="Background" Value="{StaticResource Well}"/>
+                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+              </Trigger>
+              <Trigger Property="Tag" Value="on">
+                <Setter TargetName="f" Property="Background" Value="{StaticResource Accent}"/>
+                <Setter Property="Foreground" Value="White"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="f" Property="BorderBrush" Value="#18213A"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>

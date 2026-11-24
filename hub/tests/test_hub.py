@@ -91,7 +91,7 @@ def test_remote_access_gate(client):
     assert not origin_allowed(s, "8.8.8.8", "/api/parent/overview")
     assert origin_allowed(s, "8.8.8.8", "/join/abc")            # friends always reach join pages
     assert origin_allowed(s, "8.8.8.8", "/static/app.css")      # ...and the stylesheet that page uses
-    assert origin_allowed(s, "8.8.8.8", "/static/fonts/bungee.woff2")
+    assert origin_allowed(s, "8.8.8.8", "/static/fonts/nunito.woff2")
     assert not origin_allowed(s, "8.8.8.8", "/static/app.js")   # but not the dashboard's code
     assert not origin_allowed(s, "100.100.1.1", "/")
     s.decisions.remote_access = "tailscale"

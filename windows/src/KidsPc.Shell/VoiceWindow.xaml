@@ -3,16 +3,16 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Chat with a friend" Width="470" Height="640" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" Topmost="True" Background="#0B0628"
-        FontFamily="{StaticResource Body}" Foreground="White">
+        WindowStartupLocation="CenterOwner" Topmost="True" Background="White"
+        FontFamily="{StaticResource Body}" Foreground="{StaticResource Text}">
   <!-- Our own frame instead of the grey Windows one: drag it by the header, Leave closes it (and leaves the room). -->
-  <Border BorderBrush="{StaticResource Accent}" BorderThickness="4">
+  <Border BorderBrush="#C5CEDF" BorderThickness="2">
     <DockPanel>
-      <Border DockPanel.Dock="Top" Background="{StaticResource Panel}" BorderBrush="{StaticResource Accent}" BorderThickness="0,0,0,3"
-              Padding="18,10,10,6" Cursor="SizeAll" MouseLeftButtonDown="DragWindow">
+      <Border DockPanel.Dock="Top" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,2"
+              Padding="22,12,14,12" Cursor="SizeAll" MouseLeftButtonDown="DragWindow">
         <DockPanel>
-          <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Margin="0" FontSize="14" Padding="18,9,18,8" Background="#FF4D5E" Cursor="Hand" Content="Leave" Click="Leave"/>
-          <TextBlock Text="Chat with a friend" FontSize="20" FontFamily="{StaticResource Display}" Foreground="{StaticResource Warn}" VerticalAlignment="Center"/>
+          <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Margin="0" FontSize="15" Padding="18,8,18,9" Background="{StaticResource Bad}" Cursor="Hand" Content="Leave" Click="Leave"/>
+          <TextBlock Text="Chat with a friend" FontSize="22" FontFamily="{StaticResource Display}" VerticalAlignment="Center"/>
         </DockPanel>
       </Border>
       <wv2:WebView2 x:Name="Web"/>
