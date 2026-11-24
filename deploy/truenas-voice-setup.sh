@@ -65,7 +65,7 @@ ${DOMAIN} {
 	handle @livekit {
 		reverse_proxy host.docker.internal:7880
 	}
-	@friend path /join/* /api/voice/join/* /static/app.css
+	@friend path /join/* /api/voice/join/* /static/app.css /static/fonts/*
 	handle @friend {
 		reverse_proxy host.docker.internal:${PORT} {
 			header_up X-Real-IP {remote_host}
@@ -114,7 +114,7 @@ Voice server is running and the hub now hands out wss://${DOMAIN}. Two things le
 
 1. Cloudflare Tunnel: add two routes for  ${DOMAIN}  (order matters only among these two)
      ${DOMAIN}   path ^/rtc                                           ->  http://${IP:-truenas}:7880
-     ${DOMAIN}   path ^/(join/|api/voice/join/|static/app\\.css\$)      ->  http://${IP:-truenas}:${PORT}
+     ${DOMAIN}   path ^/(join/|api/voice/join/|static/app\\.css\$|static/fonts/)   ->  http://${IP:-truenas}:${PORT}
    Do NOT add a route without a path: that would put the whole hub on the internet.
 
 2. Router: forward these to ${IP:-this TrueNAS}  (audio never goes through the tunnel)

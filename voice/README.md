@@ -27,7 +27,7 @@ dashboard, Networking > Tunnels > the tunnel > Routes):
 | Path (a regular expression) | Service |
 | --- | --- |
 | `^/rtc` | `http://<truenas>:7880` |
-| `^/(join/|api/voice/join/|static/app\.css$)` | `http://<truenas>:<hub_port>` |
+| `^/(join/|api/voice/join/|static/app\.css$|static/fonts/)` | `http://<truenas>:<hub_port>` |
 
 Never add a route for that domain without a path: it would put the whole hub on the internet. As a
 second lock, the hub treats anything that arrives through Cloudflare as an outside visitor, so only the
