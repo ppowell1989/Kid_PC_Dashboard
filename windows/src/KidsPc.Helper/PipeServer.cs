@@ -83,6 +83,16 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var vt = await http.GetFromJsonAsync<VoiceToken>("/api/device/voice-token", Json.Options, ct);
                 return Ok(vt!);
 
+            case "chat":      // family chat: messages after id Detail (works while locked, so he can talk to Mom and Dad)
+                var after = long.TryParse(req.Detail, out var a) ? a : 0;
+                var msgs = await http.GetFromJsonAsync<List<ChatMessage>>($"/api/device/chat?after={after}", Json.Options, ct);
+                return Ok(msgs ?? []);
+
+            case "chat_send":
+                if (string.IsNullOrWhiteSpace(req.Detail) || req.Detail.Length > 500) return new(false, "Message is empty or too long.");
+                var cr = await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail }, ct);
+                return cr.IsSuccessStatusCode ? Ok(new { sent = true }) : new(false, "The hub did not accept the message.");
+
             case "install":
                 return Ok(await InstallAsync(req.GameId ?? -1, ct));
 

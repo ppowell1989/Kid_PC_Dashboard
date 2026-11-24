@@ -233,3 +233,29 @@ def test_steam_game_from_store_link_gets_title_and_art(parent, monkeypatch):
     parent.post("/api/parent/games", json={"title": "TF2", "launcher": "steam", "launch_ref": "440"})
     tf2 = next(g for g in parent.get("/api/parent/games").json() if g["launch_ref"] == "440")
     assert "/apps/440/header.jpg" in tf2["image_url"]
+
+
+def test_family_chat(parent):
+    barrett = {"Authorization": "Bearer tok-barrett"}
+    assert parent.post("/api/parent/chat", json={"text": "Dinner in 10"}).status_code == 201
+    assert parent.post("/api/device/chat", headers=ADAM, json={"text": "ok!"}).status_code == 201
+    assert parent.post("/api/device/chat", headers=ADAM, json={"text": ""}).status_code == 422
+    msgs = parent.get("/api/device/chat", headers=barrett).json()
+    assert [m["text"] for m in msgs] == ["Dinner in 10", "ok!"]
+    assert msgs[1]["sender"] == "Adam" and not msgs[1]["mine"]
+    assert parent.get("/api/device/chat", headers=ADAM).json()[1]["mine"]
+    assert parent.get("/api/parent/chat").json()[0]["mine"]
+    assert [m["text"] for m in parent.get(f"/api/parent/chat?after={msgs[0]['id']}").json()] == ["ok!"]
+
+
+def test_approve_game_request_straight_from_steam(parent, monkeypatch):
+    from app import main
+
+    async def fake_lookup(appid):
+        return {"name": "Slay the Spire 2", "header_image": "https://example/h.jpg"}
+    monkeypatch.setattr(main, "steam_lookup", fake_lookup)
+    parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "slay the spire 2"})
+    rid = parent.get("/api/parent/requests").json()[0]["id"]
+    assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "steam_appid": "2868840"}).status_code == 200
+    games = parent.get("/api/device/rules", headers=ADAM).json()["games"]
+    assert any(g["title"] == "Slay the Spire 2" and g["launch_ref"] == "2868840" for g in games)

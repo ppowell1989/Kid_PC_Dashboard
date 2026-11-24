@@ -115,6 +115,14 @@ Invoke-RestMethod "$hub/api/parent/kids/adam/pause" -Method Delete -WebSession $
 Start-Sleep 8
 Check "resume unlocks the PC" ((Pipe @{ op = "state" }).data.locked -eq $false)
 
+# Family chat both ways through the pipe.
+Invoke-RestMethod "$hub/api/parent/chat" -Method Post -WebSession $s -ContentType application/json -Body '{"text":"Homework first"}' | Out-Null
+$chat = Pipe @{ op = "chat"; detail = "0" }
+Check "kid sees the family chat" (@($chat.data | Where-Object { $_.text -eq "Homework first" -and -not $_.mine }).Count -eq 1) ($chat | ConvertTo-Json -Depth 5)
+$sent = Pipe @{ op = "chat_send"; detail = "ok fine" }
+$pc = Invoke-RestMethod "$hub/api/parent/chat" -WebSession $s
+Check "kid's chat reaches the parents" ($sent.ok -and @($pc | Where-Object { $_.text -eq "ok fine" -and $_.sender -eq "Adam" }).Count -eq 1) ($pc | ConvertTo-Json)
+
 # Managed apps: the helper should install Steam on its own (Chrome is preinstalled on CI runners).
 $steamOk = $false
 for ($i = 0; $i -lt 60 -and -not $steamOk; $i++) {

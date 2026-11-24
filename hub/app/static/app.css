@@ -38,3 +38,13 @@ fieldset input { width: auto; }
 .bar > div { height: 100%; background: var(--accent); }
 details { margin-top: 10px; } summary { cursor: pointer; }
 .art { display: block; width: 100%; max-width: 320px; aspect-ratio: 460 / 215; object-fit: cover; border-radius: 8px; margin-bottom: 6px; background: var(--line); }
+.chatlog { height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.msg { max-width: 80%; align-self: flex-start; }
+.msg.mine { align-self: flex-end; text-align: right; }
+.msg .who { font-size: .8rem; color: var(--muted); margin: 0 4px 2px; }
+.msg .bubble { display: inline-block; padding: 8px 12px; border-radius: 14px; background: var(--line); text-align: left; overflow-wrap: anywhere; }
+.msg.mine .bubble { background: var(--accent); color: #fff; }
+.msg.kid .bubble { background: color-mix(in srgb, var(--ok) 25%, var(--card)); }
+.msg .when { font-size: .7rem; color: var(--muted); margin: 2px 6px; }
+.chat .row input { flex: 1; }
+#chatDot { color: var(--bad); }

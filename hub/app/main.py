@@ -232,6 +232,39 @@ def device_events(events: list[Event], kid: Kid = Depends(current_device), db: D
     return Response(status_code=204)
 
 
+# Family chat ----------------------------------------------------------------
+
+class ChatIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+def chat_since(db: DB, after: int) -> list[dict]:
+    rows = db.q("SELECT id, sender, kid_id, text, at FROM chat WHERE id>? ORDER BY id DESC LIMIT 100", (after,))
+    return rows[::-1]
+
+
+@app.get("/api/device/chat")
+def device_chat(after: int = 0, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
+    return [{**m, "mine": m["kid_id"] == kid.id} for m in chat_since(db, after)]
+
+
+@app.post("/api/device/chat", status_code=201)
+def device_chat_send(m: ChatIn, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
+    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (kid.name, kid.id, m.text.strip(), now))}
+
+
+@app.get("/api/parent/chat")
+def parent_chat(after: int = 0, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    return [{**m, "mine": m["kid_id"] is None and m["sender"] == parent} for m in chat_since(db, after)]
+
+
+@app.post("/api/parent/chat", status_code=201)
+def parent_chat_send(m: ChatIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
+    return {"id": db.x("INSERT INTO chat(sender,kid_id,text,at) VALUES(?,?,?,?)", (parent, None, m.text.strip(), now))}
+
+
 @app.get("/api/device/update")
 def device_update(arch: Literal["x64", "arm64"], kid: Kid = Depends(current_device)):
     """Latest PC build the hub has for this architecture; the helper compares the version with its own."""
@@ -321,10 +354,11 @@ class Decision(BaseModel):
     approve: bool
     minutes: int | None = None     # for time requests, override the requested minutes
     game_id: int | None = None     # for game requests, the catalogue game to approve
+    steam_appid: str | None = None  # ...or a Steam app to add to the catalogue and approve in one step
 
 
 @app.post("/api/parent/requests/{rid}")
-def parent_decide(rid: int, d: Decision, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+async def parent_decide(rid: int, d: Decision, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     r = db.one("SELECT * FROM requests WHERE id=?", (rid,))
     if not r:
         raise HTTPException(404)
@@ -336,6 +370,8 @@ def parent_decide(rid: int, d: Decision, parent: str = Depends(current_parent), 
             minutes = d.minutes or int(r["detail"])
             grant_time(db, settings, kid, minutes, parent)
         elif r["kind"] == "game":
+            if d.game_id is None and d.steam_appid:
+                d.game_id = await add_game(db, Game(launcher="steam", launch_ref=d.steam_appid))
             if d.game_id is None:
                 raise HTTPException(422, "pick or add the catalogue game to approve")
             db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (kid.id, d.game_id))
@@ -437,23 +473,44 @@ def parent_games(parent: str = Depends(current_parent), db: DB = Depends(get_db)
 
 @app.post("/api/parent/games", status_code=201)
 async def parent_add_game(g: Game, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    for k in g.approved_for:
+        kid_or_404(settings, k)
+    gid = await add_game(db, g)
+    for k in g.approved_for:
+        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (k, gid))
+    return {"id": gid}
+
+
+async def add_game(db: DB, g: Game) -> int:
+    """Insert a catalogue game (or return the existing one for the same Steam app)."""
     g.launch_ref = g.launch_ref.strip()
     if g.launcher == "steam":
         g.launch_ref = g.launch_ref.rstrip("/").split("/app/")[-1].split("/")[0]  # accept a pasted store link
         if not g.launch_ref.isdigit():
             raise HTTPException(400, "Steam games need the app id (the number in the store link)")
+        existing = db.one("SELECT id FROM games WHERE launcher='steam' AND launch_ref=?", (g.launch_ref,))
+        if existing:
+            return existing["id"]
         if not g.title.strip() or not g.image_url:
             info = await steam_lookup(g.launch_ref)
             g.title = g.title.strip() or info.get("name", "")
             g.image_url = g.image_url or info.get("header_image", "")
     if not g.title.strip():
         raise HTTPException(400, "Give the game a title")
-    gid = db.x("INSERT INTO games(title,launcher,launch_ref,rating,image_url) VALUES(?,?,?,?,?)",
-               (g.title, g.launcher, g.launch_ref, g.rating, g.image_url))
-    for k in g.approved_for:
-        kid_or_404(settings, k)
-        db.x("INSERT OR IGNORE INTO approvals(kid_id,game_id) VALUES(?,?)", (k, gid))
-    return {"id": gid}
+    return db.x("INSERT INTO games(title,launcher,launch_ref,rating,image_url) VALUES(?,?,?,?,?)",
+                (g.title.strip(), g.launcher, g.launch_ref, g.rating, g.image_url))
+
+
+@app.get("/api/parent/steam/search")
+async def parent_steam_search(q: str, parent: str = Depends(current_parent)):
+    """Steam store matches for a game name, so a kid's request can be approved in one step. Best effort."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get("https://store.steampowered.com/api/storesearch/", params={"term": q[:100], "l": "english", "cc": "US"})
+            items = r.json().get("items", [])
+    except Exception:
+        return []
+    return [{"appid": str(i["id"]), "name": i["name"], "image_url": STEAM_ART.format(i["id"])} for i in items[:8] if i.get("type") == "app"]
 
 
 class Approval(BaseModel):

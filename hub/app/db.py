@@ -106,6 +106,13 @@ CREATE TABLE IF NOT EXISTS pauses (         -- "pause now": locked until a paren
     until  TEXT NOT NULL,
     by     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chat (           -- one family chat: parents and kids
+    id     INTEGER PRIMARY KEY,
+    sender TEXT NOT NULL,                     -- display name
+    kid_id TEXT,                              -- set when a kid sent it
+    text   TEXT NOT NULL,
+    at     TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
 

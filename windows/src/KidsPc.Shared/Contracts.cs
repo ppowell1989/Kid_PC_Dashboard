@@ -64,3 +64,6 @@ public static class Json
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 }
+
+public sealed record ChatMessage(long Id, string Sender,
+    [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine);

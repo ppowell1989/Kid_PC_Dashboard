@@ -30,6 +30,7 @@ $("#loginForm").onsubmit = async (e) => {
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
+  if (b.dataset.tab === "chat") { $("#chatDot").textContent = ""; chat.seen = chat.last; loadChat(); }
   ({ requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites }[b.dataset.tab] || (() => {}))();
 }));
 
@@ -110,23 +111,45 @@ function fillKidSelects() {
 
 const kidName = (id) => (state.kids.find((k) => k.id === id) || {}).name || id;
 
+const localTime = (utc) => new Date(utc.replace(" ", "T") + (utc.endsWith("Z") || utc.includes("+") ? "" : "Z"))
+  .toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+
 async function loadRequests() {
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
   $("#requests").innerHTML = reqs.length ? reqs.map((r) => {
     const what = r.kind === "time" ? `${r.detail} more minutes` : r.kind === "game" ? `Game: <b>${esc(r.detail)}</b>` : `Site: <b>${esc(r.detail)}</b>`;
     const gamePick = r.kind === "game"
-      ? `<select data-gamefor="${r.id}"><option value="">Choose catalogue game…</option>${games.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join("")}</select>
-         <div class="muted">Not listed? Add it on the Games tab first.</div>` : "";
+      ? `<select data-gamefor="${r.id}"><option value="">Choose the game…</option>
+           <optgroup label="Already in the catalogue">${games.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join("")}</optgroup>
+           <optgroup label="Searching Steam…" data-steamfor="${r.id}"></optgroup></select>
+         <img class="art" data-artfor="${r.id}" hidden alt="">` : "";
     return `<div class="card"><b>${esc(kidName(r.kid_id))}</b> asks for ${what}
       ${r.note ? `<div class="muted">"${esc(r.note)}"</div>` : ""}
-      <div class="muted">${esc(r.created_at)} UTC</div>${gamePick}
+      <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
       <div class="actions"><button data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
   }).join("") : `<p class="muted">No requests waiting.</p>`;
+  // Fill each game request with Steam matches and preselect the best one.
+  reqs.filter((r) => r.kind === "game").forEach(async (r) => {
+    const group = $(`[data-steamfor="${r.id}"]`), sel = $(`[data-gamefor="${r.id}"]`), img = $(`[data-artfor="${r.id}"]`);
+    const inCat = games.find((g) => g.title.toLowerCase() === r.detail.toLowerCase());
+    if (inCat) sel.value = inCat.id;
+    let hits = [];
+    try { hits = await api(`/api/parent/steam/search?q=${encodeURIComponent(r.detail)}`); } catch {}
+    group.label = hits.length ? "Add from Steam" : "No Steam matches";
+    group.innerHTML = hits.map((h) => `<option value="steam:${h.appid}" data-img="${esc(h.image_url)}">${esc(h.name)}</option>`).join("");
+    const showArt = () => { const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
+      img.hidden = !src; if (src) img.src = src; };
+    if (!sel.value && hits.length) sel.value = `steam:${hits[0].appid}`;
+    sel.onchange = showArt; showArt();
+  });
   document.querySelectorAll("[data-decide]").forEach((b) => (b.onclick = async () => {
     const pick = $(`[data-gamefor="${b.dataset.decide}"]`);
     const body = { approve: b.dataset.ok === "1" };
-    if (pick && body.approve) { if (!pick.value) return alert("Choose the catalogue game first."); body.game_id = +pick.value; }
-    await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body });
+    if (pick && body.approve) {
+      if (!pick.value) return alert("Choose the game first.");
+      if (pick.value.startsWith("steam:")) body.steam_appid = pick.value.slice(6); else body.game_id = +pick.value;
+    }
+    try { await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body }); } catch (err) { return alert(err.message); }
     loadRequests(); refresh();
   }));
 }
@@ -186,3 +209,34 @@ $("#inviteForm").onsubmit = async (e) => {
 
 refresh().catch(() => {});
 setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 30000);
+
+// Family chat ---------------------------------------------------------------
+const chat = { last: 0, seen: 0, started: false };
+function chatOpen() { return !$("#app").hidden && !$('[data-panel="chat"]').hidden; }
+async function loadChat() {
+  const msgs = await api(`/api/parent/chat?after=${chat.last}`);
+  if (!msgs.length) return;
+  const log = $("#chatLog");
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.insertAdjacentHTML("beforeend", msgs.map((m) => `<div class="msg ${m.mine ? "mine" : ""} ${m.kid_id ? "kid" : ""}">
+    ${m.mine ? "" : `<div class="who">${esc(m.sender)}</div>`}<div class="bubble">${esc(m.text)}</div>
+    <div class="when">${esc(new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div></div>`).join(""));
+  if (atBottom || !chat.started) log.scrollTop = log.scrollHeight;
+  if (!chat.started) chat.seen = msgs[msgs.length - 1].id;
+  chat.started = true;
+  chat.last = msgs[msgs.length - 1].id;
+  if (chatOpen()) chat.seen = chat.last;
+  const unread = msgs.filter((m) => m.id > chat.seen && !m.mine).length;
+  if (unread) $("#chatDot").textContent = "\u25CF";
+}
+$("#chatForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const input = e.target.text;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  try { await api("/api/parent/chat", { method: "POST", body: { text } }); } catch (err) { input.value = text; alert(err.message); }
+  loadChat().catch(() => {});
+};
+let chatTick = 0;  // every 4 s with the chat open, every 16 s otherwise (for the red dot)
+setInterval(() => { if (!$("#app").hidden && (chatOpen() || ++chatTick % 4 === 0)) loadChat().catch(() => {}); }, 4000);

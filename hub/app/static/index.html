@@ -22,6 +22,7 @@
     <h1>Kids PC Hub</h1>
     <nav>
       <button data-tab="now" class="on">Now</button>
+      <button data-tab="chat">Chat <span id="chatDot"></span></button>
       <button data-tab="requests">Requests <span id="reqCount"></span></button>
       <button data-tab="web">Web</button>
       <button data-tab="games">Games</button>
@@ -62,6 +63,16 @@
       <button>Add</button>
     </form>
     <ul id="games" class="list"></ul>
+  </section>
+
+  <section data-panel="chat" hidden>
+    <div class="card chat">
+      <div id="chatLog" class="chatlog"></div>
+      <form id="chatForm" class="row">
+        <input name="text" maxlength="500" autocomplete="off" placeholder="Message the family" required>
+        <button>Send</button>
+      </form>
+    </div>
   </section>
 
   <section data-panel="voice" hidden>
