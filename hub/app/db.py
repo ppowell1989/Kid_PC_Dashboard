@@ -215,6 +215,11 @@ MIGRATIONS = [
     ("chat", "links", "TEXT DEFAULT '[]'"),               # JSON list of the links in the text
     ("chat", "flagged", "INTEGER NOT NULL DEFAULT 0"),    # a word from the flag list (same list as searches)
     ("chat", "removed_by", "TEXT DEFAULT ''"),            # parent who hid it from the kids
+    # Xbox (Microsoft Family Safety) members are console players too; these only matter for provider 'xbox'.
+    ("console_players", "role", "TEXT DEFAULT ''"),              # Family Safety role: User (child) or Admin (organizer)
+    ("console_players", "enforce", "INTEGER NOT NULL DEFAULT 0"),  # 1 = block his Xbox when he is locked on the hub
+    ("console_players", "blocked", "INTEGER NOT NULL DEFAULT 0"),  # Xbox blocked right now, as last read or set
+    ("console_players", "hub_block", "TEXT DEFAULT ''"),          # until when the hub blocked it ('' = hub didn't)
 ]
 
 

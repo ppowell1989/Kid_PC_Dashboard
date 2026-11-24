@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, consoles, gamesearch, installs, retention, rules, updates
+from . import adguard, chat, consoles, gamesearch, installs, retention, rules, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -882,7 +882,16 @@ def parent_consoles(parent: str = Depends(current_parent), db: DB = Depends(get_
         devices.append({"device_id": d["device_id"], "name": d["name"], "model": d["model"], "limit_kid": d["limit_kid"],
                         "stop_game": bool(d["stop_game"]), "limit_now": d["limit_now"], "extra_time": bool(d["extra_time"]),
                         "stops_game": bool(d["stops_game"]), "players": players})
-    return {"kids": [{"id": k.id, "name": k.name} for k in settings.kids], "nintendo": link, "devices": devices}
+    xlink = db.one("SELECT provider,label,linked_by,linked_at,synced_at,error FROM console_links WHERE provider=?", (xbox.XBOX,))
+    members = db.q("""SELECT p.player_id, p.nickname, p.role, p.kid_id, p.enforce, p.blocked, p.hub_block,
+                        COALESCE(u.minutes,0) AS minutes, COALESCE(u.games,'[]') AS games
+                      FROM console_players p LEFT JOIN console_usage u ON u.provider=p.provider AND u.device_id=p.device_id
+                        AND u.player_id=p.player_id AND u.day=?
+                      WHERE p.provider=? ORDER BY p.role DESC, p.nickname""", (day, xbox.XBOX)) if xlink else []
+    for m in members:
+        m["games"], m["enforce"], m["blocked"] = json.loads(m["games"]), bool(m["enforce"]), bool(m["blocked"])
+    return {"kids": [{"id": k.id, "name": k.name} for k in settings.kids], "nintendo": link, "devices": devices,
+            "xbox": xlink and {**xlink, "members": members}}
 
 
 class ConsoleFinish(BaseModel):
@@ -925,6 +934,7 @@ async def parent_nintendo_unlink(parent: str = Depends(current_parent), db: DB =
 async def parent_consoles_sync(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     consoles_on(settings)
     await consoles.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    await xbox.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
     return parent_consoles(parent, db, settings)
 
 
@@ -962,6 +972,65 @@ async def parent_console_device(device_id: str, body: ConsoleDevice, parent: str
          (body.limit_kid, int(body.stop_game), consoles.NINTENDO, device_id))
     if body.limit_kid:   # apply now rather than at the next poll
         await consoles.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    return parent_consoles(parent, db, settings)
+
+
+# Xbox (Microsoft Family Safety); see xbox.py
+
+@app.post("/api/parent/consoles/xbox/start")
+def parent_xbox_start(parent: str = Depends(current_parent), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    return {"login_url": xbox.LOGIN_URL}
+
+
+@app.post("/api/parent/consoles/xbox/finish")
+async def parent_xbox_finish(body: ConsoleFinish, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    if "code=" not in body.link:
+        raise HTTPException(400, "That isn't the right address. After signing in, copy the address of the blank page: it contains \"code=\".")
+    try:
+        token, label = await xbox.finish_login(body.link)
+    except Exception:
+        raise HTTPException(400, "Microsoft didn't accept that address. Each one works once: tap Connect again, sign in, and paste the new one.")
+    now = rules.local_now(settings.timezone).isoformat()
+    db.x("""INSERT INTO console_links(provider,token,label,linked_by,linked_at) VALUES(?,?,?,?,?)
+            ON CONFLICT(provider) DO UPDATE SET token=excluded.token, label=excluded.label, linked_by=excluded.linked_by,
+              linked_at=excluded.linked_at, error=''""", (xbox.XBOX, token, label, parent, now))
+    await xbox.sync_once(db, settings, lambda kid: today_state(db, settings, kid))
+    return parent_consoles(parent, db, settings)
+
+
+@app.delete("/api/parent/consoles/xbox", status_code=204)
+async def parent_xbox_unlink(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Forget the account. Lifts any Xbox block the hub set first, so nobody is left locked out."""
+    consoles_on(settings)
+    link = db.one("SELECT token FROM console_links WHERE provider=?", (xbox.XBOX,))
+    for m in db.q("SELECT player_id FROM console_players WHERE provider=? AND hub_block != ''", (xbox.XBOX,)) if link else []:
+        try:
+            await xbox.set_block(link["token"], m["player_id"], None)
+        except Exception:
+            pass   # unlinking must work even when Microsoft is unreachable
+    await xbox.drop_client()
+    for t in ("console_links", "console_devices", "console_players", "console_usage"):
+        db.x(f"DELETE FROM {t} WHERE provider=?", (xbox.XBOX,))
+
+
+class XboxMember(BaseModel):
+    kid_id: str = ""
+    enforce: bool = False      # block his Xbox while he is locked on the hub
+
+
+@app.put("/api/parent/consoles/xbox/members/{member_id}")
+async def parent_xbox_member(member_id: str, body: XboxMember, parent: str = Depends(current_parent),
+                             db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    consoles_on(settings)
+    if body.kid_id:
+        kid_or_404(settings, body.kid_id)
+    if not db.one("SELECT 1 FROM console_players WHERE provider=? AND player_id=?", (xbox.XBOX, member_id)):
+        raise HTTPException(404, "No such family member")
+    db.x("UPDATE console_players SET kid_id=?, enforce=? WHERE provider=? AND player_id=?",
+         (body.kid_id, int(body.enforce and bool(body.kid_id)), xbox.XBOX, member_id))
+    await xbox.sync_once(db, settings, lambda kid: today_state(db, settings, kid))   # lock or unlock now, not at the next poll
     return parent_consoles(parent, db, settings)
 
 

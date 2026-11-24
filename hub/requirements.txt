@@ -7,3 +7,4 @@ httpx==0.28.1
 tzdata==2025.2
 Pillow==12.3.0
 pynintendoparental==2.7.0   # Nintendo Switch play time and limits (unofficial; see app/consoles.py)
+pyfamilysafety==2.0.0        # Xbox play time and blocks via Microsoft Family Safety (unofficial; see app/xbox.py)

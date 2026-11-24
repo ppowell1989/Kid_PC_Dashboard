@@ -36,8 +36,25 @@ Limits:
 
 Turn the feature off completely with `consoles: {enabled: false}` in config.yaml.
 
+## Xbox (Microsoft Family Safety)
+
+`hub/app/xbox.py`. A parent links the family organizer's Microsoft account on the Playtimes tab (sign in, then
+paste the address of the blank page, which holds `code=`). Every 3 minutes the hub:
+
+1. Reads each family member's Xbox screen time today and games played.
+2. Adds the minutes of members matched to a kid to that kid's "used" time.
+3. For a member with "Lock his Xbox when his time is up": while the kid is locked on the hub, blocks that member on
+   Xbox until his next play time (or 6 AM), and lifts the block when he may play again (extra time, new day).
+   The hub never lifts a block a parent set in Microsoft's app.
+
+Limits:
+- The Xbox can't be handed "minutes left", so the lock comes at the next check after time runs out (up to ~3 min),
+  plus any lag in Microsoft's reports.
+- Microsoft rotates the refresh token on every use; the hub stores the newest one each time. If the hub's data is
+  restored from an old backup, the stored token may be stale: connect again.
+- Not yet tested against a real Xbox: built against the library's code, with Microsoft faked in tests.
+
 ## Next, if wanted
 
-- Xbox through Family Safety: read Xbox minutes, block the Xbox until tomorrow when time is up.
 - PlayStation: count minutes from online presence; limits stay in the PlayStation Family app.
 - Multi-family hosting: `console_links` is keyed by provider only; it needs a household id like the rest of the hub.
