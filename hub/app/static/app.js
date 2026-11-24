@@ -52,6 +52,7 @@ async function refresh() {
       <div class="big">${fmtMin(t.minutes_left)} left</div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
+      ${k.flagged_today ? `<div class="bad"><b>${k.flagged_today} flagged search${k.flagged_today > 1 ? "es" : ""} today</b> <button class="ghost" data-seesearch="${k.id}">See</button></div>` : ""}
       ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => {
         const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
         const retry = !sys && a.state === "failed" ? ` <button class="ghost" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
@@ -89,6 +90,9 @@ async function refresh() {
     const verb = b.dataset.cmd === "restart" ? "Restart" : "Shut down";
     if (!confirm(`${verb} ${kidName(b.dataset.kid)}'s PC? He gets a 1-minute warning.`)) return;
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
+  }));
+  document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => {
+    $("#webKid").value = b.dataset.seesearch; document.querySelector('nav button[data-tab="web"]').click();
   }));
   document.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
@@ -174,9 +178,11 @@ async function loadRequests() {
 
 async function loadWeb() {
   const kid = $("#webKid").value, src = $("#webSource").value;
-  const [visits, sites] = await Promise.all([
-    api(`/api/parent/visits/${kid}?limit=200${src ? `&source=${src}` : ""}`), api("/api/parent/sites"),
+  const [visits, sites, searches] = await Promise.all([
+    api(`/api/parent/visits/${kid}?limit=200${src ? `&source=${src}` : ""}`), api("/api/parent/sites"), api(`/api/parent/searches/${kid}?limit=100`),
   ]);
+  $("#searches").innerHTML = searches.map((q) => `<li>${q.flagged ? '<span class="bad"><b>Flagged</b></span> ' : ""}${esc(q.term)}
+    <div class="muted">${esc(new Date(q.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div></li>`).join("") || `<li class="muted">No searches yet.</li>`;
   $("#visits").innerHTML = visits.map((v) => `<li>${v.blocked ? '<span class="bad">Blocked</span> ' : ""}<b>${esc(v.title || v.domain)}</b>
     <div class="muted">${esc(v.url || v.domain)} · ${esc(v.at)} · ${v.source}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   $("#webMode").textContent = sites.mode === "allowlist" ? "(allow-list mode: only these load)" : "(filtered mode: list is informational)";

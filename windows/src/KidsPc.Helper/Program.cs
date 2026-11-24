@@ -24,5 +24,6 @@ builder.Services.AddSingleton<NetworkFilter>();
 builder.Services.AddSingleton<Updater>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Updater>());
 builder.Services.AddHostedService<HubSync>();
+builder.Services.AddHostedService<ChromeHistory>();
 builder.Services.AddHostedService<PipeServer>();
 builder.Build().Run();

@@ -21,7 +21,10 @@ public sealed record Game(
     string Rating,
     [property: JsonPropertyName("image_url")] string ImageUrl);
 
-public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites, DnsRules? Dns = null);
+public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites, DnsRules? Dns = null, SearchRules? Search = null);
+
+/// <summary>Chrome's default search engine plus URL patterns that force searches through it.</summary>
+public sealed record SearchRules(string Name, string Url, List<string> Block, List<string> Allow);
 
 /// <summary>servers=[] leaves the PC's DNS alone; doh="" turns Chrome's secure DNS off.</summary>
 public sealed record DnsRules(string Filter, List<string> Servers, string Doh);

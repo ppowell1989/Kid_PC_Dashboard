@@ -39,6 +39,9 @@ class Decisions(BaseModel):
     game_pass_enabled: bool = False
     friend_verification: Literal["none", "discord_oauth"] = "none"
     remote_access: Literal["lan_only", "tailscale", "public"] = "lan_only"
+    # Search in Chrome. google_web: Google's plain "Web" results (no AI Overview) with SafeSearch locked;
+    # kiddle: a kids' search engine; google: normal Google with SafeSearch (has AI Overviews).
+    search: Literal["google_web", "kiddle", "google"] = "google_web"
 
 
 class AdGuard(BaseModel):
@@ -86,6 +89,11 @@ class Settings(BaseModel):
     # DNS filter the kid PCs use. Until AdGuard runs on the hub, Cloudflare for Families blocks adult
     # and malware sites (it sees the kids' lookups; AdGuard keeps them local). "none" only for testing.
     dns_filter: Literal["cloudflare_family", "adguard", "none"] = "cloudflare_family"
+    # Searches containing any of these (case-insensitive) are flagged red on the dashboard. GUESS: edit to taste.
+    flag_words: list[str] = [
+        "porn", "sex", "nude", "naked", "xxx", "boobs", "hentai", "onlyfans", "nsfw", "rule 34",
+        "gore", "suicide", "kill myself", "self harm", "cutting", "drugs", "vape", "weed",
+    ]
     livekit: LiveKit = LiveKit()
     discord_oauth: DiscordOAuth = DiscordOAuth()
     updates: Updates = Updates()

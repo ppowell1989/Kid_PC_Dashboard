@@ -106,6 +106,14 @@ CREATE TABLE IF NOT EXISTS pauses (         -- "pause now": locked until a paren
     until  TEXT NOT NULL,
     by     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS searches (        -- search terms read from Chrome's history on the kid PC
+    id      INTEGER PRIMARY KEY,
+    kid_id  TEXT NOT NULL,
+    term    TEXT NOT NULL,
+    at      TEXT NOT NULL,
+    flagged INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (kid_id, term, at)
+);
 CREATE TABLE IF NOT EXISTS chat (           -- one family chat: parents and kids
     id     INTEGER PRIMARY KEY,
     sender TEXT NOT NULL,                     -- display name

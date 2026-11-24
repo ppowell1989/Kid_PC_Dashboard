@@ -171,6 +171,20 @@ CLOUDFLARE_FAMILY = {"servers": ["1.1.1.3", "1.0.0.3", "2606:4700:4700::1113", "
                      "doh": "https://family.cloudflare-dns.com/dns-query"}
 
 
+# Other engines are blocked so searches go through the chosen one (Bing and DuckDuckGo have AI answers too).
+_OTHER_ENGINES = ["bing.com/search", "bing.com/chat", "duckduckgo.com", "search.yahoo.com", "yandex.com", "search.brave.com"]
+SEARCH = {
+    # udm=14 is Google's "Web" results view: no AI Overview, no AI Mode. Plain google.com/search is blocked,
+    # so a search typed on google.com itself shows the blocked page; the address bar uses the URL below.
+    "google_web": {"name": "Google", "url": "https://www.google.com/search?q={searchTerms}&udm=14&safe=active",
+                   "block": ["google.com/search", *_OTHER_ENGINES], "allow": ["google.com/search?udm=14"]},
+    "kiddle": {"name": "Kiddle", "url": "https://www.kiddle.co/s.php?q={searchTerms}",
+               "block": ["google.com/search", *_OTHER_ENGINES], "allow": ["kiddle.co"]},
+    "google": {"name": "Google", "url": "https://www.google.com/search?q={searchTerms}&safe=active",
+               "block": _OTHER_ENGINES, "allow": []},
+}
+
+
 def dns_for(settings: Settings) -> dict:
     """DNS the kid PC must use. servers=[] means leave the PC's DNS alone; doh="" means Chrome secure DNS off."""
     mode = settings.dns_filter
@@ -227,7 +241,8 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "time": st.__dict__,
         "warning_minutes": rules.WARNING_MINUTES,
         "games": games_for(db, settings, kid.id),
-        "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings), "dns": dns_for(settings)},
+        "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings), "dns": dns_for(settings),
+                "search": SEARCH[settings.decisions.search]},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": settings.managed_apps,
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
@@ -285,6 +300,40 @@ def device_visits(visits: list[Visit], kid: Kid = Depends(current_extension), db
             continue
         db.x("INSERT INTO visits(kid_id,source,domain,url,title,at) VALUES(?,?,?,?,?,?)",
              (kid.id, "chrome", host, v.url, v.title, v.at))
+    return Response(status_code=204)
+
+
+class HistoryVisit(BaseModel):
+    url: str = Field(max_length=2000)
+    title: str = Field(default="", max_length=300)
+    at: str
+
+
+class HistorySearch(BaseModel):
+    term: str = Field(max_length=300)
+    at: str
+
+
+class History(BaseModel):
+    visits: list[HistoryVisit] = Field(default_factory=list)
+    searches: list[HistorySearch] = Field(default_factory=list)
+
+
+def is_flagged(term: str, words: list[str]) -> bool:
+    t = " " + " ".join(term.lower().split()) + " "
+    return any(f" {w.lower()}" in t for w in words)   # word starts, so "sex" flags "sexy" but not "essex"
+
+
+@app.post("/api/device/history", status_code=204)
+def device_history(h: History, kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Chrome history read by the helper on the PC: pages visited and search terms."""
+    for v in h.visits[:500]:
+        host = (urlparse(v.url).hostname or "").lower()
+        if host:
+            db.x("INSERT INTO visits(kid_id,source,domain,url,title,at) VALUES(?,?,?,?,?,?)", (kid.id, "chrome", host, v.url, v.title, v.at))
+    for q in h.searches[:500]:
+        flagged = is_flagged(q.term, settings.flag_words)
+        db.x("INSERT OR IGNORE INTO searches(kid_id,term,at,flagged) VALUES(?,?,?,?)", (kid.id, q.term.strip(), q.at, int(flagged)))
     return Response(status_code=204)
 
 
@@ -411,8 +460,16 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "time": today_state(db, settings, kid).__dict__,
             "pending": db.one("SELECT COUNT(*) n FROM requests WHERE kid_id=? AND state='pending'", (kid.id,))["n"],
             "apps": db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=? ORDER BY app", (kid.id,)),
+            "flagged_today": db.one("SELECT COUNT(*) n FROM searches WHERE kid_id=? AND flagged=1 AND at >= ?",
+                                    (kid.id, rules.day_key(rules.local_now(settings.timezone))))["n"],
         })
     return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump()}
+
+
+@app.get("/api/parent/searches/{kid_id}")
+def parent_searches(kid_id: str, limit: int = 200, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid_or_404(settings, kid_id)
+    return db.q("SELECT term, at, flagged FROM searches WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 1000)))
 
 
 @app.get("/api/parent/visits/{kid_id}")

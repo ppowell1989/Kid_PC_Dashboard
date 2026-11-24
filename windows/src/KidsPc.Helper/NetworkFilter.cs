@@ -24,9 +24,14 @@ public sealed class NetworkFilter(EventQueue events, ILogger<NetworkFilter> log)
         if (fingerprint == _applied && DateTimeOffset.Now - _at < TimeSpan.FromMinutes(10)) return;
 
         var set = servers.Count == 0
-            ? "Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses"
-            : $"Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @({string.Join(",", servers.Select(s => $"'{s}'"))})";
-        var script = $"$ErrorActionPreference='Stop'; Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object {{ {set} }}; Clear-DnsClientCache";
+            ? "Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses -ErrorAction Stop"
+            : $"Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses @({string.Join(",", servers.Select(s => $"'{s}'"))}) -ErrorAction Stop";
+        // Only adapters that are up AND have DNS client settings (some virtual adapters have none).
+        // Fails only if no adapter could be set.
+        var script = "$up = @(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object ifIndex); "
+                   + "$ids = @(Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Where-Object { $up -contains $_.InterfaceIndex } | ForEach-Object InterfaceIndex | Sort-Object -Unique); "
+                   + "$ok = 0; foreach ($i in $ids) { try { " + set + "; $ok++ } catch { Write-Warning $_ } }; "
+                   + "Clear-DnsClientCache; if ($ok -eq 0) { Write-Error 'no network adapter accepted the DNS setting'; exit 1 }";
         try
         {
             using var p = Process.Start(new ProcessStartInfo("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script])

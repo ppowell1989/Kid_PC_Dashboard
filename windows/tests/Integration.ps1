@@ -57,7 +57,29 @@ Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -ContentTy
 # ------------------------------------------------------------------ helper (console mode)
 $dataDir = "$env:ProgramData\KidsPc"
 New-Item -ItemType Directory -Force $dataDir | Out-Null
-@{ hubUrl = $hub; deviceToken = "dev-adam"; kidUser = "nobody-at-console"; pollSeconds = 3 } | ConvertTo-Json | Set-Content "$dataDir\device.json" -Encoding UTF8
+@{ hubUrl = $hub; deviceToken = "dev-adam"; kidUser = "nobody-at-console"; pollSeconds = 3; historySeconds = 5 } | ConvertTo-Json | Set-Content "$dataDir\device.json" -Encoding UTF8
+Remove-Item "$dataDir\history-since.txt" -ErrorAction SilentlyContinue
+
+# A Chrome History file for the (fake) kid, with Chrome's real table layout, so the history reader has something to send.
+$hist = "C:\Users\nobody-at-console\AppData\Local\Google\Chrome\User Data\Default"
+New-Item -ItemType Directory -Force $hist | Out-Null
+@'
+import sqlite3, sys, time
+now = int((time.time() + 11644473600) * 1_000_000)   # Chrome time: microseconds since 1601
+db = sqlite3.connect(sys.argv[1])
+db.executescript("""
+CREATE TABLE urls(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR, visit_count INTEGER DEFAULT 0, typed_count INTEGER DEFAULT 0, last_visit_time INTEGER NOT NULL, hidden INTEGER DEFAULT 0);
+CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER NOT NULL, visit_time INTEGER NOT NULL, from_visit INTEGER, transition INTEGER DEFAULT 0);
+CREATE TABLE keyword_search_terms(keyword_id INTEGER NOT NULL, url_id INTEGER NOT NULL, term LONGVARCHAR NOT NULL, normalized_term LONGVARCHAR NOT NULL);
+""")
+db.execute("INSERT INTO urls VALUES(1,'https://www.google.com/search?q=sexy+pics&udm=14','sexy pics - Google Search',1,0,?,0)", (now,))
+db.execute("INSERT INTO urls VALUES(2,'https://en.wikipedia.org/wiki/Cat','Cat - Wikipedia',1,0,?,0)", (now,))
+db.execute("INSERT INTO visits VALUES(1,1,?,0,0)", (now,))
+db.execute("INSERT INTO visits VALUES(2,2,?,0,0)", (now,))
+db.execute("INSERT INTO keyword_search_terms VALUES(2,1,'sexy pics','sexy pics')")
+db.commit()
+'@ | Set-Content "$work\mkhist.py"
+python "$work\mkhist.py" "$hist\History"
 Remove-Item -Recurse -Force "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist" -ErrorAction SilentlyContinue
 
 $helper = Start-Process "$BuildDir\Helper\KidsPcHelper.exe" -PassThru -NoNewWindow `
@@ -116,11 +138,19 @@ Start-Sleep 8
 Check "resume unlocks the PC" ((Pipe @{ op = "state" }).data.locked -eq $false)
 
 # Web filter: family DNS on the adapters, Chrome secure DNS pinned to it.
-$dnsSet = @(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { (Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4).ServerAddresses }) -contains "1.1.1.3"
+$dnsSet = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses }) -contains "1.1.1.3"
 Check "PC uses the family DNS filter" $dnsSet (Get-DnsClientServerAddress | Out-String)
 $cp = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome"
 Check "chrome secure DNS pinned to the family filter" ($cp.DnsOverHttpsMode -eq "secure" -and $cp.DnsOverHttpsTemplates -like "https://family.*")
 Check "kid game search answers" ((Pipe @{ op = "game_search"; detail = "portal" }).ok)
+
+# Chrome history reader: pages and searches reach the dashboard, flagged words light up.
+$srch = @(); for ($i = 0; $i -lt 10 -and $srch.Count -eq 0; $i++) { Start-Sleep 3; $srch = @(Invoke-RestMethod "$hub/api/parent/searches/adam" -WebSession $s) }
+Check "chrome history: search reached the hub and is flagged" (@($srch | Where-Object { $_.term -eq "sexy pics" -and $_.flagged -eq 1 }).Count -eq 1) (Get-Content "$work\helper.out.log" -Tail 20 | Out-String)
+$pages = Invoke-RestMethod "$hub/api/parent/visits/adam" -WebSession $s
+Check "chrome history: page visit reached the hub" (@($pages | Where-Object { $_.domain -eq "en.wikipedia.org" }).Count -ge 1)
+$cp2 = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome"
+Check "chrome search goes to Google Web results (no AI Overview)" ($cp2.DefaultSearchProviderSearchURL -like "*udm=14*")
 
 # Family chat both ways through the pipe.
 Invoke-RestMethod "$hub/api/parent/chat" -Method Post -WebSession $s -ContentType application/json -Body '{"text":"Homework first"}' | Out-Null

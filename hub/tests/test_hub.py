@@ -284,3 +284,18 @@ def test_kid_game_search_hides_adult_titles_and_request_carries_the_pick(parent,
 def test_rules_carry_a_family_dns_filter_by_default(client):
     dns = client.get("/api/device/rules", headers=ADAM).json()["web"]["dns"]
     assert dns["filter"] == "cloudflare_family" and "1.1.1.3" in dns["servers"] and dns["doh"].startswith("https://family.")
+
+
+def test_history_upload_flags_searches(parent):
+    rules_ = parent.get("/api/device/rules", headers=ADAM).json()["web"]["search"]
+    assert "udm=14" in rules_["url"] and "google.com/search" in rules_["block"]
+    h = {"visits": [{"url": "https://en.wikipedia.org/wiki/Cat", "title": "Cat", "at": "2026-11-24T11:00:00-05:00"}],
+         "searches": [{"term": "minecraft seeds", "at": "2026-11-24T11:00:00-05:00"},
+                      {"term": "Sexy pics", "at": "2026-11-24T11:01:00-05:00"},
+                      {"term": "essex county", "at": "2026-11-24T11:02:00-05:00"}]}
+    assert parent.post("/api/device/history", headers=ADAM, json=h).status_code == 204
+    assert parent.post("/api/device/history", headers=ADAM, json=h).status_code == 204   # re-sent: no duplicates
+    s = parent.get("/api/parent/searches/adam").json()
+    assert [(x["term"], x["flagged"]) for x in s] == [("essex county", 0), ("Sexy pics", 1), ("minecraft seeds", 0)]
+    assert next(k for k in parent.get("/api/parent/overview").json()["kids"] if k["id"] == "adam")["flagged_today"] == 1
+    assert parent.get("/api/parent/visits/adam").json()[0]["domain"] == "en.wikipedia.org"
