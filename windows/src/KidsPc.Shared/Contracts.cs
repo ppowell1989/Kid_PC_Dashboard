@@ -83,7 +83,9 @@ public sealed record VoiceToken(string Url, string Room, string Token);
 public sealed record ShellState(Rules? Rules, List<int> InstalledGameIds, bool Locked, bool HubReachable, DateTimeOffset FetchedAt,
     List<ParentMessage>? Messages = null,
     List<Nudge>? Nudges = null,
-    Dictionary<int, string>? Installing = null);   // game id -> a few words for its tile while it installs by itself, e.g. "Downloading 45%"
+    Dictionary<int, string>? Installing = null,    // game id -> a few words for its tile while it installs by itself, e.g. "Downloading 45%"
+    Dictionary<int, int>? InstallPercent = null,   // game id -> how far its download is, for the bar on its tile (only when known)
+    List<string>? SignInNeeded = null);            // stores (steam, battlenet) waiting for a grown-up to sign in: their windows stay on screen
 
 /// <summary>Reply to an install request: either the helper did it, or the shell should open a launcher URI.</summary>
 public sealed record InstallResult(string Action, string? Uri, string Message, string? Args = null);

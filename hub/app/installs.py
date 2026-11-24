@@ -36,6 +36,60 @@ def size(n: int) -> str:
     return f"{max(n, 0) // 1024} KB"
 
 
+def rate_text(bps: float) -> str:
+    return f"{bps / (1 << 20):.1f} MB/s" if bps >= 1 << 20 else f"{max(bps, 0) / 1024:.0f} KB/s"
+
+
+def left_text(seconds: float) -> str:
+    m = int(seconds // 60)
+    if m < 1:
+        return "under a minute left"
+    if m < 60:
+        return f"about {m} min left"
+    return f"about {m // 60} h {m % 60:02d} min left"
+
+
+def speed(prev: dict, state: str, done: int, now: datetime) -> float:
+    """Download speed in bytes a second, from progress between two reports, smoothed so one slow minute doesn't swing it."""
+    if state != "installing" or prev.get("state") != "installing" or not prev.get("at"):
+        return 0.0
+    try:
+        secs = (now - datetime.fromisoformat(prev["at"])).total_seconds()
+    except ValueError:
+        return float(prev.get("rate") or 0)
+    if secs <= 0 or secs > 300:
+        return float(prev.get("rate") or 0)
+    now_rate = max(0, done - (prev.get("done_bytes") or 0)) / secs
+    old = float(prev.get("rate") or 0)
+    return now_rate if not old else 0.5 * old + 0.5 * now_rate
+
+
+def ago(iso: str | None, now: datetime) -> str:
+    if not iso:
+        return ""
+    try:
+        at = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    mins = int((now - at).total_seconds() // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    return f"at {at.strftime('%-I:%M %p')}" if (now - at) < timedelta(hours=20) else f"on {at.strftime('%a %-I:%M %p')}"
+
+
+def since(row: dict, now: datetime) -> str:
+    """When this game's install last moved (state, stage or progress), for the line under it on the PCs page."""
+    if row.get("state") in ("installed", "not_installed", None) or not row.get("install"):
+        return ""
+    when = ago(row.get("changed_at") or row.get("at"), now)
+    seen = ago(row.get("at"), now)
+    if not when:
+        return ""
+    return f"Last change {when}" + (f", PC checked in {seen}" if seen and seen != when else "")
+
+
 def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> dict:
     """One game on one PC, in parent words.
 
@@ -45,6 +99,7 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
     store = STORE.get(row.get("launcher", ""), "its store")
     pc = f"{kid_name}'s PC"
     done, total = row.get("done_bytes") or 0, row.get("total_bytes") or 0
+    stage, rate = (row.get("stage") or "").strip(), float(row.get("rate") or 0)
 
     if state == "installed":
         return {"label": "Installed", "text": f"Ready to play on {pc}.", "tone": "ok", "fix": ""}
@@ -65,14 +120,22 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
     if state == "queued":
         return {"label": "On its way", "text": f"Sent to {pc}. It starts within a minute.", "tone": "busy", "fix": ""}
     if state == "waiting":
-        return {"label": "Waiting", "text": detail or f"Starts by itself soon on {pc}.", "tone": "busy", "fix": ""}
+        return {"label": stage or "Waiting", "text": detail or f"Starts by itself soon on {pc}.", "tone": "busy", "fix": ""}
     if state == "installing":
+        doing = stage or "Downloading"
         if total:
             pct = max(0, min(99, int(done * 100 / total)))
-            return {"label": f"Downloading {pct}%", "text": f"{size(done)} of {size(total)} in {store}. You can leave it; it carries on by itself.",
-                    "tone": "busy", "fix": "", "percent": pct}
+            label = f"{doing} {pct}%" if doing in ("Downloading", "Paused", "Checking files") else doing
+            how_fast = ""
+            if doing == "Downloading" and rate > 0:
+                how_fast = f" at {rate_text(rate)}, {left_text((total - done) / rate)}"
+            elif doing == "Downloading" and done:
+                how_fast = ". It hasn't moved since the last check; the PC may be busy or the internet slow"
+            text = f"{size(done)} of {size(total)}{how_fast}." + (f" {detail}" if detail else "") + " You can leave it; it carries on by itself."
+            return {"label": label, "text": text, "tone": "needs" if doing == "Paused" else "busy",
+                    "fix": "retry" if doing == "Paused" else "", "percent": pct}
         so_far = f" ({size(done)} so far)" if done else ""
-        return {"label": "Installing", "text": f"{store} is installing it{so_far}. You can leave it; it carries on by itself.",
+        return {"label": doing, "text": detail or f"{store} is installing it{so_far}. You can leave it; it carries on by itself.",
                 "tone": "busy", "fix": ""}
     if state == "needs_signin":
         return {"label": f"Sign in to {store}", "text": detail or f"{store} has to be signed in on {pc} once, with {kid_name}'s account. "
