@@ -1080,6 +1080,74 @@ def voice_join(code: str, db: DB = Depends(get_db), settings: Settings = Depends
             "token": livekit_token(settings, f"friend-{code[:8]}", inv["friend_name"], room, ttl=3 * 3600)}
 
 
+
+# New-PC setup: one line a parent pastes into PowerShell on a fresh Windows PC ---------------------
+#   irm http://<hub>/setup/<code> | iex
+# The code names the kid; the script it returns claims the PC's tokens, downloads the newest build
+# from this hub and runs the installer. Codes expire, so a code seen over someone's shoulder goes stale.
+
+SETUP_CODE_HOURS = 12
+SETUP_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I, it gets read off a phone
+SETUP_SCRIPT = Path(__file__).parent / "setup_pc.ps1"
+
+
+def setup_code_row(db: DB, code: str) -> dict | None:
+    r = db.one("SELECT * FROM setup_codes WHERE code=?", (code.strip().upper(),))
+    return r if r and r["expires_at"] > time.time() else None
+
+
+def hub_base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+@app.post("/api/parent/kids/{kid_id}/setup-code", status_code=201)
+def parent_setup_code(kid_id: str, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                      settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    code = "".join(secrets.choice(SETUP_ALPHABET) for _ in range(8))
+    expires = time.time() + SETUP_CODE_HOURS * 3600
+    db.x("INSERT INTO setup_codes(code,kid_id,created_by,expires_at) VALUES(?,?,?,?)", (code, kid.id, parent, expires))
+    have = {a: updates.current(app.state.updates_dir, a) is not None for a in updates.ARCHES}
+    return {"code": code, "kid_id": kid.id, "command": f"irm {hub_base(request)}/setup/{code} | iex",
+            "expires_at": datetime.fromtimestamp(expires).astimezone().isoformat(timespec="minutes"),
+            "builds": have}
+
+
+@app.get("/setup/{code}")
+def setup_script(code: str, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The bootstrap script. Holds no secret itself: it trades the code for the tokens when it runs."""
+    row = setup_code_row(db, code)
+    if not row or not settings.kid(row["kid_id"]):
+        body = ('Write-Host "This setup code is not valid any more. Make a new one on the dashboard: '
+                'the kid\'s card, Set up a new PC." -ForegroundColor Red\n')
+        return Response(body, media_type="text/plain; charset=utf-8", status_code=200)
+    kid = settings.kid(row["kid_id"])
+    script = (SETUP_SCRIPT.read_text(encoding="utf-8")
+              .replace("__HUB__", hub_base(request)).replace("__CODE__", row["code"]).replace("__KIDNAME__", kid.name))
+    return Response(script, media_type="text/plain; charset=utf-8")
+
+
+class SetupClaimIn(BaseModel):
+    computer: str = Field(default="", max_length=64)
+    arch: Literal["x64", "arm64"] = "x64"
+
+
+@app.post("/api/setup/{code}/claim")
+def setup_claim(code: str, body: SetupClaimIn, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    row = setup_code_row(db, code)
+    kid = settings.kid(row["kid_id"]) if row else None
+    if not kid:
+        raise HTTPException(404, "setup code not valid any more")
+    build = updates.current(app.state.updates_dir, body.arch)
+    if not build:
+        raise HTTPException(409, f"the hub has no {body.arch} PC build yet; turn on updates in config.yaml")
+    now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
+    db.x("UPDATE setup_codes SET used_at=?, used_by=? WHERE code=?", (now, body.computer, row["code"]))
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, "pc_setup", f"setup started on {body.computer or 'a PC'}", now))
+    return {"kid_id": kid.id, "kid_name": kid.name, "windows_user": kid.id, "device_token": kid.device_token,
+            "extension_token": kid.extension_token, "web_mode": settings.decisions.web_mode, "build": build}
+
+
 # --------------------------------------------------------------------------- dashboard
 
 @app.get("/", response_class=HTMLResponse)

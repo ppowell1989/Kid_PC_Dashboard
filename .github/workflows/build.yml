@@ -60,6 +60,28 @@ jobs:
           name: integration-logs
           path: ${{ runner.temp }}/kidspc-it
 
+  fresh-pc:
+    # The Christmas path: a clean Windows machine, the dashboard's "Set up a new PC" line pasted into
+    # Windows PowerShell, and a check of everything Windows will use at the next start.
+    needs: [hub, windows]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r hub/requirements.txt
+      - uses: actions/download-artifact@v4
+        with: { name: kidspc-win-x64, path: bundle }
+      - name: New PC from one pasted line
+        shell: pwsh
+        run: ./windows/tests/FreshPc.ps1 -BuildDir bundle
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-pc-logs
+          path: ${{ runner.temp }}/kidspc-fresh
+
   screenshots:
     # Real Windows screenshots of every shell screen (demo data), so the design is checked on actual pixels.
     # Download the "shell-screenshots" artifact, or browse the ci-screenshots branch (one folder per branch).

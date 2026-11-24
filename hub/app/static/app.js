@@ -106,6 +106,7 @@ async function refresh() {
       <div class="actions even">
         <button class="ghost small" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
         <button class="ghost small" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
+        <button class="ghost small" data-setup="${k.id}">Set up a new PC</button>
       </div>
       ${apps ? `<div class="chips">${apps}${how}</div>${newer}` : ""}
       <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
@@ -145,6 +146,14 @@ async function refresh() {
       : "A new build waits for the next restart or sign-in, so it never interrupts him.";
     if (!await sheet({ title: on ? `Install updates on ${name}'s PC right away?` : `Wait for a restart on ${name}'s PC?`, text, ok: on ? "Right away" : "At the next restart" })) return;
     await api(`/api/parent/kids/${b.dataset.autoupdate}/auto-update`, { method: "PUT", body: { on } }); refresh();
+  }));
+  document.querySelectorAll("[data-setup]").forEach((b) => (b.onclick = async () => {
+    const name = kidName(b.dataset.setup);
+    const c = await api(`/api/parent/kids/${b.dataset.setup}/setup-code`, { method: "POST" });
+    const when = new Date(c.expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const text = `On the new PC, signed in as the parent account: right-click Start, choose Terminal (Admin), paste or type this line and press Enter. ` +
+      `It sets everything up and restarts into ${name}'s screen.\n\n${c.command}\n\nWorks until ${when}.`;
+    if (await sheet({ title: `Make a new PC ${name}'s`, text, ok: "Copy the line", cancel: "Close" })) await copyText(c.command);
   }));
   document.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
