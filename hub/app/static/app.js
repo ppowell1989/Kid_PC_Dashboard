@@ -640,7 +640,23 @@ function chatOpen() {
   if ($("#app").hidden) return false;
   return wide.matches ? document.body.classList.contains("chat-open") : !$('[data-panel="chat"]').hidden;
 }
-function chatSeen() { $("#chatDot").textContent = ""; document.body.classList.remove("chat-unread"); chat.seen = chat.last; }
+const pageTitle = document.title;
+function chatSeen() { $("#chatDot").textContent = ""; document.body.classList.remove("chat-unread"); chat.seen = chat.last; chat.unread = 0; document.title = pageTitle; }
+// A short two-note sound for a new chat message. Browsers only allow sound after the page has been tapped or
+// clicked once, so a dashboard that was only ever looked at stays silent; the red dot and the tab title still show.
+function chatSound() {
+  try {
+    const ctx = chatSound.ctx || (chatSound.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    [[660, 0], [880, 0.16]].forEach(([hz, at]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = hz; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.3);
+      o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.32);
+    });
+  } catch (e) { /* no sound on this browser */ }
+}
 {
   const bar = $('[data-panel="chat"] > .title');
   bar.tabIndex = 0; bar.setAttribute("role", "button");
@@ -670,7 +686,12 @@ async function loadChat() {
   chat.last = msgs[msgs.length - 1].id;
   if (chatOpen()) chat.seen = chat.last;
   const unread = msgs.filter((m) => m.id > chat.seen && !m.mine).length;
-  if (unread) { $("#chatDot").textContent = "\u25CF"; document.body.classList.add("chat-unread"); }
+  if (unread) {
+    $("#chatDot").textContent = "\u25CF"; document.body.classList.add("chat-unread");
+    chat.unread = (chat.unread || 0) + unread;
+    document.title = `(${chat.unread}) New message \u00B7 ${pageTitle}`;
+    chatSound();
+  }
 }
 $("#chatForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -681,5 +702,5 @@ $("#chatForm").onsubmit = async (e) => {
   try { await api("/api/parent/chat", { method: "POST", body: { text } }); } catch (err) { input.value = text; oops(err); }
   loadChat().catch(() => {});
 };
-let chatTick = 0;  // every 4 s with the chat open, every 16 s otherwise (for the red dot)
-setInterval(() => { if (!$("#app").hidden && (chatOpen() || ++chatTick % 4 === 0)) loadChat().catch(() => {}); }, 4000);
+let chatTick = 0;  // every 4 s with the chat open, every 8 s otherwise (for the red dot, the tab title and the sound)
+setInterval(() => { if (!$("#app").hidden && (chatOpen() || ++chatTick % 2 === 0)) loadChat().catch(() => {}); }, 4000);

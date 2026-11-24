@@ -19,8 +19,8 @@ public partial class MainWindow
 
     private void StartChat()
     {
-        // Poll every 4 s while open, every 12 s while closed (for the unread badge).
-        _chatPoll.Tick += async (_, _) => { if (ChatOpen || ++_chatTick % 3 == 0) await PollChatAsync(); };
+        // Poll every 4 s while open, every 8 s while closed (for the unread badge and the new-message card).
+        _chatPoll.Tick += async (_, _) => { if (ChatOpen || ++_chatTick % 2 == 0) await PollChatAsync(); };
         _chatPoll.Start();
         _ = PollChatAsync();
     }
@@ -38,7 +38,12 @@ public partial class MainWindow
             foreach (var m in msgs) ChatLog.Children.Add(Bubble(m));
             while (ChatLog.Children.Count > 200) ChatLog.Children.RemoveAt(0);
             _chatLast = msgs[^1].Id;
-            if (!_chatStarted) _chatSeen = _chatLast;   // history isn't "new"
+            var live = _chatStarted;                    // false on the first load: history isn't "new"
+            // Someone else wrote while the chat is closed (or a game is covering it): show it and make a sound.
+            var news = live ? msgs.LastOrDefault(m => m.Id > _chatSeen && !m.Mine) : null;
+            if (news is not null && !(ChatOpen && IsActive))
+                ChatToast.Show(this, news.Sender, news.Text, () => { BringToFront(); if (!ChatOpen) ToggleChat(this, new RoutedEventArgs()); });
+            if (!_chatStarted) _chatSeen = _chatLast;
             _chatStarted = true;
             if (ChatOpen) _chatSeen = _chatLast;
             if (atBottom || ChatOpen) ChatScroll.ScrollToEnd();
