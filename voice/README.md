@@ -26,7 +26,9 @@ plus removing the forwards undoes it.
 
 Known wrinkle: the kids' PCs are inside the house but connect to the public name. Most routers handle
 that ("NAT loopback" or "hairpin NAT"). If the kid's side can't connect while friends outside can, that
-is the cause; the fix is a local DNS override for the domain (AdGuard can do it) pointing at the TrueNAS.
+is the cause. Turn on NAT loopback in the router if it has the setting. If it doesn't: move the TrueNAS
+web UI off port 443 (System > General), re-run this script with `https_port` 443, and add a local DNS
+override for the domain pointing at the TrueNAS (needs AdGuard as the PCs' DNS filter).
 
 ## What has to be outward-facing
 
