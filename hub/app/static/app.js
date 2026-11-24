@@ -15,6 +15,24 @@ async function api(path, opts = {}) {
   return r.status === 204 ? null : r.json();
 }
 
+// One sheet for every question (instead of the browser's prompt/confirm/alert, which look broken on a phone).
+// Resolves to null on cancel; otherwise true, or the typed text when `input` is given.
+function sheet({ title, text = "", input = null, ok = "OK", cancel = "Cancel", kind = "" }) {
+  return new Promise((resolve) => {
+    const d = $("#sheet"), box = $("#sheetInput");
+    $("#sheetTitle").textContent = title;
+    $("#sheetText").textContent = text;
+    box.hidden = input === null; box.value = ""; box.placeholder = input || "";
+    $("#sheetOk").textContent = ok; $("#sheetOk").className = kind;
+    $("#sheetCancel").hidden = !cancel; $("#sheetCancel").textContent = cancel || "";
+    d.returnValue = "cancel";
+    d.onclose = () => resolve(d.returnValue === "ok" ? (input === null ? true : box.value.trim()) : null);
+    d.showModal();
+    if (input !== null) box.focus();
+  });
+}
+const oops = (err) => sheet({ title: "That didn't work", text: err.message || String(err), cancel: "" });
+
 function showLogin() { $("#login").hidden = false; $("#app").hidden = true; }
 function showApp() { $("#login").hidden = true; $("#app").hidden = false; }
 
@@ -41,34 +59,41 @@ async function refresh() {
   showApp();
   state.kids = o.kids;
   const pending = o.kids.reduce((n, k) => n + k.pending, 0);
-  $("#reqCount").textContent = pending ? `(${pending})` : "";
+  $("#reqCount").textContent = pending || "";
   $("#kids").innerHTML = o.kids.map((k) => {
-    const t = k.time, total = t.allowance + t.granted, pct = total ? Math.min(100, (t.used / total) * 100) : 0;
+    const t = k.time, total = t.allowance + t.granted, left = total ? Math.max(0, Math.min(100, (t.minutes_left / total) * 100)) : 0;
     const status = k.online ? (k.running ? `Playing <b>${esc(k.running)}</b>` : "On the home screen") : "Offline";
-    const lock = t.locked ? `<span class="bad">Locked (${t.lock_reason})</span>` : (t.warn ? `<span class="warn">Under 10 minutes left</span>` : "");
-    return `<div class="card">
-      <h2><span class="dot ${k.online ? "on" : ""}"></span>${esc(k.name)}</h2>
-      <div>${status}</div>
-      <div class="big">${fmtMin(t.minutes_left)} left</div>
-      <div class="bar"><div style="width:${pct}%"></div></div>
+    const reason = { time: "out of time", bedtime: "bedtime", paused: "paused" }[t.lock_reason] || t.lock_reason;
+    const lock = t.locked ? `<span class="tagline bad">Locked: ${esc(reason)}</span>` : (t.warn ? `<span class="warn">Under 10 minutes left.</span>` : "");
+    const apps = (k.apps || []).map((a) => {
+      const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
+      const retry = !sys && a.state === "failed" ? `<button class="ghost small" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
+      const cls = a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending";
+      return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || a.app)} ${esc(sys ? a.detail : a.state)}${retry}</span>`;
+    }).join("");
+    return `<div class="card kid ${k.online ? "online" : ""}">
+      <div class="kidhead">
+        <div class="avatar">${esc(k.name.slice(0, 1))}</div>
+        <div class="kidname"><h2>${esc(k.name)}</h2><div class="status"><span class="dot ${k.online ? "on" : ""}"></span>${status}</div></div>
+        <div class="timeleft"><div class="big">${fmtMin(t.minutes_left)}</div><div class="muted">left today</div></div>
+      </div>
+      <div class="fuel ${t.locked || left <= 12 ? "empty" : left <= 34 ? "low" : ""}"><div style="width:${left}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
-      ${k.flagged_today ? `<div class="bad"><b>${k.flagged_today} flagged search${k.flagged_today > 1 ? "es" : ""} today</b> <button class="ghost" data-seesearch="${k.id}">See</button></div>` : ""}
-      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => {
-        const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
-        const retry = !sys && a.state === "failed" ? ` <button class="ghost" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
-        return `${esc(sys || a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(sys ? a.detail : a.state)}</span>${retry}`;
-      }).join(" · ")}</div>` : ""}
-      <div class="actions">
+      ${k.flagged_today ? `<div class="alert"><span>${k.flagged_today} flagged search${k.flagged_today > 1 ? "es" : ""} today</span><button class="bad small" data-seesearch="${k.id}">See</button></div>` : ""}
+      <div class="actions even">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
       </div>
-      <div class="actions">
+      <div class="actions even">
         ${t.lock_reason === "paused"
-          ? `<button data-resume="${k.id}">Resume</button>`
-          : `<button class="ghost" data-pause="${k.id}">Pause now</button>`}
-        <button class="ghost" data-msg="${k.id}">Message</button>
-        <button class="ghost" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
-        <button class="ghost" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
+          ? `<button class="good" data-resume="${k.id}">Resume</button>`
+          : `<button class="hot" data-pause="${k.id}">Pause now</button>`}
+        <button data-msg="${k.id}">Message</button>
       </div>
+      <div class="actions even">
+        <button class="ghost small" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
+        <button class="ghost small" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
+      </div>
+      ${apps ? `<div class="chips">${apps}</div>` : ""}
       <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
     </div>`;
   }).join("");
@@ -83,12 +108,12 @@ async function refresh() {
     await api(`/api/parent/kids/${b.dataset.resume}/pause`, { method: "DELETE" }); refresh();
   }));
   document.querySelectorAll("[data-msg]").forEach((b) => (b.onclick = async () => {
-    const text = prompt(`Message to show on ${kidName(b.dataset.msg)}'s screen:`);
-    if (text && text.trim()) { await api(`/api/parent/kids/${b.dataset.msg}/commands`, { method: "POST", body: { kind: "message", arg: text.trim() } }); b.textContent = "Sent"; }
+    const text = await sheet({ title: `Message for ${kidName(b.dataset.msg)}`, text: "It pops up on his screen, even over a game.", input: "Dinner in 5!", ok: "Send" });
+    if (text) { await api(`/api/parent/kids/${b.dataset.msg}/commands`, { method: "POST", body: { kind: "message", arg: text } }); b.textContent = "Sent"; }
   }));
   document.querySelectorAll("[data-cmd]").forEach((b) => (b.onclick = async () => {
     const verb = b.dataset.cmd === "restart" ? "Restart" : "Shut down";
-    if (!confirm(`${verb} ${kidName(b.dataset.kid)}'s PC? He gets a 1-minute warning.`)) return;
+    if (!await sheet({ title: `${verb} ${kidName(b.dataset.kid)}'s PC?`, text: "He gets a 1-minute warning.", ok: verb, kind: "bad" })) return;
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
   }));
   document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => {
@@ -125,16 +150,16 @@ const localTime = (utc) => new Date(utc.replace(" ", "T") + (utc.endsWith("Z") |
 async function loadRequests() {
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
   $("#requests").innerHTML = reqs.length ? reqs.map((r) => {
-    const what = r.kind === "time" ? `${r.detail} more minutes` : r.kind === "game" ? `Game: <b>${esc(r.detail)}</b>` : `Site: <b>${esc(r.detail)}</b>`;
+    const what = r.kind === "time" ? `${esc(r.detail)} more minutes` : r.kind === "game" ? `Game: ${esc(r.detail)}` : `Site: ${esc(r.detail)}`;
     const gamePick = r.kind === "game"
       ? `<select data-gamefor="${r.id}"><option value="">Choose the game…</option>
            <optgroup label="Already in the catalogue">${games.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join("")}</optgroup>
            <optgroup label="Searching Steam…" data-steamfor="${r.id}"></optgroup></select>
          <img class="art" data-artfor="${r.id}" hidden alt=""><div class="muted" data-infofor="${r.id}"></div>` : "";
-    return `<div class="card"><b>${esc(kidName(r.kid_id))}</b> asks for ${what}
-      ${r.note ? `<div class="muted">"${esc(r.note)}"</div>` : ""}
+    return `<div class="card req"><div class="who">${esc(kidName(r.kid_id))} asks for</div><div class="what">${what}</div>
+      ${r.note ? `<div class="note">"${esc(r.note)}"</div>` : ""}
       <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
-      <div class="actions"><button data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
+      <div class="actions even"><button class="good" data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
   }).join("") : `<p class="muted">No requests waiting.</p>`;
   // Fill each game request with Steam matches and preselect the best one.
   reqs.filter((r) => r.kind === "game").forEach(async (r) => {
@@ -157,7 +182,7 @@ async function loadRequests() {
       img.hidden = !src; if (src) img.src = src;
       const h = sel.value.startsWith("steam:") ? byId[sel.value.slice(6)] : null;
       info.innerHTML = h ? [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${h.esrb_descriptors ? `: ${esc(h.esrb_descriptors)}` : ""}` : "No ESRB rating on Steam",
-        h.adult ? `<span class="bad">Adult content</span>` : "", h.content_notes ? esc(h.content_notes) : "", esc(h.description || ""),
+        h.adult ? `<span class="tagline bad">Adult content</span>` : "", h.content_notes ? esc(h.content_notes) : "", esc(h.description || ""),
         h.free ? "Free" : `${esc(h.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(h.appid)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`,
       ].filter(Boolean).join("<br>") : "";
     };
@@ -169,15 +194,15 @@ async function loadRequests() {
     const pick = $(`[data-gamefor="${b.dataset.decide}"]`);
     const body = { approve: b.dataset.ok === "1" };
     if (!body.approve) {
-      const reason = prompt(`Tell ${kidName(reqs.find((r) => String(r.id) === b.dataset.decide)?.kid_id)} why? (optional, shows on his screen)`, "");
+      const reason = await sheet({ title: `Tell ${kidName(reqs.find((r) => String(r.id) === b.dataset.decide)?.kid_id)} why?`, text: "Optional. It shows on his screen.", input: "Maybe when you're older", ok: "Decline", kind: "bad" });
       if (reason === null) return;
       body.reason = reason;
     }
     if (pick && body.approve) {
-      if (!pick.value) return alert("Choose the game first.");
+      if (!pick.value) return sheet({ title: "Choose the game first", cancel: "" });
       if (pick.value.startsWith("steam:")) body.steam_appid = pick.value.slice(6); else body.game_id = +pick.value;
     }
-    try { await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body }); } catch (err) { return alert(err.message); }
+    try { await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body }); } catch (err) { return oops(err); }
     loadRequests(); refresh();
   }));
 }
@@ -187,12 +212,12 @@ async function loadWeb() {
   const [visits, sites, searches] = await Promise.all([
     api(`/api/parent/visits/${kid}?limit=200${src ? `&source=${src}` : ""}`), api("/api/parent/sites"), api(`/api/parent/searches/${kid}?limit=100`),
   ]);
-  $("#searches").innerHTML = searches.map((q) => `<li>${q.flagged ? '<span class="bad"><b>Flagged</b></span> ' : ""}${esc(q.term)}
+  $("#searches").innerHTML = searches.map((q) => `<li>${q.flagged ? '<span class="tagline bad">Flagged</span> ' : ""}${esc(q.term)}
     <div class="muted">${esc(new Date(q.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div></li>`).join("") || `<li class="muted">No searches yet.</li>`;
-  $("#visits").innerHTML = visits.map((v) => `<li>${v.blocked ? '<span class="bad">Blocked</span> ' : ""}<b>${esc(v.title || v.domain)}</b>
+  $("#visits").innerHTML = visits.map((v) => `<li>${v.blocked ? '<span class="tagline bad">Blocked</span> ' : ""}<b>${esc(v.title || v.domain)}</b>
     <div class="muted">${esc(v.url || v.domain)} · ${esc(v.at)} · ${v.source}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   $("#webMode").textContent = sites.mode === "allowlist" ? "(allow-list mode: only these load)" : "(filtered mode: list is informational)";
-  $("#sites").innerHTML = sites.sites.map((d) => `<li>${esc(d)} <button class="ghost" data-delsite="${esc(d)}">Remove</button></li>`).join("");
+  $("#sites").innerHTML = sites.sites.map((d) => `<li class="split">${esc(d)} <button class="ghost small" data-delsite="${esc(d)}">Remove</button></li>`).join("");
   document.querySelectorAll("[data-delsite]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/sites/${encodeURIComponent(b.dataset.delsite)}`, { method: "DELETE" }); loadWeb(); }));
 }
 $("#webKid").onchange = $("#webSource").onchange = loadWeb;
@@ -202,7 +227,7 @@ async function loadGames() {
   const games = await api("/api/parent/games");
   $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> <span class="muted">${g.launcher} ${esc(g.launch_ref)} ${esc(g.rating)}</span>
     <div class="actions">${state.kids.map((k) => `<label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${g.approved_for.includes(k.id) ? "checked" : ""}> ${esc(k.name)}</label>`).join("")}
-    <button class="ghost" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
+    <button class="ghost small" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
   document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = () => api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } })));
   document.querySelectorAll("[data-delgame]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/games/${b.dataset.delgame}`, { method: "DELETE" }); loadGames(); }));
 }
@@ -213,7 +238,7 @@ $("#gameForm").onsubmit = async (e) => {
     await api("/api/parent/games", { method: "POST", body: {
       title: f.get("title"), launcher: f.get("launcher"), launch_ref: f.get("launch_ref"), rating: f.get("rating"), approved_for: f.getAll("kid"),
     } });
-  } catch (err) { alert(err.message); return; }
+  } catch (err) { oops(err); return; }
   e.target.reset(); loadGames();
 };
 $("#gameForm [name=launcher]").onchange = (e) => {
@@ -224,9 +249,9 @@ $("#gameForm [name=launcher]").onchange = (e) => {
 
 async function loadInvites() {
   const inv = await api("/api/parent/invites");
-  $("#invites").innerHTML = inv.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} ${i.revoked ? '<span class="bad">revoked</span>' : ""}
+  $("#invites").innerHTML = inv.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} ${i.revoked ? '<span class="tagline bad">Revoked</span>' : ""}
     <div class="muted">${esc(i.link)}</div>
-    ${i.revoked ? "" : `<div class="actions"><button class="ghost" data-copy="${esc(i.link)}">Copy link</button><button class="bad" data-revoke="${esc(i.code)}">Revoke</button></div>`}</li>`).join("") || `<li class="muted">No invites yet.</li>`;
+    ${i.revoked ? "" : `<div class="actions"><button data-copy="${esc(i.link)}">Copy link</button><button class="ghost" data-revoke="${esc(i.code)}">Revoke</button></div>`}</li>`).join("") || `<li class="muted">No invites yet.</li>`;
   document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => (b.textContent = "Copied"))));
   document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites(); }));
 }
@@ -265,7 +290,7 @@ $("#chatForm").onsubmit = async (e) => {
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  try { await api("/api/parent/chat", { method: "POST", body: { text } }); } catch (err) { input.value = text; alert(err.message); }
+  try { await api("/api/parent/chat", { method: "POST", body: { text } }); } catch (err) { input.value = text; oops(err); }
   loadChat().catch(() => {});
 };
 let chatTick = 0;  // every 4 s with the chat open, every 16 s otherwise (for the red dot)

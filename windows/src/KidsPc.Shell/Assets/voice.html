@@ -6,11 +6,17 @@
 <!-- GUESS: pinned LiveKit browser client. To avoid the CDN, download this file into Assets\ and point at it. -->
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.7/dist/livekit-client.umd.min.js"></script>
 <style>
-  body { margin: 0; background: #101317; color: #eef1f4; font: 18px/1.4 "Segoe UI", sans-serif; padding: 24px; }
-  h1 { font-size: 24px; margin: 0 0 16px; }
-  button { font: inherit; padding: 10px 18px; border-radius: 20px; border: 0; background: #4f8cff; color: #fff; margin-right: 8px; cursor: pointer; }
-  ul { list-style: none; padding: 0; } li { background: #1b2027; border-radius: 10px; padding: 10px 14px; margin: 6px 0; }
-  .muted { color: #8f9aa6; font-size: 15px; }
+  /* Matches the shell's retro-space theme (colours only: this page has no access to the app's fonts). */
+  body { margin: 0; padding: 24px; color: #fff; font: 18px/1.4 Bahnschrift, "Segoe UI", sans-serif;
+         background: radial-gradient(120% 80% at 80% 0%, #2a1260, #0b0628 55%, #03020f); min-height: 100vh; box-sizing: border-box; }
+  h1 { font: 900 26px/1.1 "Segoe UI Black", "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: .02em; margin: 0 0 14px;
+       color: #ffd23f; text-shadow: 2px 2px 0 #ff2e97; }
+  button { font: 900 15px/1 "Segoe UI Black", "Segoe UI", sans-serif; text-transform: uppercase; padding: 12px 22px; border-radius: 14px; border: 0;
+           background: linear-gradient(#7df1ff, #22e4ff); color: #06122b; margin-right: 8px; cursor: pointer; box-shadow: 0 5px 0 #0a7fa3; }
+  button:active { transform: translateY(4px); box-shadow: 0 1px 0 #0a7fa3; }
+  ul { list-style: none; padding: 0; margin: 18px 0; }
+  li { background: #1a1060; border: 2px solid #4b3bb0; border-radius: 14px; padding: 10px 14px; margin: 8px 0; }
+  .muted { color: #b3a9e8; font-size: 15px; }
 </style>
 </head>
 <body>

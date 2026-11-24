@@ -56,6 +56,8 @@ public partial class MainWindow : Window
         var t = rules.Time;
         Greeting.Text = $"Hi, {rules.Kid.Name}!";
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
+        ShowFuel(t);
+        SetTicker(rules.Kid.Name);
         StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
 
         if (t.Warn)
@@ -106,23 +108,35 @@ public partial class MainWindow : Window
 
     // ------------------------------------------------------------------ tiles
 
+    private string _homeSig = "", _catalogueSig = "";
+
     private void BuildHomeTiles(Rules rules)
     {
+        var installed = rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id)).ToList();
+        // Only rebuild when something changed, so a tile doesn't lose its hover glow every time the shell polls.
+        var sig = string.Join("|", installed.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}")) + $"|friends:{rules.Friends.Count}";
+        if (sig == _homeSig && HomeTiles.Children.Count > 0) return;
+        _homeSig = sig;
         HomeTiles.Children.Clear();
-        foreach (var g in rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id)))
-            HomeTiles.Children.Add(Tile(g.Title, () => Launcher.LaunchGame(g), image: g.ImageUrl));
-        HomeTiles.Children.Add(Tile("Web (Chrome)", Launcher.LaunchChrome));
-        HomeTiles.Children.Add(Tile("Chat with a friend", OpenVoice, enabled: rules.Friends.Count > 0));
+        foreach (var g in installed)
+            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Launcher.LaunchGame(g), image: g.ImageUrl));
+        HomeTiles.Children.Add(Tile("Web\nChrome", Launcher.LaunchChrome, glyph: "\uE774"));
+        HomeTiles.Children.Add(Tile("Chat with a friend\nVoice", OpenVoice, enabled: rules.Friends.Count > 0, glyph: "\uE720"));
+        Recolour(HomeTiles);
     }
 
     private void BuildCatalogue(Rules rules)
     {
-        CatalogueTiles.Children.Clear();
         var notInstalled = rules.Games.Where(g => !_state!.InstalledGameIds.Contains(g.Id)).ToList();
+        var sig = string.Join("|", notInstalled.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}"));
+        if (sig == _catalogueSig && CatalogueTiles.Children.Count > 0) return;
+        _catalogueSig = sig;
+        CatalogueTiles.Children.Clear();
         foreach (var g in notInstalled)
             CatalogueTiles.Children.Add(Tile($"{g.Title}\nInstall", async () => await InstallAsync(g), image: g.ImageUrl));
         if (notInstalled.Count == 0)
-            CatalogueTiles.Children.Add(new TextBlock { Text = "Everything approved is already installed.", FontSize = 16 });
+            CatalogueTiles.Children.Add(new TextBlock { Text = "Everything approved is already installed.", FontSize = 18, Foreground = (Brush)FindResource("Muted") });
+        Recolour(CatalogueTiles);
     }
 
     private static readonly Dictionary<string, ImageSource?> Art = [];
@@ -146,27 +160,67 @@ public partial class MainWindow : Window
         catch { return Art[url] = null; }
     }
 
-    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null)
+    /// <summary>The neon frame colours tiles take in turn.</summary>
+    private static readonly Color[] TileColours =
+    [
+        Color.FromRgb(0x22, 0xE4, 0xFF), Color.FromRgb(0xFF, 0x2E, 0x97), Color.FromRgb(0xFF, 0xD2, 0x3F),
+        Color.FromRgb(0x7D, 0xFF, 0x5A), Color.FromRgb(0xFF, 0x8A, 0x00), Color.FromRgb(0x9B, 0x5C, 0xFF),
+    ];
+
+    /// <summary>A tile: art (or an icon on a poster colour) on top, the name on a plate below.
+    /// A second line in <paramref name="text"/> becomes the small coloured caption, e.g. "Portal 2\nInstall".</summary>
+    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null)
     {
         var art = LoadArt(image);
-        UIElement label = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = art is null ? 20 : 16 };
-        if (art is not null)
-            label = new Border
+        var lines = text.Split('\n', 2);
+        var plate = new StackPanel();
+        plate.Children.Add(new TextBlock
+        {
+            Text = lines[0], FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        if (lines.Length > 1)
+            plate.Children.Add(new TextBlock
             {
-                Child = label, Padding = new Thickness(8, 3, 8, 3), CornerRadius = new CornerRadius(8),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Background = new SolidColorBrush(Color.FromArgb(0xC0, 0x10, 0x12, 0x16)),
-            };
+                Text = lines[1].Replace("\n", "  \u2022  "), FontSize = 13, Margin = new Thickness(0, 1, 0, 0),
+                FontFamily = (FontFamily)Application.Current.Resources["Display"], TextTrimming = TextTrimming.CharacterEllipsis,
+            });
         var b = new Button
         {
             Style = (Style)Application.Current.Resources["Tile"],
-            Content = label,
+            Content = plate,
             IsEnabled = enabled,
-            ToolTip = text,
+            ToolTip = lines[0],
         };
         if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
+        else b.Tag = glyph ?? "\uE7FC";   // no art: a game controller
         b.Click += (_, _) => onClick();
         return b;
+    }
+
+    /// <summary>Gives each tile in a row the next frame colour, and matches its caption and poster to it.</summary>
+    private static void Recolour(Panel tiles)
+    {
+        var i = 0;
+        foreach (var b in tiles.Children.OfType<Button>())
+        {
+            var c = TileColours[i++ % TileColours.Length];
+            var brush = new SolidColorBrush(c);
+            b.BorderBrush = brush;
+            if (b.Content is StackPanel { Children.Count: > 1 } plate && plate.Children[1] is TextBlock caption) caption.Foreground = brush;
+            if (b.Background is not ImageBrush)
+                b.Background = new RadialGradientBrush(Color.FromArgb(0xFF, c.R, c.G, c.B), Color.FromRgb((byte)(c.R / 5), (byte)(c.G / 6), (byte)(c.B / 3 + 20)))
+                    { GradientOrigin = new Point(0.3, 0.25), Center = new Point(0.4, 0.4), RadiusX = 0.9, RadiusY = 0.9 };
+        }
+    }
+
+    /// <summary>The time left as a fuel gauge: green, then amber, then red.</summary>
+    private void ShowFuel(TimeState t)
+    {
+        var total = Math.Max(1, t.Allowance + t.Granted);
+        var left = Math.Clamp((double)t.MinutesLeft / total, 0, 1);
+        FuelFill.Width = Math.Round(348 * left);
+        FuelFill.Background = (Brush)FindResource(t.Warn || left <= 0.12 ? "FuelEmpty" : left <= 0.34 ? "FuelLow" : "FuelOk");
     }
 
     // ------------------------------------------------------------------ actions
@@ -186,8 +240,8 @@ public partial class MainWindow : Window
         MessageBanner.Visibility = LockMessage.Visibility = Visibility.Collapsed;
     }
 
-    private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; }
-    private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; }
+    private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; NavHome.Tag = "on"; NavMore.Tag = null; }
+    private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; NavHome.Tag = null; NavMore.Tag = "on"; }
 
     private async Task InstallAsync(Game g)
     {
@@ -241,6 +295,7 @@ public partial class MainWindow : Window
                 var label = (string.IsNullOrEmpty(g.Esrb) ? g.Name : $"{g.Name}\nRated {g.Esrb}") + (asked ? "\nAsked, waiting" : "");
                 SearchResults.Children.Add(Tile(label, () => ShowAsk(g), enabled: !asked, image: g.ImageUrl));
             }
+            Recolour(SearchResults);
         }
         catch (Exception ex) { SearchStatus.Text = $"Search isn't working right now: {ex.Message}"; }
     }

@@ -11,6 +11,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\KidsPc.Shared\KidsPc.Shared.csproj" />
+    <None Remove="Assets\Fonts\*.ttf" />
+    <Resource Include="Assets\Fonts\*.ttf" />
     <None Update="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
