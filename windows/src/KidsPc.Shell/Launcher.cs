@@ -35,8 +35,17 @@ public static class Launcher
     public static void LaunchChrome() =>
         Process.Start(new ProcessStartInfo(Chrome, "--start-maximized") { UseShellExecute = false });
 
-    /// <summary>Opens a protocol URI (steam://, ms-windows-store://) through its registered handler.</summary>
-    public static void OpenUri(string uri) => Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    private const string Steam = @"C:\Program Files (x86)\Steam\steam.exe";
+
+    /// <summary>Opens a protocol URI. steam:// goes straight to steam.exe, because the protocol is often
+    /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
+    public static void OpenUri(string uri)
+    {
+        if (uri.StartsWith("steam://", StringComparison.OrdinalIgnoreCase) && File.Exists(Steam))
+            Process.Start(new ProcessStartInfo(Steam, uri) { UseShellExecute = false });
+        else
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
 }
 
 /// <summary>Launches a packaged (Store / Game Pass) app without explorer.exe.</summary>
