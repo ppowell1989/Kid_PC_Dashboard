@@ -182,7 +182,7 @@ public partial class MainWindow
         ChatWho.Text = c.Kind switch
         {
             "family" => "Mom, Dad and your brother are all in this chat.",
-            _ => "Mom and Dad can read this chat, and every picture and link in it.",
+            _ => "Mom and Dad can read this chat, and see every picture, video and link in it.",
         };
         var can = c.CanSend;
         ChatBox.IsEnabled = ChatSendButton.IsEnabled = can;
@@ -246,8 +246,24 @@ public partial class MainWindow
         var img = new Image { MaxWidth = 300, MaxHeight = 220, Stretch = Stretch.Uniform, Cursor = Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left };
         var frame = new Border { CornerRadius = new CornerRadius(10), ClipToBounds = true, MinWidth = 120, MinHeight = 80, Child = img };
         frame.SetResourceReference(Border.BackgroundProperty, "Well");
-        img.MouseLeftButtonUp += (_, _) => { if (img.Source is { } src) { PictureBigImage.Source = src; PictureBig.Visibility = Visibility.Visible; } };
         _ = LoadPictureAsync(m.Id, img);
+        if (!m.Video)
+        {
+            img.MouseLeftButtonUp += (_, _) => { if (img.Source is { } src) ShowBig(src, null); };
+            return frame;
+        }
+        // A clip: its first frame with a play button over it.
+        var play = new Border { Width = 54, Height = 54, CornerRadius = new CornerRadius(27), Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)),
+                                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false,
+                                Child = new TextBlock { Text = "\uE768", FontSize = 24, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center,
+                                                        VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) } };
+        ((TextBlock)play.Child).SetResourceReference(TextBlock.FontFamilyProperty, "Icons");
+        frame.Child = null;
+        var holder = new Grid { Cursor = Cursors.Hand, MinWidth = 160, MinHeight = 100 };
+        holder.Children.Add(img);
+        holder.Children.Add(play);
+        frame.Child = holder;
+        holder.MouseLeftButtonUp += async (_, _) => await PlayVideoAsync(m.Id);
         return frame;
     }
 
@@ -279,7 +295,43 @@ public partial class MainWindow
         return b;
     }
 
-    private void ClosePictureBig(object s, MouseButtonEventArgs e) => PictureBig.Visibility = Visibility.Collapsed;
+    private void ShowBig(BitmapSource? picture, Uri? video)
+    {
+        PictureBigImage.Source = picture;
+        PictureBigImage.Visibility = video is null ? Visibility.Visible : Visibility.Collapsed;
+        VideoBig.Visibility = video is null ? Visibility.Collapsed : Visibility.Visible;
+        if (video is not null) { VideoBig.Source = video; VideoBig.Position = TimeSpan.Zero; VideoBig.Play(); }
+        PictureBig.Visibility = Visibility.Visible;
+    }
+
+    private void ClosePictureBig(object s, MouseButtonEventArgs e)
+    {
+        VideoBig.Stop();
+        VideoBig.Source = null;
+        PictureBig.Visibility = Visibility.Collapsed;
+    }
+
+    private void VideoEnded(object s, RoutedEventArgs e) { VideoBig.Position = TimeSpan.Zero; VideoBig.Pause(); }
+
+    /// <summary>Clips are fetched once into his temp folder and played from there.</summary>
+    private async Task PlayVideoAsync(long id)
+    {
+        var file = Path.Combine(Path.GetTempPath(), "kidspc-chat", $"{id}.mp4");
+        if (!File.Exists(file))
+        {
+            ShowChatStatus("Getting the video…");
+            try
+            {
+                var v = await _helper.GetAsync<ChatPicture>(new PipeRequest("chat_video_get", Detail: id.ToString()));
+                if (v is null) return;
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                await File.WriteAllBytesAsync(file, Convert.FromBase64String(v.Data));
+            }
+            catch (Exception ex) { ShowChatStatus($"The video won't play. {Plain(ex)}"); return; }
+            ChatStatus.Visibility = Visibility.Collapsed;
+        }
+        ShowBig(null, new Uri(file));
+    }
 
     private async void ToggleChat(object s, RoutedEventArgs e)
     {
@@ -366,6 +418,60 @@ public partial class MainWindow
     }
 
     private static readonly string[] PictureTypes = [".png", ".jpg", ".jpeg", ".gif", ".bmp"];
+    private static readonly string[] VideoTypes = [".mp4", ".mov", ".wmv"];
+    private const long MaxVideoBytes = 100L * 1024 * 1024;   // the hub's limit; it keeps a much smaller copy
+
+    /// <summary>His newest clips: the Xbox Game Bar's captures (Windows key + Alt + R is blocked, but games and Steam can save there too).</summary>
+    private static List<FileInfo> RecentVideos(int n = 8)
+    {
+        var dirs = new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Captures"),
+                           Environment.GetFolderPath(Environment.SpecialFolder.MyVideos) };
+        var files = new List<FileInfo>();
+        foreach (var dir in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try { if (Directory.Exists(dir)) files.AddRange(new DirectoryInfo(dir).EnumerateFiles().Where(f => VideoTypes.Contains(f.Extension.ToLowerInvariant()))); }
+            catch { /* a folder he can't read */ }
+        }
+        return files.OrderByDescending(f => f.LastWriteTimeUtc).Take(n).ToList();
+    }
+
+    private Button VideoTile(FileInfo f)
+    {
+        var label = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+        var glyph = new TextBlock { Text = "\uE714", FontSize = 26, HorizontalAlignment = HorizontalAlignment.Center };
+        glyph.SetResourceReference(TextBlock.FontFamilyProperty, "Icons");
+        label.Children.Add(glyph);
+        label.Children.Add(new TextBlock { Text = f.LastWriteTime.ToString("MMM d, h:mm tt"), FontSize = 12, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Center });
+        var b = new Button { Width = 130, Height = 96, Margin = new Thickness(0, 0, 10, 10), Padding = new Thickness(0), Cursor = Cursors.Hand, ToolTip = f.Name,
+                             Content = label, BorderThickness = new Thickness(0) };
+        b.SetResourceReference(BackgroundProperty, "Well");
+        b.SetResourceReference(ForegroundProperty, "Text");
+        var path = f.FullName;
+        b.Click += async (_, _) => await SendVideoAsync(path);
+        return b;
+    }
+
+    private async Task SendVideoAsync(string path)
+    {
+        byte[] bytes;
+        try
+        {
+            if (new FileInfo(path).Length > MaxVideoBytes) { PickerNote.Text = "That video is too big. Pick a shorter one (up to 30 seconds)."; return; }
+            bytes = await File.ReadAllBytesAsync(path);
+        }
+        catch { PickerNote.Text = "That video can't be opened. Pick another one."; return; }
+        var caption = ChatBox.Text.Trim();
+        ClosePicturePicker(this, new RoutedEventArgs());
+        ShowChatStatus("Sending the video… this can take a minute.");
+        try
+        {
+            await _helper.GetAsync<object>(new PipeRequest("chat_video", Detail: Convert.ToBase64String(bytes), Note: caption, Ref: _conv));
+            ChatBox.Text = "";
+            ChatStatus.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception ex) { ShowChatStatus($"Didn't send. {Plain(ex)}"); return; }
+        await PollChatAsync();
+    }
 
     private static List<FileInfo> RecentPictures(int n = 24)
     {
@@ -406,8 +512,11 @@ public partial class MainWindow
             };
             PickerGrid.Children.Add(b);
         }
-        PickerNote.Text = recent.Count == 0 && PasteButton.Visibility != Visibility.Visible
+        List<FileInfo> clips = App.DemoScene is null && _chatList is { Videos: true } ? RecentVideos() : [];
+        foreach (var f in clips) PickerGrid.Children.Add(VideoTile(f));
+        PickerNote.Text = recent.Count == 0 && clips.Count == 0 && PasteButton.Visibility != Visibility.Visible
             ? "No screenshots yet. Take one in a game (F12 in Steam), or press Print Screen and come back to paste it."
+            : clips.Count > 0 ? "Your newest screenshots and clips (up to 30 seconds). Mom and Dad can see everything you send."
             : "Your newest screenshots. Mom and Dad can see every picture you send.";
         PicturePicker.Visibility = Visibility.Visible;
     }

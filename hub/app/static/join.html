@@ -33,7 +33,7 @@
     <div id="flog" class="chatlog"></div>
     <p id="fstatus" class="muted" hidden></p>
     <form id="fform" class="row">
-      <label class="picbtn" id="fpicbtn" title="Send a picture"><input type="file" id="fpic" accept="image/*" hidden>
+      <label class="picbtn" id="fpicbtn" title="Send a picture"><input type="file" id="fpic" accept="image/*,video/*" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg></label>
       <input name="text" maxlength="500" autocomplete="off" placeholder="Type a message">
       <button>Send</button>
@@ -127,15 +127,17 @@ async function loadChat() {
   if (!j.on) { $("#chatBox").hidden = true; return; }
   $("#chatBox").hidden = false;
   if (!room) $("#title").textContent = `Voice and chat with ${j.kid_name}`;
-  $("#fwho").textContent = `${j.kid_name}'s parents can read these messages and see every picture and link.`;
-  $("#fpicbtn").hidden = !j.pictures;
+  $("#fwho").textContent = `${j.kid_name}'s parents can read these messages and see every picture, video and link.`;
+  $("#fpicbtn").hidden = !j.pictures && !j.videos;
+  chat.videos = j.videos;
+  $("#fpic").accept = [j.pictures ? "image/*" : "", j.videos ? "video/*" : ""].filter(Boolean).join(",");
   fsay("");
   const log = $("#flog"), msgs = j.messages;
   if (!msgs.length) { if (!chat.started) log.innerHTML = `<p class="muted">Say hi to ${h(j.kid_name)}!</p>`; chat.started = true; return; }
   if (!chat.started) log.innerHTML = "";
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.insertAdjacentHTML("beforeend", msgs.map((m) => `<div class="msg ${m.mine ? "mine" : "kid"} ${m.removed ? "removed" : ""}">
-    ${m.mine ? "" : `<div class="who">${h(m.sender)}</div>`}<div class="bubble">${m.picture ? `<a href="/join/${code}/chat/picture/${m.id}" target="_blank"><img src="/join/${code}/chat/picture/${m.id}" alt="Picture from ${h(m.sender)}" loading="lazy"></a>` : ""}${m.removed ? `<i>${h(m.text)}</i>` : linked(m.text, m.links)}</div>
+    ${m.mine ? "" : `<div class="who">${h(m.sender)}</div>`}<div class="bubble">${m.video ? `<video controls playsinline preload="none" ${m.picture ? `poster="/join/${code}/chat/picture/${m.id}"` : ""} src="/join/${code}/chat/video/${m.id}"></video>` : m.picture ? `<a href="/join/${code}/chat/picture/${m.id}" target="_blank"><img src="/join/${code}/chat/picture/${m.id}" alt="Picture from ${h(m.sender)}" loading="lazy"></a>` : ""}${m.removed ? `<i>${h(m.text)}</i>` : linked(m.text, m.links)}</div>
     <div class="when">${h(new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div></div>`).join(""));
   if (atBottom || !chat.started) log.scrollTop = log.scrollHeight;
   chat.started = true;
@@ -157,6 +159,16 @@ $("#fpic").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
+  if (file.type.startsWith("video/")) {
+    if (!chat.videos) return fsay("Videos are switched off in this chat.");
+    if (file.size > 100 * 1024 * 1024) return fsay("That video is too big. Videos can be up to 30 seconds.");
+    fsay("Sending the video… this can take a minute.");
+    const text = $("#fform").text.value.trim();
+    const r = await fetch(`/join/${code}/chat/video?text=${encodeURIComponent(text)}`, { method: "POST", body: file }).catch(() => null);
+    if (!r || !r.ok) return fsay(r ? (await r.json().catch(() => ({}))).detail || "That didn't send. Try again." : "That didn't send. Try again.");
+    $("#fform").text.value = "";
+    return loadChat();
+  }
   if (file.size > 15 * 1024 * 1024) return fsay("That picture is too big. Try a smaller one.");
   fsay("Sending the picture…");
   const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
