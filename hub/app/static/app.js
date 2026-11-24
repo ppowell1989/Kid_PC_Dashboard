@@ -163,33 +163,36 @@ async function loadRequests() {
       <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
       <div class="actions even"><button class="good" data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
   }).join("") : `<p class="muted">No requests waiting.</p>`;
-  // Fill each game request with Steam matches and preselect the best one.
+  // Fill each game request with matches from every store and preselect the best one.
   reqs.filter((r) => r.kind === "game").forEach(async (r) => {
     const group = $(`[data-steamfor="${r.id}"]`), sel = $(`[data-gamefor="${r.id}"]`), img = $(`[data-artfor="${r.id}"]`);
     const inCat = games.find((g) => g.title.toLowerCase() === r.detail.toLowerCase());
     if (inCat) sel.value = inCat.id;
     let hits = [];
-    const picked = (r.ref || "").startsWith("steam:") ? r.ref.slice(6) : "";
+    const picked = (r.ref || "").startsWith("steam:") ? r.ref : "";
     try {
-      if (picked) { const a = await api(`/api/parent/steam/app/${picked}`); if (a.appid) hits = [a]; }
-      const more = await api(`/api/parent/steam/search?q=${encodeURIComponent(r.detail)}`);
-      hits = hits.concat(more.filter((h) => h.appid !== picked));
+      if (picked) {   // the exact Steam game he picked on his screen goes first
+        const a = await api(`/api/parent/steam/app/${picked.slice(6)}`);
+        if (a.appid) hits.push(...(await api(`/api/parent/games/search?q=${encodeURIComponent(a.name)}`)).results
+          .filter((h) => h.platforms.some((p) => `steam:${p.launch_ref}` === picked)).slice(0, 1));
+      }
+      const more = (await api(`/api/parent/games/search?q=${encodeURIComponent(r.detail)}`)).results;
+      hits = hits.concat(more.filter((h) => !hits.some((x) => x.title === h.title)));
     } catch {}
+    hits = hits.filter((h) => h.default !== null);
+    const refOf = (h) => `${h.platforms[h.default].launcher}:${h.platforms[h.default].launch_ref}`;
+    const byRef = Object.fromEntries(hits.map((h) => [refOf(h), h]));
     const info = $(`[data-infofor="${r.id}"]`);
-    group.label = hits.length ? "Add from Steam" : "No Steam matches";
-    const byId = Object.fromEntries(hits.map((h) => [h.appid, h]));
-    group.innerHTML = hits.map((h) => `<option value="steam:${h.appid}" data-img="${esc(h.image_url)}">${esc(h.name)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${h.appid === picked ? " ← the one he picked" : ""}</option>`).join("");
+    group.label = hits.length ? "Add from the stores" : "No store matches";
+    group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(h.platforms[h.default].label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
     const showArt = () => {
       const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
       img.hidden = !src; if (src) img.src = src;
-      const h = sel.value.startsWith("steam:") ? byId[sel.value.slice(6)] : null;
-      info.innerHTML = h ? [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${h.esrb_descriptors ? `: ${esc(h.esrb_descriptors)}` : ""}` : "No ESRB rating on Steam",
-        h.adult ? `<span class="tagline bad">Adult content</span>` : "", h.content_notes ? esc(h.content_notes) : "", esc(h.description || ""),
-        h.free ? "Free" : `${esc(h.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(h.appid)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`,
-      ].filter(Boolean).join("<br>") : "";
+      const h = byRef[sel.value];
+      info.innerHTML = h ? gameFacts(h, h.platforms[h.default]) : "";
     };
-    if (picked && byId[picked]) sel.value = `steam:${picked}`;
-    else if (!sel.value && hits.length) sel.value = `steam:${hits[0].appid}`;
+    if (picked && byRef[picked]) sel.value = picked;
+    else if (!sel.value && hits.length) sel.value = refOf(hits[0]);
     sel.onchange = showArt; showArt();
   });
   document.querySelectorAll("[data-decide]").forEach((b) => (b.onclick = async () => {
@@ -202,7 +205,7 @@ async function loadRequests() {
     }
     if (pick && body.approve) {
       if (!pick.value) return sheet({ title: "Choose the game first", cancel: "" });
-      if (pick.value.startsWith("steam:")) body.steam_appid = pick.value.slice(6); else body.game_id = +pick.value;
+      if (pick.value.includes(":")) body.ref = pick.value; else body.game_id = +pick.value;
     }
     try { await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body }); } catch (err) { return oops(err); }
     loadRequests(); refresh();
@@ -225,9 +228,55 @@ async function loadWeb() {
 $("#webKid").onchange = $("#webSource").onchange = loadWeb;
 $("#siteForm").onsubmit = async (e) => { e.preventDefault(); await api("/api/parent/sites", { method: "POST", body: { domain: new FormData(e.target).get("domain") } }); e.target.reset(); loadWeb(); };
 
+// What a parent needs to decide on a game: rating, where it's on, and how to get it.
+function gameFacts(h, p) {
+  const d = h.details || {};
+  const others = h.platforms.filter((x) => x !== p).map((x) => x.label);
+  const how = p.platform === "steam"
+    ? (d.free ? "Free on Steam" : `${esc(d.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(p.launch_ref)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`)
+    : p.platform === "battlenet" ? "Through Battle.net: he signs in to Blizzard's app on his PC, and the game downloads there"
+    : "Included with PC Game Pass, through the Xbox app";
+  return [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${d.esrb_descriptors ? `: ${esc(d.esrb_descriptors)}` : ""}` : "No ESRB rating listed",
+    h.adult ? `<span class="tagline bad">Adult content</span>` : "", d.content_notes ? esc(d.content_notes) : "", esc(d.description || ""),
+    how, others.length ? `Also on ${esc(others.join(", "))}` : "",
+  ].filter(Boolean).join("<br>");
+}
+
+let gameHits = [];
+function renderGameHits() {
+  $("#gameResults").innerHTML = gameHits.map((h, i) => {
+    const p = h.platforms[h.pick ?? h.default ?? 0];
+    const kids = state.kids.map((k) => `<label><input type="checkbox" data-hitkid="${i}" value="${k.id}" checked> ${esc(k.name)}</label>`).join("");
+    return `<li>${h.image_url ? `<img class="art" src="${esc(h.image_url)}" alt="" loading="lazy">` : ""}
+      <b>${esc(h.title)}</b> ${h.esrb ? `<span class="tagline rating">${esc(h.esrb)}</span>` : ""} ${h.adult ? `<span class="tagline bad">Adult</span>` : ""}
+      <div class="chips">${h.platforms.map((x, j) => `<button type="button" class="chip${x === p && x.addable ? " on" : ""}" data-hit="${i}" data-plat="${j}" ${x.addable ? "" : "disabled"}>${esc(x.label)}</button>`).join("")}</div>
+      <div class="muted">${p.addable ? gameFacts(h, p) : esc(p.note)}</div>
+      ${p.addable ? `<div class="actions">${kids}<button class="small" data-addhit="${i}">${p.game_id ? "Approve" : "Add"}</button></div>` : ""}</li>`;
+  }).join("");
+  document.querySelectorAll("[data-plat]").forEach((b) => (b.onclick = () => { gameHits[b.dataset.hit].pick = +b.dataset.plat; renderGameHits(); }));
+  document.querySelectorAll("[data-addhit]").forEach((b) => (b.onclick = async () => {
+    const h = gameHits[b.dataset.addhit], p = h.platforms[h.pick ?? h.default];
+    const kids = [...document.querySelectorAll(`[data-hitkid="${b.dataset.addhit}"]:checked`)].map((c) => c.value);
+    try { await api("/api/parent/games/from-search", { method: "POST", body: { ref: `${p.launcher}:${p.launch_ref}`, approved_for: kids } }); } catch (err) { return oops(err); }
+    b.textContent = "Added"; b.disabled = true; loadGames();
+  }));
+}
+$("#gameSearch").onsubmit = async (e) => {
+  e.preventDefault();
+  const q = new FormData(e.target).get("q").trim(), note = $("#gameSearchNote");
+  note.textContent = "Searching…"; gameHits = []; renderGameHits();
+  try {
+    const r = await api(`/api/parent/games/search?q=${encodeURIComponent(q)}`);
+    gameHits = r.results;
+    note.textContent = !gameHits.length ? "No games found. Try a shorter name." : r.xbox === "unavailable" ? "Couldn't reach the Xbox catalogue just now, so Game Pass isn't shown." : "Tap a store to choose where he gets it.";
+  } catch (err) { note.textContent = err.message; }
+  renderGameHits();
+};
+
+const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
 async function loadGames() {
   const games = await api("/api/parent/games");
-  $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> <span class="muted">${g.launcher} ${esc(g.launch_ref)} ${esc(g.rating)}</span>
+  $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> ${g.rating ? `<span class="tagline rating">${esc(g.rating)}</span>` : ""} <span class="muted">${STORE[g.launcher] || g.launcher}</span>
     <div class="actions">${state.kids.map((k) => `<label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${g.approved_for.includes(k.id) ? "checked" : ""}> ${esc(k.name)}</label>`).join("")}
     <button class="ghost small" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
   document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = () => api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } })));

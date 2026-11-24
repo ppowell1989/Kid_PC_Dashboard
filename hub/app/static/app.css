@@ -226,3 +226,10 @@ dialog .actions > button { flex: 1; }
 .person.talking .pstate { color: var(--ok-text); }
 .person.muted .orb { background: var(--line-2); }
 .person.muted .pstate { color: var(--bad-text); }
+
+/* Game search results: store chips and a rating badge */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 6px; }
+.chip { min-height: 32px; padding: 4px 12px; font-size: .82rem; border-radius: 999px; color: var(--text); background: var(--well); }
+.chip.on { color: #fff; background: var(--accent); }
+.chip:disabled { opacity: .5; text-decoration: line-through; cursor: default; }
+.tagline.rating { background: var(--well); color: var(--text); }
