@@ -49,10 +49,10 @@ document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
   document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
   if (b.dataset.tab === "chat") { $("#chatDot").textContent = ""; chat.seen = chat.last; loadChat(); }
-  ({ requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites }[b.dataset.tab] || (() => {}))();
+  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: loadInvites }[b.dataset.tab] || (() => {}))();
 }));
 
-function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; }
+function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}` : `${m}m`; }
 
 async function refresh() {
   const o = await api("/api/parent/overview");
@@ -63,7 +63,7 @@ async function refresh() {
   $("#kids").innerHTML = o.kids.map((k) => {
     const t = k.time, total = t.allowance + t.granted, left = total ? Math.max(0, Math.min(100, (t.minutes_left / total) * 100)) : 0;
     const status = k.online ? (k.running ? `Playing <b>${esc(k.running)}</b>` : "On the home screen") : "Offline";
-    const reason = { time: "out of time", bedtime: "bedtime", paused: "paused" }[t.lock_reason] || t.lock_reason;
+    const reason = { time: "out of time", bedtime: "bedtime", paused: "paused", outside_hours: "not play time" }[t.lock_reason] || t.lock_reason;
     const lock = t.locked ? `<span class="tagline bad">Locked: ${esc(reason)}</span>` : (t.warn ? `<span class="warn">Under 10 minutes left.</span>` : "");
     const apps = (k.apps || []).map((a) => {
       const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
@@ -78,7 +78,7 @@ async function refresh() {
         <div class="timeleft"><div class="big">${fmtMin(t.minutes_left)}</div><div class="muted">left today</div></div>
       </div>
       <div class="fuel ${t.locked || left <= 12 ? "empty" : left <= 34 ? "low" : ""}"><div style="width:${left}%"></div></div>
-      <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
+      <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}${t.next_play ? ` Next play time ${esc(nextPlay(t.next_play))}.` : ""}</div>
       ${k.flagged_today ? `<div class="alert"><span>${k.flagged_today} flagged search${k.flagged_today > 1 ? "es" : ""} today</span><button class="bad small" data-seesearch="${k.id}">See</button></div>` : ""}
       <div class="actions even">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
@@ -266,6 +266,112 @@ $("#inviteForm").onsubmit = async (e) => {
 
 refresh().catch(() => {});
 setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 30000);
+
+// Playtimes -----------------------------------------------------------------
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const pt = { data: null, kid: null, day: 0 };
+
+// "15:30" -> "3:30 PM" in the phone's own style.
+const clock = (hhmm) => {
+  if (hhmm === "24:00") return "midnight";
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+function nextPlay(iso) {
+  const at = new Date(iso), days = Math.round((new Date(at).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 864e5);
+  const t = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return days <= 0 ? `at ${t}` : days === 1 ? `tomorrow at ${t}` : `${at.toLocaleDateString([], { weekday: "long" })} at ${t}`;
+}
+
+async function loadPlaytimes() {
+  pt.data = await api("/api/parent/playtimes");
+  if (!pt.kid || !pt.data.kids.some((k) => k.id === pt.kid)) pt.kid = pt.data.kids[0]?.id;
+  renderPlaytimes();
+}
+
+function renderPlaytimes() {
+  const kids = pt.data.kids, kid = kids.find((k) => k.id === pt.kid);
+  $("#ptKids").hidden = kids.length < 2;
+  $("#ptKids").innerHTML = kids.map((k) => `<button role="tab" aria-selected="${k.id === pt.kid}" class="${k.id === pt.kid ? "on" : ""}" data-ptkid="${k.id}">${esc(k.name)}</button>`).join("");
+  document.querySelectorAll("[data-ptkid]").forEach((b) => (b.onclick = () => { pt.kid = b.dataset.ptkid; renderPlaytimes(); }));
+  if (!kid) { $("#ptDays").innerHTML = `<p class="muted">No kids set up yet.</p>`; return; }
+  $("#ptDays").innerHTML = kid.days.map((d) => {
+    const wins = d.windows.length
+      ? d.windows.map((w) => `<span class="win">${esc(clock(w.start))} – ${esc(clock(w.end))}</span>`).join("")
+      : `<span class="win any">Any time${d.bedtime ? " before bedtime" : ""}</span>`;
+    const limit = d.daily_minutes ? `${fmtMin(d.daily_minutes)} a day` : "No play";
+    return `<button class="card day ${d.day === pt.data.today ? "today" : ""}" data-ptday="${d.day}" aria-label="Edit ${DAY_NAMES[d.day]}">
+      <div class="dayhead"><b>${DAY_NAMES[d.day]}</b>${d.day === pt.data.today ? `<span class="tagline">Today</span>` : ""}<span class="edit">Edit</span></div>
+      <div class="facts"><span>${limit}</span><span>${d.bedtime ? `Bedtime ${esc(clock(d.bedtime))}` : "No bedtime"}</span></div>
+      ${d.daily_minutes ? `<div class="wins">${wins}</div>` : ""}
+    </button>`;
+  }).join("");
+  document.querySelectorAll("[data-ptday]").forEach((b) => (b.onclick = () => editPlaytime(+b.dataset.ptday)));
+}
+
+function windowRow(w = { start: "15:30", end: "17:30" }) {
+  return `<div class="winrow"><input type="time" data-w="start" value="${esc(w.start)}" required aria-label="From">
+    <span>to</span><input type="time" data-w="end" value="${esc(w.end === "24:00" ? "00:00" : w.end)}" required aria-label="Until">
+    <button type="button" class="ghost small" data-delwin aria-label="Remove this play time">✕</button></div>`;
+}
+function wireWindows() {
+  const box = $("#ptWindows");
+  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time before bedtime.</p>`;
+  box.querySelectorAll("[data-delwin]").forEach((b) => (b.onclick = () => { b.closest(".winrow").remove(); wireWindows(); }));
+}
+
+function editPlaytime(day) {
+  const kid = pt.data.kids.find((k) => k.id === pt.kid), d = kid.days[day], f = $("#ptForm");
+  pt.day = day;
+  $("#ptTitle").textContent = `${kid.name}'s ${DAY_NAMES[day]}`;
+  f.daily_minutes.value = d.daily_minutes;
+  $("#ptQuick").innerHTML = [0, 30, 60, 90, 120, 180].map((m) => `<button type="button" class="ghost small" data-quick="${m}">${m ? fmtMin(m) : "No play"}</button>`).join("");
+  $("#ptQuick").querySelectorAll("[data-quick]").forEach((b) => (b.onclick = () => (f.daily_minutes.value = b.dataset.quick)));
+  f.bedtime.value = d.bedtime || "20:30"; f.nobed.checked = !d.bedtime; f.bedtime.disabled = !d.bedtime;
+  f.nobed.onchange = () => (f.bedtime.disabled = f.nobed.checked);
+  $("#ptWindows").innerHTML = d.windows.map(windowRow).join(""); wireWindows();
+  $("#ptDaysPick").innerHTML = DAY_NAMES.map((n, i) => `<label class="pick"><input type="checkbox" name="day" value="${i}" ${i === day ? "checked" : ""}><span>${n.slice(0, 3)}</span></label>`).join("");
+  $("#ptKidsPick").innerHTML = pt.data.kids.length < 2 ? "" : pt.data.kids.map((k) => `<label class="pick"><input type="checkbox" name="kid" value="${k.id}" ${k.id === kid.id ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("");
+  $("#ptErr").textContent = "";
+  $("#ptSheet").showModal();
+}
+$("#ptAdd").onclick = () => {
+  const box = $("#ptWindows"), last = [...box.querySelectorAll('[data-w="end"]')].pop();
+  if (!box.querySelector(".winrow")) box.innerHTML = "";
+  const start = last ? last.value : "15:30", [h, m] = start.split(":").map(Number);
+  box.insertAdjacentHTML("beforeend", windowRow({ start, end: `${String(Math.min(23, h + 1)).padStart(2, "0")}:${String(m).padStart(2, "0")}` }));
+  wireWindows();
+};
+$("#ptDayQuick").querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => {
+  const want = b.dataset.pick.split(",");
+  $("#ptDaysPick").querySelectorAll("input").forEach((c) => (c.checked = want.includes(c.value) || +c.value === pt.day));
+}));
+$("#ptSave").onclick = async (e) => {
+  e.preventDefault();
+  const f = $("#ptForm");
+  if (!f.reportValidity()) return;
+  const windows = [...$("#ptWindows").querySelectorAll(".winrow")].map((r) => {
+    const end = r.querySelector('[data-w="end"]').value;
+    return { start: r.querySelector('[data-w="start"]').value, end: end === "00:00" ? "24:00" : end };
+  });
+  const body = {
+    days: [...f.querySelectorAll('[name=day]:checked')].map((c) => +c.value),
+    daily_minutes: +f.daily_minutes.value, bedtime: f.nobed.checked ? "" : f.bedtime.value, windows,
+  };
+  if (!body.days.length) body.days = [pt.day];
+  const sorted = [...windows].sort((a, b) => (a.start < b.start ? -1 : 1));
+  const span = (w) => `${clock(w.start)} to ${clock(w.end)}`;
+  const backwards = sorted.find((w) => w.end <= w.start);
+  if (backwards) { $("#ptErr").textContent = `The play time ${span(backwards)} ends before it starts.`; return; }
+  const clash = sorted.findIndex((w, i) => i && w.start < sorted[i - 1].end);
+  if (clash > 0) { $("#ptErr").textContent = `Two play times overlap: ${span(sorted[clash - 1])} and ${span(sorted[clash])}.`; return; }
+  const kids = [...f.querySelectorAll('[name=kid]:checked')].map((c) => c.value);
+  try {
+    for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/playtimes/${k}`, { method: "PUT", body });
+  } catch (err) { $("#ptErr").textContent = err.message; return; }
+  $("#ptSheet").close();
+  loadPlaytimes().catch(oops); refresh().catch(() => {});
+};
 
 // Family chat ---------------------------------------------------------------
 const chat = { last: 0, seen: 0, started: false };

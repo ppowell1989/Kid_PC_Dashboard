@@ -115,21 +115,25 @@ KID = Kid(id="a", name="A", device_token="t", daily_minutes={"weekday": 60, "wee
 TZ = ZoneInfo("UTC")
 
 
+def day(kid, now):
+    return rules.default_rule(kid, now.weekday())
+
+
 def test_rules_bedtime_and_warning():
     tue_eve = datetime(2026, 11, 24, 20, 25, tzinfo=TZ)   # Tuesday, 5 min to bedtime
-    st = rules.compute(KID, tue_eve, used=10, granted=0)
+    st = rules.compute(day(KID, tue_eve), tue_eve, used=10, granted=0)
     assert st.minutes_left == 5 and st.warn and not st.locked
     late = datetime(2026, 11, 24, 20, 40, tzinfo=TZ)
-    st = rules.compute(KID, late, used=10, granted=0)
+    st = rules.compute(day(KID, late), late, used=10, granted=0)
     assert st.locked and st.lock_reason == "bedtime"
-    st = rules.compute(KID, late, used=10, granted=20, late_until=datetime(2026, 11, 24, 21, 0, tzinfo=TZ))
+    st = rules.compute(day(KID, late), late, used=10, granted=20, late_until=datetime(2026, 11, 24, 21, 0, tzinfo=TZ))
     assert not st.locked and st.minutes_left == 20
 
 
 def test_rules_out_of_time_and_weekend():
     sat = datetime(2026, 11, 28, 12, 0, tzinfo=TZ)
-    assert rules.compute(KID, sat, used=60, granted=0).minutes_left == 60
-    st = rules.compute(KID, sat, used=120, granted=0)
+    assert rules.compute(day(KID, sat), sat, used=60, granted=0).minutes_left == 60
+    st = rules.compute(day(KID, sat), sat, used=120, granted=0)
     assert st.locked and st.lock_reason == "time"
 
 
@@ -320,3 +324,70 @@ def test_decision_reason_reaches_the_kid(parent):
     parent.post(f"/api/parent/requests/{rid}", json={"approve": False, "reason": "Not until homework is done"})
     msgs = [c["arg"] for c in parent.get("/api/device/rules", headers=ADAM).json()["commands"] if c["kind"] == "message"]
     assert any("Not this time: roblox.com" in m and "Not until homework is done" in m for m in msgs)
+
+
+# Playtimes -------------------------------------------------------------------
+
+AFTER_SCHOOL = rules.DayRule(daily_minutes=90, bedtime="20:30", windows=[("15:30", "17:30"), ("19:00", "20:30")])
+
+
+def test_playtime_windows_lock_outside_and_cap_inside():
+    tue = lambda h, m: datetime(2026, 11, 24, h, m, tzinfo=TZ)
+    every_day = lambda wd: AFTER_SCHOOL
+    st = rules.compute(AFTER_SCHOOL, tue(12, 0), used=0, granted=0, rule_for=every_day)
+    assert st.locked and st.lock_reason == "outside_hours" and st.minutes_left == 0
+    assert st.next_play == tue(15, 30).isoformat()
+    st = rules.compute(AFTER_SCHOOL, tue(17, 20), used=0, granted=0, rule_for=every_day)
+    assert not st.locked and st.minutes_left == 10 and st.warn and st.minutes_to_stop == 10   # window ends 17:30
+    st = rules.compute(AFTER_SCHOOL, tue(17, 45), used=30, granted=0, rule_for=every_day)
+    assert st.lock_reason == "outside_hours" and st.next_play == tue(19, 0).isoformat()
+    st = rules.compute(AFTER_SCHOOL, tue(20, 40), used=30, granted=0, rule_for=every_day)
+    assert st.lock_reason == "bedtime"
+    # After the last window the next play time is tomorrow's first window.
+    no_eve = rules.DayRule(daily_minutes=60, bedtime="21:00", windows=[("15:30", "17:30")])
+    st = rules.compute(no_eve, tue(18, 0), used=0, granted=0, rule_for=lambda wd: no_eve)
+    assert st.next_play == datetime(2026, 11, 25, 15, 30, tzinfo=TZ).isoformat()
+    # Out of minutes wins over the window.
+    assert rules.compute(AFTER_SCHOOL, tue(16, 0), used=90, granted=0).lock_reason == "time"
+    # A parent's grant outside the windows lets him play until it runs out.
+    st = rules.compute(AFTER_SCHOOL, tue(12, 0), used=0, granted=20, late_until=tue(12, 20))
+    assert not st.locked and st.minutes_left == 20
+
+
+def test_playtime_no_windows_and_no_bedtime():
+    st = rules.compute(rules.DayRule(daily_minutes=120), datetime(2026, 11, 24, 23, 30, tzinfo=TZ), used=0, granted=0)
+    assert not st.locked and st.minutes_left == 30   # runs to midnight
+    st = rules.compute(rules.DayRule(daily_minutes=0, bedtime="21:00"), datetime(2026, 11, 24, 12, 0, tzinfo=TZ), used=0, granted=0)
+    assert st.locked and st.lock_reason == "time"     # 0 minutes = no play that day
+
+
+def test_playtimes_api_defaults_save_and_enforce(parent):
+    pt = parent.get("/api/parent/playtimes").json()
+    assert pt["today"] == 1   # frozen at Tuesday
+    adam = next(k for k in pt["kids"] if k["id"] == "adam")
+    assert [d["name"] for d in adam["days"]] == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    assert adam["days"][1] == {"day": 1, "name": "Tue", "daily_minutes": 60, "bedtime": "21:00", "windows": [], "custom": False, "updated_by": ""}
+
+    # Weekdays: after school only. Now is Tuesday noon, so Adam locks.
+    body = {"days": [0, 1, 2, 3, 4], "daily_minutes": 90, "bedtime": "20:30",
+            "windows": [{"start": "19:00", "end": "20:30"}, {"start": "15:30", "end": "17:30"}]}
+    r = parent.put("/api/parent/playtimes/adam", json=body).json()
+    assert r["days"][1]["windows"] == [{"start": "15:30", "end": "17:30"}, {"start": "19:00", "end": "20:30"}]   # sorted
+    assert r["days"][1]["custom"] and r["days"][1]["updated_by"] == "Patrick" and not r["days"][5]["custom"]
+    assert r["time"]["lock_reason"] == "outside_hours" and r["time"]["next_play"].startswith("2026-11-24T15:30")
+    dev = parent.get("/api/device/rules", headers=ADAM).json()["time"]
+    assert dev["locked"] and dev["lock_reason"] == "outside_hours" and dev["minutes_left"] == 0
+    assert parent.get("/api/device/rules", headers={"Authorization": "Bearer tok-barrett"}).json()["time"]["locked"] is False
+
+    # Granting time outside the windows unlocks him for that long.
+    st = parent.post("/api/parent/kids/adam/grant", json={"minutes": 15}).json()
+    assert not st["locked"] and st["minutes_left"] == 15
+
+    # Bad input is refused.
+    bad = lambda **kw: parent.put("/api/parent/playtimes/adam", json={**body, **kw}).status_code
+    assert bad(windows=[{"start": "17:00", "end": "16:00"}]) == 422
+    assert bad(windows=[{"start": "15:00", "end": "17:00"}, {"start": "16:30", "end": "18:00"}]) == 422
+    assert bad(bedtime="25:00") == 422 and bad(days=[7]) == 422 and bad(daily_minutes=-1) == 422
+    assert parent.put("/api/parent/playtimes/nobody", json=body).status_code == 404
+    # A window may run to midnight, and bedtime may be left empty.
+    assert bad(bedtime="", windows=[{"start": "18:00", "end": "24:00"}]) == 200

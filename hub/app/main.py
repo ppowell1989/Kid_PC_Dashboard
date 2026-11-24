@@ -77,6 +77,14 @@ async def remote_access_gate(request: Request, call_next):
 
 # --------------------------------------------------------------------------- helpers
 
+def rule_for(db: DB, kid: Kid, weekday: int) -> rules.DayRule:
+    """The kid's playtime for a day of the week: the parents' saved rule, else config.yaml's defaults."""
+    r = db.one("SELECT daily_minutes, bedtime, windows FROM playtimes WHERE kid_id=? AND weekday=?", (kid.id, weekday))
+    if not r:
+        return rules.default_rule(kid, weekday)
+    return rules.DayRule(daily_minutes=r["daily_minutes"], bedtime=r["bedtime"], windows=[tuple(w) for w in json.loads(r["windows"])])
+
+
 def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = None) -> rules.TimeState:
     now = now or rules.local_now(settings.timezone)
     day = rules.day_key(now)
@@ -85,7 +93,8 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     late_until = datetime.fromisoformat(g["u"]) if g and g["u"] else None
     p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
     paused_until = datetime.fromisoformat(p["until"]) if p else None
-    return rules.compute(kid, now, used, g["m"] if g else 0, late_until, paused_until)
+    return rules.compute(rule_for(db, kid, now.weekday()), now, used, g["m"] if g else 0, late_until, paused_until,
+                         rule_for=lambda wd: rule_for(db, kid, wd))
 
 
 STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
@@ -548,7 +557,9 @@ def grant_time(db: DB, settings: Settings, kid: Kid, minutes: int, parent: str) 
     now = rules.local_now(settings.timezone)
     st = today_state(db, settings, kid, now)
     until = ""
-    if st.lock_reason == "bedtime" or st.minutes_to_bedtime < minutes:
+    # After bedtime, outside the play windows, or when the stop comes before the extra minutes run out,
+    # the grant also lets him play past the stop until the minutes are used.
+    if st.lock_reason in ("bedtime", "outside_hours") or st.minutes_to_stop < minutes:
         until = (now + timedelta(minutes=minutes)).isoformat()
     db.x("INSERT INTO grants(kid_id,day,minutes,by,until) VALUES(?,?,?,?,?)",
          (kid.id, rules.day_key(now), minutes, parent, until))
@@ -563,6 +574,60 @@ def parent_grant(kid_id: str, g: Grant, parent: str = Depends(current_parent), d
     kid = kid_or_404(settings, kid_id)
     grant_time(db, settings, kid, g.minutes, parent)
     return today_state(db, settings, kid).__dict__
+
+
+# Playtimes ------------------------------------------------------------------
+
+HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class PlayWindow(BaseModel):
+    start: str = Field(pattern=HHMM)
+    end: str = Field(pattern=r"^(([01]\d|2[0-3]):[0-5]\d|24:00)$")
+
+
+class Playtime(BaseModel):
+    days: list[int] = Field(min_length=1, max_length=7)       # 0 = Monday; save the same rule to each
+    daily_minutes: int = Field(ge=0, le=24 * 60)
+    bedtime: str = Field(default="", pattern=r"^(([01]\d|2[0-3]):[0-5]\d)?$")
+    windows: list[PlayWindow] = Field(default_factory=list, max_length=8)
+
+
+def playtime_json(db: DB, kid: Kid, weekday: int) -> dict:
+    r = rule_for(db, kid, weekday)
+    custom = db.one("SELECT updated_by, updated_at FROM playtimes WHERE kid_id=? AND weekday=?", (kid.id, weekday))
+    return {"day": weekday, "name": rules.DAYS[weekday], "daily_minutes": r.daily_minutes, "bedtime": r.bedtime,
+            "windows": [{"start": s, "end": e} for s, e in r.windows], "custom": bool(custom),
+            "updated_by": custom["updated_by"] if custom else ""}
+
+
+@app.get("/api/parent/playtimes")
+def parent_playtimes(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    today = rules.local_now(settings.timezone).weekday()
+    return {"today": today, "kids": [{"id": k.id, "name": k.name, "days": [playtime_json(db, k, d) for d in range(7)]}
+                                     for k in settings.kids]}
+
+
+@app.put("/api/parent/playtimes/{kid_id}")
+def parent_set_playtime(kid_id: str, p: Playtime, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid = kid_or_404(settings, kid_id)
+    if any(d < 0 or d > 6 for d in p.days):
+        raise HTTPException(422, "days are 0 (Monday) to 6 (Sunday)")
+    wins = sorted((w.start, w.end) for w in p.windows)
+    for s, e in wins:
+        if e <= s:
+            raise HTTPException(422, f"play time {s} to {e} ends before it starts")
+    for (s1, e1), (s2, _) in zip(wins, wins[1:]):
+        if s2 < e1:
+            raise HTTPException(422, f"play times {s1}-{e1} and {s2} overlap")
+    with db.tx() as c:
+        for d in sorted(set(p.days)):
+            c.execute("""INSERT INTO playtimes(kid_id,weekday,daily_minutes,bedtime,windows,updated_by,updated_at)
+                         VALUES(?,?,?,?,?,?,datetime('now'))
+                         ON CONFLICT(kid_id,weekday) DO UPDATE SET daily_minutes=excluded.daily_minutes, bedtime=excluded.bedtime,
+                         windows=excluded.windows, updated_by=excluded.updated_by, updated_at=excluded.updated_at""",
+                      (kid.id, d, p.daily_minutes, p.bedtime, json.dumps([list(w) for w in wins]), parent))
+    return {"days": [playtime_json(db, kid, d) for d in range(7)], "time": today_state(db, settings, kid).__dict__}
 
 
 # Remote control -------------------------------------------------------------

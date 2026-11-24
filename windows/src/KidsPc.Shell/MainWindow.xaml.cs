@@ -84,8 +84,14 @@ public partial class MainWindow : Window
         if (_state.Locked)
         {
             var pending = rules.PendingRequests.Any(r => r.Kind == "time");
-            var title = t.LockReason switch { "bedtime" => "It's bedtime", "paused" => "Mom or Dad paused the PC", _ => "Time's up for today" };
-            ShowLock(title, pending ? "Your request was sent. Waiting for Mom or Dad." : "You can ask for a little more time.");
+            var title = t.LockReason switch
+            {
+                "bedtime" => "It's bedtime", "paused" => "Mom or Dad paused the PC",
+                "outside_hours" => "It's not play time right now", _ => "Time's up for today",
+            };
+            var sub = pending ? "Your request was sent. Waiting for Mom or Dad." : "You can ask for a little more time.";
+            if (t.LockReason == "outside_hours" && !pending && NextPlayText(t.NextPlay) is { } next) sub = $"Play time starts {next}. {sub}";
+            ShowLock(title, sub);
             _voice?.Close();
         }
         else
@@ -96,6 +102,15 @@ public partial class MainWindow : Window
 
         BuildHomeTiles(rules);
         BuildCatalogue(rules);
+    }
+
+    /// <summary>"at 3:30 PM", "tomorrow at 3:30 PM" or "on Saturday at 9:00 AM", from the hub's next_play.</summary>
+    private static string? NextPlayText(string? iso)
+    {
+        if (string.IsNullOrEmpty(iso) || !DateTimeOffset.TryParse(iso, out var at)) return null;
+        var days = (at.Date - DateTime.Today).Days;   // the hub and the PC share the family's time zone
+        var clock = at.ToString("h:mm tt");
+        return days <= 0 ? $"at {clock}" : days == 1 ? $"tomorrow at {clock}" : $"on {at:dddd} at {clock}";
     }
 
     private void ShowLock(string title, string sub)
