@@ -320,3 +320,70 @@ def test_decision_reason_reaches_the_kid(parent):
     parent.post(f"/api/parent/requests/{rid}", json={"approve": False, "reason": "Not until homework is done"})
     msgs = [c["arg"] for c in parent.get("/api/device/rules", headers=ADAM).json()["commands"] if c["kind"] == "message"]
     assert any("Not this time: roblox.com" in m and "Not until homework is done" in m for m in msgs)
+
+
+def _stub_stores(monkeypatch, gamepass=True):
+    from app import gamesearch, main
+
+    steam = {"2357570": {"appid": "2357570", "name": "Overwatch® 2", "type": "game", "image_url": "ow.jpg", "esrb": "T", "adult": False},
+             "105600": {"appid": "105600", "name": "Terraria", "type": "game", "image_url": "t.jpg", "esrb": "T", "adult": False}}
+
+    async def store(q):
+        return [{"id": int(k), "name": v["name"]} for k, v in steam.items() if gamesearch.matches(q, v["name"])]
+
+    async def app_(appid, db=None):
+        return steam.get(appid, {})
+
+    async def fetch(client):
+        if not gamepass:
+            raise RuntimeError("offline")
+        return [gamesearch.xbox_product({"ProductId": "9NBLGGH4R315", "LocalizedProperties": [{"ProductTitle": "Minecraft for Windows",
+                    "Images": [{"ImagePurpose": "BoxArt", "Uri": "//store-images.s-microsoft.com/image/mc"}]}],
+                    "MarketProperties": [{"ContentRatings": [{"RatingSystem": "ESRB", "RatingId": "ESRB:E10"}]}]}),
+                gamesearch.xbox_product({"ProductId": "9PGW18NPBZV5", "LocalizedProperties": [{"ProductTitle": "Overwatch 2"}]})]
+
+    monkeypatch.setattr(main, "steam_store_search", store)
+    monkeypatch.setattr(main, "steam_app", app_)
+    monkeypatch.setattr(gamesearch, "_fetch_gamepass", fetch)
+
+
+def test_game_search_merges_stores_and_fills_in_the_launcher(parent, monkeypatch):
+    _stub_stores(monkeypatch)
+    r = parent.get("/api/parent/games/search?q=overwatch").json()
+    assert r["xbox"] == "ok"
+    ow = r["results"][0]
+    assert ow["title"] == "Overwatch® 2" and ow["image_url"] == "ow.jpg" and ow["esrb"] == "T"
+    assert [p["platform"] for p in ow["platforms"]] == ["steam", "battlenet", "xbox"]
+    assert ow["default"] == 0 and ow["platforms"][2]["addable"] is False   # Game Pass is off in the test config
+
+    # Battle.net-only games come from the curated list, with no Steam id anywhere.
+    wow = parent.get("/api/parent/games/search?q=world of war").json()["results"][0]
+    p = wow["platforms"][0]
+    assert (p["launcher"], p["launch_ref"], p["addable"]) == ("battlenet", "WoW", True)
+    assert parent.post("/api/parent/games/from-search", json={"ref": "battlenet:WoW", "approved_for": ["adam"]}).status_code == 201
+    g = parent.get("/api/device/rules", headers=ADAM).json()["games"]
+    assert [(x["title"], x["launcher"], x["launch_ref"], x["rating"]) for x in g] == [("World of Warcraft", "battlenet", "WoW", "T")]
+    # Adding it again returns the same game, and search now says it's in the catalogue.
+    again = parent.post("/api/parent/games/from-search", json={"ref": "battlenet:wow", "approved_for": ["barrett"]}).json()["id"]
+    assert again == g[0]["id"]
+    assert parent.get("/api/parent/games/search?q=world of warcraft").json()["results"][0]["platforms"][0]["game_id"] == again
+
+
+def test_game_pass_results_follow_the_decision_switch(parent, monkeypatch):
+    _stub_stores(monkeypatch)
+    mc = parent.get("/api/parent/games/search?q=minecraft").json()["results"][0]
+    assert mc["platforms"][0]["platform"] == "xbox" and mc["default"] is None and mc["esrb"] == "E10+"
+    assert mc["image_url"] == "https://store-images.s-microsoft.com/image/mc?w=460"
+    assert parent.post("/api/parent/games/from-search", json={"ref": "gamepass:9NBLGGH4R315"}).status_code == 400
+
+
+def test_game_search_works_without_microsoft(parent, monkeypatch):
+    _stub_stores(monkeypatch, gamepass=False)
+    r = parent.get("/api/parent/games/search?q=terraria").json()
+    assert r["xbox"] == "unavailable" and r["results"][0]["platforms"][0]["launch_ref"] == "105600"
+
+
+def test_approve_game_request_with_a_battlenet_pick(parent):
+    rid = parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "Hearthstone"}).json()["id"]
+    assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "ref": "battlenet:WTCG"}).status_code == 200
+    assert [x["launch_ref"] for x in parent.get("/api/device/rules", headers=ADAM).json()["games"]] == ["WTCG"]
