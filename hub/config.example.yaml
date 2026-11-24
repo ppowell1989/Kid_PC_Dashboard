@@ -58,6 +58,10 @@ allowed_sites:
   - wikipedia.org
   - khanacademy.org
 
+# Apps the helper installs on each PC by itself if missing: steam, chrome, battlenet
+# (Battle.net's installer can't run silently, so it is reported as "manual").
+managed_apps: [steam, chrome]
+
 session_secret: "CHANGE-ME-session-secret"
 
 adguard:

@@ -70,6 +70,8 @@ class Settings(BaseModel):
     decisions: Decisions = Decisions()
     lan_cidrs: list[str] = Field(default_factory=lambda: ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.0/8"])
     allowed_sites: list[str] = Field(default_factory=list)
+    # Apps the helper on each PC installs (silently, as SYSTEM) if they are missing.
+    managed_apps: list[Literal["steam", "chrome", "battlenet"]] = Field(default_factory=lambda: ["steam", "chrome"])
     session_secret: str = "dev-secret"
     adguard: AdGuard = AdGuard()
     livekit: LiveKit = LiveKit()

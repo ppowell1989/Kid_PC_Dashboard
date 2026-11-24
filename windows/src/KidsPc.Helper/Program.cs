@@ -17,6 +17,7 @@ builder.Services.AddSingleton<StateCache>();
 builder.Services.AddSingleton<GameLibrary>();
 builder.Services.AddSingleton<Enforcer>();
 builder.Services.AddSingleton<ChromePolicy>();
+builder.Services.AddSingleton<AppInstaller>();
 builder.Services.AddHostedService<HubSync>();
 builder.Services.AddHostedService<PipeServer>();
 builder.Build().Run();

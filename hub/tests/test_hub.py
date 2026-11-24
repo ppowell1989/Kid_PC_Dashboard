@@ -132,3 +132,11 @@ def test_adguard_import_maps_clients_and_skips_noise(client):
     assert adguard.import_entries(app.state.db, s, entries) == 0   # already imported
     row = app.state.db.one("SELECT * FROM visits WHERE source='dns'")
     assert row["domain"] == "www.roblox.com" and row["blocked"] == 1
+
+
+def test_heartbeat_reports_managed_apps(parent):
+    assert parent.get("/api/device/rules", headers=ADAM).json()["managed_apps"] == ["steam", "chrome"]
+    parent.post("/api/device/heartbeat", headers=ADAM, json={"apps": {"steam": {"state": "installing"}, "chrome": {"state": "installed"}}})
+    parent.post("/api/device/heartbeat", headers=ADAM, json={"apps": {"steam": {"state": "installed"}}})
+    adam = next(k for k in parent.get("/api/parent/overview").json()["kids"] if k["id"] == "adam")
+    assert {a["app"]: a["state"] for a in adam["apps"]} == {"chrome": "installed", "steam": "installed"}

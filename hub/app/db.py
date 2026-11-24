@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS invites (
     revoked     INTEGER NOT NULL DEFAULT 0,
     verified_by TEXT DEFAULT ''          -- discord user id when friend_verification = discord_oauth
 );
+CREATE TABLE IF NOT EXISTS device_apps (    -- what the helper reports about managed apps on each PC
+    kid_id TEXT NOT NULL,
+    app    TEXT NOT NULL,
+    state  TEXT NOT NULL,                -- installed / installing / failed / manual
+    detail TEXT DEFAULT '',
+    at     TEXT NOT NULL,
+    PRIMARY KEY (kid_id, app)
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
 

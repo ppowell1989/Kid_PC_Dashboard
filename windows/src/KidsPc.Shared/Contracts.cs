@@ -36,7 +36,8 @@ public sealed record Rules(
     WebRules Web,
     [property: JsonPropertyName("game_pass_enabled")] bool GamePassEnabled,
     [property: JsonPropertyName("pending_requests")] List<PendingRequest> PendingRequests,
-    List<Friend> Friends);
+    List<Friend> Friends,
+    [property: JsonPropertyName("managed_apps")] List<string>? ManagedApps = null);
 
 public sealed record VoiceToken(string Url, string Room, string Token);
 

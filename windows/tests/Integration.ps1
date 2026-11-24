@@ -35,6 +35,7 @@ kids:
   - { id: adam, name: Adam, device_token: dev-adam, extension_token: ext-adam, daily_minutes: { weekday: 90, weekend: 90 }, bedtime: { weekday: "23:59", weekend: "23:59" } }
 decisions: { web_mode: allowlist, game_pass_enabled: false, friend_verification: none, remote_access: lan_only }
 allowed_sites: [wikipedia.org]
+managed_apps: [steam, chrome]
 session_secret: integration-test-session-secret-0123456789
 adguard: { enabled: false }
 livekit: { url: "ws://127.0.0.1:7880", api_url: "http://127.0.0.1:9", api_key: k, api_secret: "integration-test-livekit-secret-0123456789", public_join_base: "http://127.0.0.1:$Port" }
@@ -99,6 +100,19 @@ $bl = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist" -Err
 $al = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome\URLAllowlist" -ErrorAction SilentlyContinue
 Check "chrome allow-list mode: block *" ($bl.'1' -eq "*")
 Check "chrome allow-list includes wikipedia.org" (@($al.PSObject.Properties.Value) -contains "wikipedia.org")
+
+# Managed apps: the helper should install Steam on its own (Chrome is preinstalled on CI runners).
+$steamOk = $false
+for ($i = 0; $i -lt 60 -and -not $steamOk; $i++) {
+  $ov = Invoke-RestMethod "$hub/api/parent/overview" -WebSession $s
+  $apps = @($ov.kids[0].apps)
+  $steamOk = ($apps | Where-Object { $_.app -eq "steam" -and $_.state -eq "installed" }) -ne $null
+  if (($apps | Where-Object { $_.app -eq "steam" -and $_.state -eq "failed" })) { break }
+  if (-not $steamOk) { Start-Sleep 5 }
+}
+Check "helper installed Steam silently and reported it" $steamOk ($apps | ConvertTo-Json)
+Check "steam.exe exists" (Test-Path "${env:ProgramFiles(x86)}\Steam\steam.exe")
+Check "hub shows chrome installed" (($apps | Where-Object { $_.app -eq "chrome" -and $_.state -eq "installed" }) -ne $null)
 
 # Lock: use up the day via a big negative grant is not possible, so approve nothing and set usage by heartbeats is slow;
 # instead flip the kid to 0 minutes by editing config and restarting the hub.

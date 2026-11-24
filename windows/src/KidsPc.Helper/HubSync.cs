@@ -40,7 +40,7 @@ public sealed class StateCache
 }
 
 /// <summary>Every PollSeconds: report what is running, pull rules, enforce them.</summary>
-public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, ILogger<HubSync> log)
+public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, ILogger<HubSync> log)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -51,12 +51,14 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
             var activity = kidHere ? library.CurrentActivity(cache.Rules, Sessions.ConsoleSessionId) : new Activity("", false, []);
             try
             {
-                await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active }, ct);
+                var appStates = apps.Status.ToDictionary(kv => kv.Key, kv => new { state = kv.Value.State, detail = kv.Value.Detail });
+                await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates }, ct);
                 var rules = await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct);
                 if (rules is not null)
                 {
                     cache.Set(rules);
                     chrome.Apply(rules.Web);
+                    apps.Ensure(rules.ManagedApps ?? ["steam", "chrome"]);
                 }
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)

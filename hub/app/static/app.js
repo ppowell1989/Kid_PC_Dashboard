@@ -51,6 +51,7 @@ async function refresh() {
       <div class="big">${fmtMin(t.minutes_left)} left</div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
+      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => `${esc(a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(a.state)}</span>`).join(" · ")}</div>` : ""}
       <div class="actions">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
       </div>

@@ -94,9 +94,15 @@ def kid_or_404(settings: Settings, kid_id: str) -> Kid:
 
 # --------------------------------------------------------------------------- device API
 
+class AppState(BaseModel):
+    state: Literal["installed", "installing", "failed", "manual"]
+    detail: str = Field(default="", max_length=300)
+
+
 class Heartbeat(BaseModel):
     running: str = ""            # title of the foreground game/app, "" when on the home screen
     active: bool = False         # true when a game or Chrome is in use (counts against time)
+    apps: dict[str, AppState] = Field(default_factory=dict)   # managed apps on this PC
 
 
 class KidRequest(BaseModel):
@@ -121,6 +127,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "games": games_for(db, settings, kid.id),
         "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings)},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
+        "managed_apps": settings.managed_apps,
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
         "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
     }
@@ -136,6 +143,10 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO usage(kid_id,day,minutes) VALUES(?,?,1)
                 ON CONFLICT(kid_id,day) DO UPDATE SET minutes = minutes + 1""", (kid.id, rules.day_key(now)))
         counted_at = now_ts
+    for app_name, a in list(hb.apps.items())[:10]:
+        db.x("""INSERT INTO device_apps(kid_id,app,state,detail,at) VALUES(?,?,?,?,?)
+                ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",
+             (kid.id, app_name[:30], a.state, a.detail, now.isoformat()))
     st = today_state(db, settings, kid, now)
     db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked) VALUES(?,?,?,?,?)
             ON CONFLICT(kid_id) DO UPDATE SET seen_at=excluded.seen_at, running=excluded.running,
@@ -211,6 +222,7 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "seen_at": s["seen_at"] if s else None,
             "time": today_state(db, settings, kid).__dict__,
             "pending": db.one("SELECT COUNT(*) n FROM requests WHERE kid_id=? AND state='pending'", (kid.id,))["n"],
+            "apps": db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=? ORDER BY app", (kid.id,)),
         })
     return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump()}
 
