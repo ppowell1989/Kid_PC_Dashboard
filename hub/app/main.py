@@ -69,9 +69,11 @@ async def remote_access_gate(request: Request, call_next):
     response = await call_next(request)
     # Pages and their scripts change with every hub update. Without this a browser keeps showing
     # its saved copy for a while; with it the browser asks each time and usually gets a quick "unchanged".
+    # "private" is for Cloudflare, which the friend's page goes through: with "no-cache" alone it kept the
+    # stylesheet and told browsers to hold it for 4 hours, so friends saw a new page with the old look.
     path = request.url.path
     if path == "/" or path.startswith(("/join/", "/static/")):
-        response.headers.setdefault("Cache-Control", "no-cache")
+        response.headers.setdefault("Cache-Control", "no-cache, private")
     return response
 
 

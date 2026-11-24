@@ -106,7 +106,7 @@ def test_remote_access_gate(client):
 
 def test_pages_are_revalidated_not_served_stale(client):
     for path in ("/", "/static/app.js", "/static/app.css"):
-        assert client.get(path).headers["cache-control"] == "no-cache", path
+        assert client.get(path).headers["cache-control"] == "no-cache, private", path
     assert "cache-control" not in client.get("/healthz").headers
 
 
