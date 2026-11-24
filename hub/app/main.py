@@ -8,6 +8,7 @@ Three audiences:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
 import time
@@ -88,15 +89,74 @@ def with_art(g: dict) -> dict:
     return g
 
 
-async def steam_lookup(appid: str) -> dict:
-    """Name and header image from the Steam store. Best effort: {} if Steam is unreachable."""
+STEAM_CACHE_SECONDS = 24 * 3600
+ADULT_DESCRIPTORS = {3, 4}   # Steam content descriptors: adult-only sexual content, frequent nudity/sexual content
+
+
+async def steam_app(appid: str, db: DB | None = None) -> dict:
+    """Store details for one Steam app, normalized: name, art, ESRB rating, age gate, adult flag.
+    Cached in kv for a day. Best effort: {} if Steam is unreachable or the app doesn't exist."""
+    key = f"steam:{appid}"
+    if db:
+        row = db.one("SELECT value FROM kv WHERE key=?", (key,))
+        if row:
+            cached = json.loads(row["value"])
+            if time.time() - cached.get("_at", 0) < STEAM_CACHE_SECONDS:
+                return cached["app"]
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get("https://store.steampowered.com/api/appdetails", params={"appids": appid, "filters": "basic"})
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get("https://store.steampowered.com/api/appdetails", params={"appids": appid, "l": "english", "cc": "US"})
             d = r.json().get(appid, {})
-        return d.get("data", {}) if d.get("success") else {}
     except Exception:
         return {}
+    if not d.get("success"):
+        return {}
+    data = d["data"]
+    esrb = (data.get("ratings") or {}).get("esrb") or {}
+    desc_ids = set((data.get("content_descriptors") or {}).get("ids") or [])
+    raw_age = str(data.get("required_age") or "0").rstrip("+")
+    age = int(raw_age) if raw_age.isdigit() else 0
+    app_ = {
+        "appid": appid, "name": data.get("name", ""), "type": data.get("type", ""),
+        "image_url": data.get("header_image") or STEAM_ART.format(appid),
+        "description": data.get("short_description", ""),
+        "esrb": (esrb.get("rating") or "").upper(), "esrb_descriptors": esrb.get("descriptors", ""),
+        "content_notes": (data.get("content_descriptors") or {}).get("notes") or "",
+        "age": age, "adult": age >= 18 or bool(desc_ids & ADULT_DESCRIPTORS),
+        "free": bool(data.get("is_free")),
+        "price": ((data.get("price_overview") or {}).get("final_formatted") or ""),
+    }
+    if db:
+        db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+             (key, json.dumps({"_at": time.time(), "app": app_})))
+    return app_
+
+
+async def steam_lookup(appid: str) -> dict:
+    """Name and header image (kept for add_game)."""
+    a = await steam_app(appid)
+    return {"name": a.get("name", ""), "header_image": a.get("image_url", "")} if a else {}
+
+
+async def steam_store_search(q: str) -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get("https://store.steampowered.com/api/storesearch/", params={"term": q[:100], "l": "english", "cc": "US"})
+            return [i for i in r.json().get("items", []) if i.get("type") == "app"][:8]
+    except Exception:
+        return []
+
+
+async def steam_search(q: str, db: DB, kid_safe: bool) -> list[dict]:
+    items = await steam_store_search(q)
+    details = await asyncio.gather(*(steam_app(str(i["id"]), db) for i in items))
+    out = []
+    for i, d in zip(items, details):
+        d = d or {"appid": str(i["id"]), "name": i["name"], "image_url": STEAM_ART.format(i["id"]), "adult": False, "esrb": ""}
+        if kid_safe and (d.get("adult") or d.get("type") not in ("game", None, "")):
+            continue   # never show adult-only store pages, DLC or soundtracks on the kid's screen
+        out.append(d)
+    return out
 
 
 def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
@@ -105,6 +165,20 @@ def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
     if not settings.decisions.game_pass_enabled:
         rows = [r for r in rows if r["launcher"] != "gamepass"]
     return [with_art(r) for r in rows]
+
+
+CLOUDFLARE_FAMILY = {"servers": ["1.1.1.3", "1.0.0.3", "2606:4700:4700::1113", "2606:4700:4700::1003"],
+                     "doh": "https://family.cloudflare-dns.com/dns-query"}
+
+
+def dns_for(settings: Settings) -> dict:
+    """DNS the kid PC must use. servers=[] means leave the PC's DNS alone; doh="" means Chrome secure DNS off."""
+    mode = settings.dns_filter
+    if mode == "adguard" and settings.adguard.dns_ip:
+        return {"filter": "adguard", "servers": [settings.adguard.dns_ip], "doh": ""}
+    if mode == "none":
+        return {"filter": "none", "servers": [], "doh": ""}
+    return {"filter": "cloudflare_family", **CLOUDFLARE_FAMILY}   # also the fallback if adguard has no IP yet
 
 
 def allowed_sites(db: DB, settings: Settings) -> list[str]:
@@ -136,6 +210,7 @@ class KidRequest(BaseModel):
     kind: Literal["game", "time", "site"]
     detail: str = Field(min_length=1, max_length=200)
     note: str = Field(default="", max_length=500)
+    ref: str = Field(default="", pattern=r"^(steam:\d{1,10})?$")   # the exact game the kid picked from search
 
 
 class Visit(BaseModel):
@@ -152,7 +227,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "time": st.__dict__,
         "warning_minutes": rules.WARNING_MINUTES,
         "games": games_for(db, settings, kid.id),
-        "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings)},
+        "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings), "dns": dns_for(settings)},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": settings.managed_apps,
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
@@ -190,8 +265,16 @@ def device_request(req: KidRequest, kid: Kid = Depends(current_device), db: DB =
     dup = db.one("SELECT id FROM requests WHERE kid_id=? AND kind=? AND detail=? AND state='pending'", (kid.id, req.kind, req.detail))
     if dup:
         return {"id": dup["id"], "duplicate": True}
-    rid = db.x("INSERT INTO requests(kid_id,kind,detail,note) VALUES(?,?,?,?)", (kid.id, req.kind, req.detail, req.note))
+    rid = db.x("INSERT INTO requests(kid_id,kind,detail,note,ref) VALUES(?,?,?,?,?)", (kid.id, req.kind, req.detail, req.note, req.ref))
     return {"id": rid}
+
+
+@app.get("/api/device/steam/search")
+async def device_steam_search(q: str, kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
+    """Game search for the kid's "Get more games" screen. Adult-only titles and non-games are filtered out."""
+    if len(q.strip()) < 2:
+        return []
+    return await steam_search(q, db, kid_safe=True)
 
 
 @app.post("/api/device/visits", status_code=204)
@@ -502,15 +585,16 @@ async def add_game(db: DB, g: Game) -> int:
 
 
 @app.get("/api/parent/steam/search")
-async def parent_steam_search(q: str, parent: str = Depends(current_parent)):
+async def parent_steam_search(q: str, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
     """Steam store matches for a game name, so a kid's request can be approved in one step. Best effort."""
-    try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get("https://store.steampowered.com/api/storesearch/", params={"term": q[:100], "l": "english", "cc": "US"})
-            items = r.json().get("items", [])
-    except Exception:
-        return []
-    return [{"appid": str(i["id"]), "name": i["name"], "image_url": STEAM_ART.format(i["id"])} for i in items[:8] if i.get("type") == "app"]
+    return await steam_search(q, db, kid_safe=False)
+
+
+@app.get("/api/parent/steam/app/{appid}")
+async def parent_steam_app(appid: str, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    if not appid.isdigit():
+        raise HTTPException(400)
+    return await steam_app(appid, db)
 
 
 class Approval(BaseModel):

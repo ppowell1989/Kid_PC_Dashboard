@@ -259,3 +259,28 @@ def test_approve_game_request_straight_from_steam(parent, monkeypatch):
     assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "steam_appid": "2868840"}).status_code == 200
     games = parent.get("/api/device/rules", headers=ADAM).json()["games"]
     assert any(g["title"] == "Slay the Spire 2" and g["launch_ref"] == "2868840" for g in games)
+
+
+def test_kid_game_search_hides_adult_titles_and_request_carries_the_pick(parent, monkeypatch):
+    from app import main
+
+    async def store(q):
+        return [{"id": 1, "name": "Fun Game", "type": "app"}, {"id": 2, "name": "Adult Game", "type": "app"}, {"id": 3, "name": "Fun Game OST", "type": "app"}]
+
+    async def app_(appid, db=None):
+        return {"1": {"appid": "1", "name": "Fun Game", "type": "game", "adult": False, "esrb": "E10+", "image_url": "x"},
+                "2": {"appid": "2", "name": "Adult Game", "type": "game", "adult": True, "esrb": "AO", "image_url": "y"},
+                "3": {"appid": "3", "name": "Fun Game OST", "type": "music", "adult": False, "esrb": "", "image_url": "z"}}[appid]
+    monkeypatch.setattr(main, "steam_store_search", store)
+    monkeypatch.setattr(main, "steam_app", app_)
+    kid = parent.get("/api/device/steam/search?q=fun", headers=ADAM).json()
+    assert [g["name"] for g in kid] == ["Fun Game"]
+    assert len(parent.get("/api/parent/steam/search?q=fun").json()) == 3   # parents see every match
+    assert parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "Fun Game", "ref": "steam:1"}).status_code == 201
+    assert parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "x", "ref": "rm -rf"}).status_code == 422
+    assert parent.get("/api/parent/requests").json()[0]["ref"] == "steam:1"
+
+
+def test_rules_carry_a_family_dns_filter_by_default(client):
+    dns = client.get("/api/device/rules", headers=ADAM).json()["web"]["dns"]
+    assert dns["filter"] == "cloudflare_family" and "1.1.1.3" in dns["servers"] and dns["doh"].startswith("https://family.")

@@ -115,6 +115,13 @@ Invoke-RestMethod "$hub/api/parent/kids/adam/pause" -Method Delete -WebSession $
 Start-Sleep 8
 Check "resume unlocks the PC" ((Pipe @{ op = "state" }).data.locked -eq $false)
 
+# Web filter: family DNS on the adapters, Chrome secure DNS pinned to it.
+$dnsSet = @(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { (Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4).ServerAddresses }) -contains "1.1.1.3"
+Check "PC uses the family DNS filter" $dnsSet (Get-DnsClientServerAddress | Out-String)
+$cp = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome"
+Check "chrome secure DNS pinned to the family filter" ($cp.DnsOverHttpsMode -eq "secure" -and $cp.DnsOverHttpsTemplates -like "https://family.*")
+Check "kid game search answers" ((Pipe @{ op = "game_search"; detail = "portal" }).ok)
+
 # Family chat both ways through the pipe.
 Invoke-RestMethod "$hub/api/parent/chat" -Method Post -WebSession $s -ContentType application/json -Body '{"text":"Homework first"}' | Out-Null
 $chat = Pipe @{ op = "chat"; detail = "0" }

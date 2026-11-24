@@ -47,7 +47,7 @@ public sealed class StateCache
 }
 
 /// <summary>Every PollSeconds: report what is running, pull rules, enforce them.</summary>
-public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, ILogger<HubSync> log)
+public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, Enforcer enforcer, ChromePolicy chrome, AppInstaller apps, EventQueue events, CommandRunner commands, Updater updater, NetworkFilter dns, ILogger<HubSync> log)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -61,12 +61,14 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 await events.FlushAsync(http, ct);
                 var appStates = apps.Status.ToDictionary(kv => kv.Key, kv => new { state = kv.Value.State, detail = kv.Value.Detail });
                 appStates["kidspc"] = new { state = updater.Status.State, detail = updater.Status.Detail };
+                appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
                 await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates }, ct);
                 var rules = await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct);
                 if (rules is not null)
                 {
                     cache.Set(rules);
                     chrome.Apply(rules.Web);
+                    dns.Apply(rules.Web.Dns);
                     apps.Ensure(rules.ManagedApps ?? ["steam", "chrome"]);
                     await commands.RunAsync(rules.Commands ?? [], ct);
                 }

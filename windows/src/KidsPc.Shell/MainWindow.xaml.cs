@@ -213,12 +213,39 @@ public partial class MainWindow : Window
     private async void AskForTimeHome(object s, RoutedEventArgs e) =>
         await SendRequest("time", "15", "Asked for 15 more minutes. Waiting for Mom or Dad.");
 
-    private async Task SendRequest(string kind, string detail, string okText, TextBlock? target = null)
+    private async void SearchKeyDown(object s, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) { e.Handled = true; await SearchGamesAsync(); }
+    }
+
+    private async void SearchGames(object s, RoutedEventArgs e) => await SearchGamesAsync();
+
+    private async Task SearchGamesAsync()
+    {
+        var q = AskGameBox.Text.Trim();
+        if (q.Length < 2) return;
+        SearchStatus.Text = "Searching…";
+        SearchResults.Children.Clear();
+        try
+        {
+            var hits = await _helper.GetAsync<List<SteamGame>>(new PipeRequest("game_search", Detail: q)) ?? [];
+            SearchStatus.Text = hits.Count == 0 ? "Nothing found. You can still ask for it by name." : "Tap a game to ask Mom or Dad for it.";
+            foreach (var g in hits)
+            {
+                var label = string.IsNullOrEmpty(g.Esrb) ? g.Name : $"{g.Name}\nRated {g.Esrb}";
+                SearchResults.Children.Add(Tile(label, async () =>
+                    await SendRequest("game", g.Name, $"Sent! Mom or Dad will look at \"{g.Name}\".", SearchStatus, $"steam:{g.Appid}"), image: g.ImageUrl));
+            }
+        }
+        catch (Exception ex) { SearchStatus.Text = $"Search isn't working right now: {ex.Message}"; }
+    }
+
+    private async Task SendRequest(string kind, string detail, string okText, TextBlock? target = null, string? reference = null)
     {
         target ??= StatusLine;
         try
         {
-            await _helper.GetAsync<object>(new PipeRequest("request", Kind: kind, Detail: detail));
+            await _helper.GetAsync<object>(new PipeRequest("request", Kind: kind, Detail: detail, Ref: reference));
             target.Text = okText;
         }
         catch (Exception ex) { target.Text = $"Couldn't send: {ex.Message}"; }

@@ -21,7 +21,10 @@ public sealed record Game(
     string Rating,
     [property: JsonPropertyName("image_url")] string ImageUrl);
 
-public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites);
+public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites, DnsRules? Dns = null);
+
+/// <summary>servers=[] leaves the PC's DNS alone; doh="" turns Chrome's secure DNS off.</summary>
+public sealed record DnsRules(string Filter, List<string> Servers, string Doh);
 
 public sealed record PendingRequest(int Id, string Kind, string Detail, string State,
     [property: JsonPropertyName("created_at")] string CreatedAt);
@@ -67,3 +70,7 @@ public static class Json
 
 public sealed record ChatMessage(long Id, string Sender,
     [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine);
+
+/// <summary>A Steam store match from the hub's kid-safe game search.</summary>
+public sealed record SteamGame(string Appid, string Name,
+    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null);

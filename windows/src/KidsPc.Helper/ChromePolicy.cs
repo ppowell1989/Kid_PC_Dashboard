@@ -16,7 +16,7 @@ public sealed class ChromePolicy(ILogger<ChromePolicy> log)
 
     public void Apply(WebRules web)
     {
-        var fingerprint = web.Mode + "|" + string.Join(",", web.AllowedSites);
+        var fingerprint = web.Mode + "|" + string.Join(",", web.AllowedSites) + "|" + web.Dns?.Doh;
         if (fingerprint == _applied) return;
 
         using var chrome = Registry.LocalMachine.CreateSubKey(Root, writable: true);
@@ -29,7 +29,22 @@ public sealed class ChromePolicy(ILogger<ChromePolicy> log)
             // Chrome internals the extension and policy pages need, plus the approved sites.
             WriteList(chrome, "URLAllowlist", [.. web.AllowedSites, "chrome://*", "accounts.google.com"]);
         }
-        // "filtered": no URL lists; AdGuard blocklists + forced SafeSearch do the work.
+        // "filtered": no URL lists; the DNS filter (see NetworkFilter) + forced SafeSearch do the work.
+
+        // Chrome's own secure DNS: pinned to the family filter so it can't route around the PC's DNS,
+        // or off (when AdGuard on the LAN is the filter, Chrome must use the system resolver).
+        if (!string.IsNullOrEmpty(web.Dns?.Doh))
+        {
+            chrome.SetValue("DnsOverHttpsMode", "secure", RegistryValueKind.String);
+            chrome.SetValue("DnsOverHttpsTemplates", web.Dns.Doh, RegistryValueKind.String);
+            chrome.SetValue("BuiltInDnsClientEnabled", 1, RegistryValueKind.DWord);
+        }
+        else
+        {
+            chrome.SetValue("DnsOverHttpsMode", "off", RegistryValueKind.String);
+            chrome.DeleteValue("DnsOverHttpsTemplates", throwOnMissingValue: false);
+            chrome.SetValue("BuiltInDnsClientEnabled", 0, RegistryValueKind.DWord);
+        }
 
         _applied = fingerprint;
         log.LogInformation("chrome policy set: {Mode}, {Count} allowed sites", web.Mode, web.AllowedSites.Count);

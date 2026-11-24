@@ -52,7 +52,11 @@ async function refresh() {
       <div class="big">${fmtMin(t.minutes_left)} left</div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}</div>
-      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => `${esc(a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(a.state)}</span>${a.state === "failed" ? ` <button class="ghost" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : ""}`).join(" · ")}</div>` : ""}
+      ${k.apps && k.apps.length ? `<div class="muted">PC apps: ${k.apps.map((a) => {
+        const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
+        const retry = !sys && a.state === "failed" ? ` <button class="ghost" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
+        return `${esc(sys || a.app)} <span class="${a.state === "failed" ? "bad" : ""}" title="${esc(a.detail)}">${esc(sys ? a.detail : a.state)}</span>${retry}`;
+      }).join(" · ")}</div>` : ""}
       <div class="actions">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
       </div>
@@ -92,7 +96,7 @@ async function refresh() {
   document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
     if (!d.open) return;
     const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
-    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed" };
+    const label = { stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", browser_blocked: "Closed other browser", web_filter: "Web filter set" };
     const rows = [
       ...a.events.map((e) => ({ at: e.at, text: `${label[e.kind] || e.kind}: ${e.detail}` })),
       ...a.commands.map((c) => ({ at: c.created_at.replace(" ", "T") + "Z", text: `${c.created_by} sent ${c.kind}${c.arg ? ` "${c.arg}"` : ""} (${c.state}${c.result ? ": " + c.result : ""})` })),
@@ -122,7 +126,7 @@ async function loadRequests() {
       ? `<select data-gamefor="${r.id}"><option value="">Choose the game…</option>
            <optgroup label="Already in the catalogue">${games.map((g) => `<option value="${g.id}">${esc(g.title)}</option>`).join("")}</optgroup>
            <optgroup label="Searching Steam…" data-steamfor="${r.id}"></optgroup></select>
-         <img class="art" data-artfor="${r.id}" hidden alt="">` : "";
+         <img class="art" data-artfor="${r.id}" hidden alt=""><div class="muted" data-infofor="${r.id}"></div>` : "";
     return `<div class="card"><b>${esc(kidName(r.kid_id))}</b> asks for ${what}
       ${r.note ? `<div class="muted">"${esc(r.note)}"</div>` : ""}
       <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
@@ -134,12 +138,26 @@ async function loadRequests() {
     const inCat = games.find((g) => g.title.toLowerCase() === r.detail.toLowerCase());
     if (inCat) sel.value = inCat.id;
     let hits = [];
-    try { hits = await api(`/api/parent/steam/search?q=${encodeURIComponent(r.detail)}`); } catch {}
+    const picked = (r.ref || "").startsWith("steam:") ? r.ref.slice(6) : "";
+    try {
+      if (picked) { const a = await api(`/api/parent/steam/app/${picked}`); if (a.appid) hits = [a]; }
+      const more = await api(`/api/parent/steam/search?q=${encodeURIComponent(r.detail)}`);
+      hits = hits.concat(more.filter((h) => h.appid !== picked));
+    } catch {}
+    const info = $(`[data-infofor="${r.id}"]`);
     group.label = hits.length ? "Add from Steam" : "No Steam matches";
-    group.innerHTML = hits.map((h) => `<option value="steam:${h.appid}" data-img="${esc(h.image_url)}">${esc(h.name)}</option>`).join("");
-    const showArt = () => { const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
-      img.hidden = !src; if (src) img.src = src; };
-    if (!sel.value && hits.length) sel.value = `steam:${hits[0].appid}`;
+    const byId = Object.fromEntries(hits.map((h) => [h.appid, h]));
+    group.innerHTML = hits.map((h) => `<option value="steam:${h.appid}" data-img="${esc(h.image_url)}">${esc(h.name)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${h.appid === picked ? " ← the one he picked" : ""}</option>`).join("");
+    const showArt = () => {
+      const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
+      img.hidden = !src; if (src) img.src = src;
+      const h = sel.value.startsWith("steam:") ? byId[sel.value.slice(6)] : null;
+      info.innerHTML = h ? [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${h.esrb_descriptors ? `: ${esc(h.esrb_descriptors)}` : ""}` : "No ESRB rating on Steam",
+        h.adult ? `<span class="bad">Adult content</span>` : "", h.content_notes ? esc(h.content_notes) : "", esc(h.description || ""),
+        h.free ? "Free" : esc(h.price || "")].filter(Boolean).join("<br>") : "";
+    };
+    if (picked && byId[picked]) sel.value = `steam:${picked}`;
+    else if (!sel.value && hits.length) sel.value = `steam:${hits[0].appid}`;
     sel.onchange = showArt; showArt();
   });
   document.querySelectorAll("[data-decide]").forEach((b) => (b.onclick = async () => {

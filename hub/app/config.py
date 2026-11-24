@@ -43,6 +43,7 @@ class Decisions(BaseModel):
 
 class AdGuard(BaseModel):
     enabled: bool = False
+    dns_ip: str = ""                     # AdGuard's DNS address on the LAN (e.g. the TrueNAS IP); PCs use it when enabled
     url: str = "http://adguard:3000"
     username: str = "admin"
     password: str = ""
@@ -82,6 +83,9 @@ class Settings(BaseModel):
     managed_apps: list[Literal["steam", "chrome", "battlenet"]] = Field(default_factory=lambda: ["steam", "chrome"])
     session_secret: str = "dev-secret"
     adguard: AdGuard = AdGuard()
+    # DNS filter the kid PCs use. Until AdGuard runs on the hub, Cloudflare for Families blocks adult
+    # and malware sites (it sees the kids' lookups; AdGuard keeps them local). "none" only for testing.
+    dns_filter: Literal["cloudflare_family", "adguard", "none"] = "cloudflare_family"
     livekit: LiveKit = LiveKit()
     discord_oauth: DiscordOAuth = DiscordOAuth()
     updates: Updates = Updates()

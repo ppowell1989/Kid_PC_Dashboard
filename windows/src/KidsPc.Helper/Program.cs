@@ -20,6 +20,7 @@ builder.Services.AddSingleton<ChromePolicy>();
 builder.Services.AddSingleton<AppInstaller>();
 builder.Services.AddSingleton<EventQueue>();
 builder.Services.AddSingleton<CommandRunner>();
+builder.Services.AddSingleton<NetworkFilter>();
 builder.Services.AddSingleton<Updater>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Updater>());
 builder.Services.AddHostedService<HubSync>();

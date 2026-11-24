@@ -75,13 +75,18 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             case "request":   // ask a parent for a game, more time, or a website
                 if (req.Kind is not ("game" or "time" or "site") || string.IsNullOrWhiteSpace(req.Detail))
                     return new(false, "bad request");
-                var r = await http.PostAsJsonAsync("/api/device/requests", new { kind = req.Kind, detail = req.Detail, note = req.Note ?? "" }, ct);
+                var r = await http.PostAsJsonAsync("/api/device/requests", new { kind = req.Kind, detail = req.Detail, note = req.Note ?? "", @ref = req.Ref ?? "" }, ct);
                 return r.IsSuccessStatusCode ? Ok(new { sent = true }) : new(false, "The hub did not accept the request.");
 
             case "voice_token":
                 if (cache.Snapshot([]).Locked) return new(false, "Voice chat is off while the PC is locked.");
                 var vt = await http.GetFromJsonAsync<VoiceToken>("/api/device/voice-token", Json.Options, ct);
                 return Ok(vt!);
+
+            case "game_search":   // Steam search for "Get more games"; the hub filters out adult-only titles
+                if (string.IsNullOrWhiteSpace(req.Detail)) return Ok(Array.Empty<SteamGame>());
+                var found = await http.GetFromJsonAsync<List<SteamGame>>($"/api/device/steam/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
+                return Ok(found ?? []);
 
             case "chat":      // family chat: messages after id Detail (works while locked, so he can talk to Mom and Dad)
                 var after = long.TryParse(req.Detail, out var a) ? a : 0;

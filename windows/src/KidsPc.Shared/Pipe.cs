@@ -13,7 +13,7 @@ public static class PipeProtocol
     public const string PipeName = "KidsPcHelper";
 }
 
-public sealed record PipeRequest(string Op, string? Kind = null, string? Detail = null, string? Note = null, int? GameId = null);
+public sealed record PipeRequest(string Op, string? Kind = null, string? Detail = null, string? Note = null, int? GameId = null, string? Ref = null);
 
 public sealed record PipeResponse(bool Ok, string? Error = null, JsonElement? Data = null);
 

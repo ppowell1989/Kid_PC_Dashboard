@@ -18,6 +18,10 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
 {
     // Battle.net product codes (as used by Battle.net.exe --exec="launch X") to install folder names.
     // GUESS: extend as you add games to the catalogue.
+    // msedgewebview2.exe (the shell's voice window) is deliberately not on this list.
+    private static readonly HashSet<string> OtherBrowsers = new(StringComparer.OrdinalIgnoreCase)
+        { "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe", "waterfox.exe", "librewolf.exe", "tor.exe" };
+
     private static readonly Dictionary<string, string> BattleNetFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         ["WoW"] = "World of Warcraft",
@@ -118,10 +122,12 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
             if (direct is not null) { found.Add(new(pid, path, "direct", null, direct)); continue; }
             if (Path.GetFileName(path).Equals("chrome.exe", StringComparison.OrdinalIgnoreCase))
                 found.Add(new(pid, path, "chrome", null, null));
+            else if (OtherBrowsers.Contains(Path.GetFileName(path)))
+                found.Add(new(pid, path, "browser", null, null));   // Chrome is the managed browser; others skip its policies
             next:;
         }
 
-        var game = found.FirstOrDefault(p => p.Kind != "chrome");
+        var game = found.FirstOrDefault(p => p.Kind is not ("chrome" or "browser"));
         var title = game?.Approved?.Title
                     ?? (game?.SteamAppId is { } id ? steam.Values.FirstOrDefault(v => v.AppId == id).Name : null)
                     ?? (found.Any(p => p.Kind == "chrome") ? "Chrome" : "");

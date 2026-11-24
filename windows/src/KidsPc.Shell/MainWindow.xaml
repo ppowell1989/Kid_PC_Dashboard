@@ -44,11 +44,14 @@
           <StackPanel x:Name="CataloguePanel" Visibility="Collapsed">
             <TextBlock FontSize="22" Margin="0,0,0,12" Text="Games Mom and Dad have approved"/>
             <WrapPanel x:Name="CatalogueTiles"/>
-            <TextBlock FontSize="22" Margin="0,24,0,12" Text="Want something else?"/>
+            <TextBlock FontSize="22" Margin="0,24,0,12" Text="Want something else? Search for it"/>
             <StackPanel Orientation="Horizontal">
-              <TextBox x:Name="AskGameBox" Width="420" FontSize="18" Padding="10,8"/>
-              <Button Style="{StaticResource Pill}" Margin="12,0,0,0" Content="Ask for this game" Click="AskForGame"/>
+              <TextBox x:Name="AskGameBox" Width="420" FontSize="18" Padding="10,8" KeyDown="SearchKeyDown"/>
+              <Button Style="{StaticResource Pill}" Margin="12,0,0,0" Content="Search" Click="SearchGames"/>
+              <Button Style="{StaticResource Pill}" Margin="12,0,0,0" Content="Ask for it by name" Click="AskForGame"/>
             </StackPanel>
+            <TextBlock x:Name="SearchStatus" FontSize="16" Foreground="{StaticResource Muted}" Margin="0,12,0,0" TextWrapping="Wrap"/>
+            <WrapPanel x:Name="SearchResults" Margin="0,12,0,0"/>
           </StackPanel>
         </StackPanel>
       </ScrollViewer>

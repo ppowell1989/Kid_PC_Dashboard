@@ -117,6 +117,11 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
+MIGRATIONS = [
+    ("requests", "ref", "TEXT DEFAULT ''"),   # e.g. "steam:291550" when the kid picked an exact game
+]
+
+
 class DB:
     def __init__(self, path: str):
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
@@ -124,6 +129,10 @@ class DB:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.executescript(SCHEMA)
+        for table, col, decl in MIGRATIONS:   # columns added after a table first shipped
+            cols = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         self._lock = threading.Lock()
 
     @contextmanager
