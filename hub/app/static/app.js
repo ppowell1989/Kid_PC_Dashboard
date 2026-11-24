@@ -646,11 +646,32 @@ function chatOpen() {
   if ($("#app").hidden) return false;
   return wide.matches ? document.body.classList.contains("chat-open") : !$('[data-panel="chat"]').hidden;
 }
+const pageTitle = document.title;
+// A short two-note sound for a new chat message. Browsers only allow sound after the page has been tapped or
+// clicked once, so a dashboard that was only ever looked at stays silent; the dots and the tab title still show.
+function chatSound() {
+  try {
+    const ctx = chatSound.ctx || (chatSound.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    [[660, 0], [880, 0.16]].forEach(([hz, at]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = hz; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.3);
+      o.start(ctx.currentTime + at); o.stop(ctx.currentTime + at + 0.32);
+    });
+  } catch (e) { /* no sound on this browser */ }
+}
+// The tab title says how many conversations have something new, so it shows with the dashboard in a background tab.
+function chatTitle() {
+  const n = chat.convs.filter((c) => c.last_id > (chat.seen[c.id] || 0) && !(chatOpen() && c.id === chat.conv)).length;
+  document.title = n ? `(${n}) New message \u00B7 ${pageTitle}` : pageTitle;
+}
 function chatSeen() {
   const c = chat.convs.find((x) => x.id === chat.conv);
   if (c) chat.seen[c.id] = c.last_id;
   if (chat.conv === "family" || !chat.convs.length) chat.seen.family = Math.max(chat.seen.family || 0, chat.last);
-  updateChatDot(); renderConvs();
+  updateChatDot(); renderConvs(); chatTitle();
 }
 // The red dot is for the family chat, where messages are for the parents. The other chats get a dot on their button.
 function updateChatDot() {
@@ -681,8 +702,17 @@ async function loadConvs() {
   const first = !chat.convs.length;
   chat.convs = r.convs;
   for (const c of r.convs) if (first || !(c.id in chat.seen)) chat.seen[c.id] = Math.max(chat.seen[c.id] || 0, c.last_id);   // old messages aren't new
+  // A sound once per new message in a conversation that isn't open in front of the parent (any chat, not only Family).
+  chat.told = chat.told || {};
+  let news = false;
+  for (const c of r.convs) {
+    const told = c.id in chat.told ? chat.told[c.id] : chat.seen[c.id] || 0;
+    if (c.last_id > told && !(chatOpen() && c.id === chat.conv && !document.hidden)) news = true;
+    chat.told[c.id] = Math.max(told, c.last_id);
+  }
+  if (news && !first) chatSound();
   if (chatOpen()) { const c = r.convs.find((x) => x.id === chat.conv); if (c) chat.seen[c.id] = c.last_id; }
-  renderConvs(); updateChatDot();
+  renderConvs(); updateChatDot(); chatTitle();
 }
 function renderConvs() {
   const shown = chat.convs.filter((c) => c.kind === "family" || c.count || c.active);
@@ -809,10 +839,10 @@ async function loadChatSettings() {
   }));
 }
 
-let chatTick = 0;  // messages every 4 s with the chat open; the conversation list every 16 s otherwise (for the dots)
+let chatTick = 0;  // messages every 4 s with the chat open; the conversation list every 8 s (for the dots, the tab title and the sound)
 setInterval(() => {
   if ($("#app").hidden) return;
   const open = chatOpen();
   if (open) loadChat().catch(() => {});
-  if (++chatTick % 4 === 0 || (open && chatTick % 2 === 0)) loadConvs().catch(() => {});
+  if (++chatTick % 2 === 0) loadConvs().catch(() => {});
 }, 4000);

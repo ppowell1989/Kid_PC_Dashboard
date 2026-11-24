@@ -20,6 +20,7 @@ public partial class MainWindow
 {
     private readonly DispatcherTimer _chatPoll = new() { Interval = TimeSpan.FromSeconds(4) };
     private readonly Dictionary<string, long> _chatSeen = [];        // per conversation: newest message from someone else he has seen
+    private readonly Dictionary<string, long> _chatTold = [];        // per conversation: newest message a card was shown for
     private readonly Dictionary<long, BitmapSource> _pictures = [];  // chat pictures already fetched
     private List<ChatConv> _convs = [new("family", "Family", "family", 0, 0, true)];
     private ChatList? _chatList;
@@ -33,10 +34,10 @@ public partial class MainWindow
 
     private void StartChat()
     {
-        // Messages every 4 s while open; the list of conversations (for the unread badge) every 12 s.
+        // Messages every 4 s while open; the list of conversations (for the unread badge and the new-message card) every 8 s.
         _chatPoll.Tick += async (_, _) =>
         {
-            if (++_chatTick % 3 == 0 || ChatOpen) await PollConvsAsync();
+            if (++_chatTick % 2 == 0 || ChatOpen) await PollConvsAsync();
             if (ChatOpen) await PollChatAsync();
         };
         _chatPoll.Start();
@@ -56,6 +57,25 @@ public partial class MainWindow
             _convs = list.Convs;
             foreach (var c in _convs)
                 if (!_convsStarted || !_chatSeen.ContainsKey(c.Id)) _chatSeen[c.Id] = c.LastOtherId;   // what was there before isn't "new"
+            // Someone else wrote in a chat he isn't looking at (it is closed, on another conversation, or a game is
+            // covering it): show a card over whatever is on screen and make a sound. Once per message.
+            ChatConv? news = null;
+            foreach (var c in _convs)
+            {
+                var told = _chatTold.GetValueOrDefault(c.Id, _convsStarted ? _chatSeen.GetValueOrDefault(c.Id) : c.LastOtherId);
+                if (c.LastOtherId > told && !(ChatOpen && c.Id == _conv && IsActive)) news = c;
+                _chatTold[c.Id] = Math.Max(told, c.LastOtherId);
+            }
+            if (news is not null)
+            {
+                var to = news.Id;
+                ChatToast.Show(this, "New chat message", news.Kind == "family" ? "Family chat" : news.Title, async () =>
+                {
+                    BringToFront();
+                    if (!ChatOpen) ToggleChat(this, new RoutedEventArgs());
+                    else if (_conv != to) await SwitchConvAsync(to);
+                });
+            }
             _convsStarted = true;
             if (ChatOpen) _chatSeen[_conv] = CurrentConv.LastOtherId;
             if (_convs.All(c => c.Id != _conv)) await SwitchConvAsync("family");   // a parent switched that chat off
