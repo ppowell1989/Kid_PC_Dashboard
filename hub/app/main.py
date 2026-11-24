@@ -254,6 +254,9 @@ class Heartbeat(BaseModel):
     apps: dict[str, AppState] = Field(default_factory=dict)   # managed apps on this PC
     game_id: int | None = None   # catalogue id of the game in that title, when it is one
     voice: Literal["", "family", "friends"] = ""   # voice room the shell has open
+    # Minutes played while the PC couldn't reach the hub (cable out, Wi-Fi off, hub down). The helper keeps
+    # count and sends them with the first heartbeat that gets through, so going offline isn't free time.
+    offline_minutes: int = Field(default=0, ge=0, le=24 * 60)
 
 
 class KidRequest(BaseModel):
@@ -305,6 +308,11 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO usage(kid_id,day,minutes) VALUES(?,?,1)
                 ON CONFLICT(kid_id,day) DO UPDATE SET minutes = minutes + 1""", (kid.id, rules.day_key(now)))
         counted_at = now_ts
+    if hb.offline_minutes:
+        db.x("""INSERT INTO usage(kid_id,day,minutes) VALUES(?,?,?)
+                ON CONFLICT(kid_id,day) DO UPDATE SET minutes = minutes + excluded.minutes""", (kid.id, rules.day_key(now), hb.offline_minutes))
+        db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+             (kid.id, "offline_play", f"{hb.offline_minutes} min played while the PC couldn't reach the hub", now.isoformat()))
     for app_name, a in list(hb.apps.items())[:10]:
         db.x("""INSERT INTO device_apps(kid_id,app,state,detail,at) VALUES(?,?,?,?,?)
                 ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",

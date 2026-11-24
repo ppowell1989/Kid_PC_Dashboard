@@ -499,3 +499,14 @@ def test_extra_time_granted_before_midnight_runs_past_it(parent, monkeypatch):
     assert not t["locked"] and t["minutes_left"] == 10
     now[0] = datetime(2026, 11, 25, 0, 21, tzinfo=TZ)
     assert parent.get("/api/device/rules", headers=ADAM).json()["time"]["lock_reason"] == "bedtime"
+
+
+def test_minutes_played_offline_are_counted_when_the_pc_comes_back(parent):
+    r = parent.post("/api/device/heartbeat", headers=ADAM, json={"running": "Portal 2", "active": True, "offline_minutes": 45}).json()
+    assert r["time"]["used"] == 46 and r["time"]["minutes_left"] == 14
+    ev = parent.get("/api/parent/kids/adam/activity").json()["events"]
+    assert any(e["kind"] == "offline_play" and e["detail"].startswith("45 min") for e in ev)
+    # An ordinary heartbeat adds nothing extra and writes no event.
+    parent.post("/api/device/heartbeat", headers=ADAM, json={"running": "", "active": False})
+    assert len([e for e in parent.get("/api/parent/kids/adam/activity").json()["events"] if e["kind"] == "offline_play"]) == 1
+    assert parent.post("/api/device/heartbeat", headers=ADAM, json={"offline_minutes": 5000}).status_code == 422
