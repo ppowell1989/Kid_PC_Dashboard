@@ -439,6 +439,6 @@ public partial class MainWindow : Window
     private void ShutDown(object s, RoutedEventArgs e)
     {
         if (App.DemoScene is not null) return;
-        Process.Start(new ProcessStartInfo("shutdown.exe", "/s /t 0") { CreateNoWindow = true, UseShellExecute = false });
+        Shutdown("/s /t 0");
     }
 }

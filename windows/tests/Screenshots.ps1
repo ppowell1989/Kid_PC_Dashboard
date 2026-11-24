@@ -7,11 +7,11 @@
 param([Parameter(Mandatory)] [string] $BuildDir, [string] $Out = "shots", [int] $Width = 1920, [int] $Height = 1080)
 $ErrorActionPreference = "Stop"
 # Every screen in the default look, then a few screens in each of the other themes. "theme/scene"; no theme = clean.
-$shots = "home", "catalogue", "ask", "chat", "voice", "family", "warning", "lock", "themes",
-         "blocks/home", "blocks/ask", "blocks/voice", "blocks/family", "blocks/themes",
+$shots = "home", "catalogue", "ask", "chat", "voice", "family", "warning", "lock", "themes", "power",
+         "blocks/home", "blocks/ask", "blocks/voice", "blocks/family", "blocks/themes", "blocks/power",
          "royale/home", "royale/chat", "royale/lock",
          "speedway/home", "speedway/catalogue", "speedway/warning",
-         "retro/home", "retro/voice", "retro/lock"
+         "retro/home", "retro/voice", "retro/lock", "retro/power"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $exe = (Resolve-Path "$BuildDir\Shell\KidsPcShell.exe").Path
 $env:KIDSPC_DEMO_OUT = (Resolve-Path $Out).Path
