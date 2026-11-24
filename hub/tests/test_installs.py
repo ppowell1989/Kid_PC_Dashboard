@@ -118,3 +118,11 @@ def test_switching_the_push_off_keeps_the_approval(parent):
 def test_installs_need_a_parent(client):
     assert client.get("/api/parent/installs").status_code == 401
     assert client.post("/api/parent/installs/adam/1/retry").status_code == 401
+
+
+def test_world_of_warcraft_forever_is_its_own_game():
+    """Parents approve the exact WoW version: Forever is a separate search result with its own code."""
+    from app import gamesearch
+    hits = [g["code"] for g in gamesearch.battlenet_search("wow forever")]
+    assert hits == ["WoWF"]
+    assert {"WoW", "WoWF"} <= {g["code"] for g in gamesearch.battlenet_search("world of warcraft")}

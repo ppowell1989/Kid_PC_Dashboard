@@ -26,7 +26,10 @@ from .db import DB
 # GUESS on some codes and folders: extend here and in windows/src/KidsPc.Helper/GameLibrary.cs together.
 # steam: the same game's Steam app id, where it has one, so results merge and get Steam's art.
 BATTLENET = [
-    {"code": "WoW",  "title": "World of Warcraft",          "esrb": "T", "aliases": ["wow", "warcraft"]},
+    {"code": "WoW",  "title": "World of Warcraft",          "esrb": "T", "aliases": ["wow", "warcraft", "wow retail"]},
+    # Battle.net shows these as "Game Version" choices under World of Warcraft; here each one is its own game, so
+    # parents approve exactly the version they mean. GUESS: "WoWF" is a fan-reported code; Blizzard hasn't published it.
+    {"code": "WoWF", "title": "World of Warcraft: Forever",  "esrb": "T", "aliases": ["wow forever", "warcraft forever", "wow"]},
     {"code": "Pro",  "title": "Overwatch 2",                 "esrb": "T", "steam": "2357570", "aliases": ["overwatch"]},
     {"code": "WTCG", "title": "Hearthstone",                 "esrb": "T"},
     {"code": "Hero", "title": "Heroes of the Storm",         "esrb": "T"},

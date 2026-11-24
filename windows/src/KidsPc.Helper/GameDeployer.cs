@@ -334,7 +334,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
     private static readonly Dictionary<string, int> BattleNetSizesGb = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["WoW"] = 100, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
+        ["WoW"] = 100, ["WoWF"] = 70, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
         ["W3"] = 30, ["D3"] = 25, ["OSI"] = 30, ["ANBS"] = 10, ["WLBY"] = 40, ["RTRO"] = 2,
     };   // keep in step with BattleNetFolders in GameLibrary.cs
 
