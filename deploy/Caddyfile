@@ -6,7 +6,7 @@ voice.example.com {                      # GUESS: your domain
 	handle @livekit {
 		reverse_proxy livekit:7880
 	}
-	@friend path /join/* /api/voice/join/* /static/app.css
+	@friend path /join/* /api/voice/join/* /static/app.css /static/fonts/*
 	handle @friend {
 		reverse_proxy hub:8080 {
 			header_up X-Real-IP {remote_host}
