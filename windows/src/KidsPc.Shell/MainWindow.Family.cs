@@ -18,6 +18,12 @@ public partial class MainWindow
     private void ShowFamilyPanel() =>
         FamilyPanel.Visibility = FamilyCards.Children.Count > 0 && CataloguePanel.Visibility != Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
 
+    private void RedrawFamily()
+    {
+        _familySig = "";
+        if (_state?.Rules is { } r) BuildFamily(r);
+    }
+
     private void BuildFamily(Rules rules)
     {
         var family = rules.Family ?? [];
@@ -87,8 +93,7 @@ public partial class MainWindow
             {
                 _askedThisSession.Add(f.GameTitle);
                 await SendRequest("game", f.GameTitle, $"Sent! Mom or Dad will look at \"{f.GameTitle}\".", reference: f.AskRef);
-                _familySig = "";
-                BuildFamily(rules);
+                RedrawFamily();
             }, enabled: !asked));
         }
         if (rules.FamilyVoice)

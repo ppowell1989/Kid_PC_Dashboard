@@ -236,8 +236,7 @@ public partial class MainWindow : Window
     {
         DrawBackdrop();
         Recolour(HomeTiles); Recolour(CatalogueTiles); Recolour(SearchResults);
-        _familySig = "";   // family cards set a few colours in code: rebuild them in the new look
-        if (_state?.Rules is { } r) BuildFamily(r);
+        RedrawFamily();   // family cards set a few colours in code: rebuild them in the new look
         if (_state?.Rules is { } rules) { SetTicker(rules.Kid.Name); ShowFuel(rules.Time); }
         if (ThemeOverlay.Visibility == Visibility.Visible) BuildThemeChoices();
     }
@@ -403,10 +402,12 @@ public partial class MainWindow : Window
             {
                 if (_voice != w) return;
                 _voice = null; _voiceRoom = "";
+                RedrawFamily();
                 try { await _helper.GetAsync<object>(new PipeRequest("voice_state", Detail: "")); } catch { /* helper restarting */ }
             };
             _voice = w; _voiceRoom = room;
             w.Show();
+            RedrawFamily();   // the Talk button turns into "You're in family voice" straight away
             try { await _helper.GetAsync<object>(new PipeRequest("voice_state", Detail: room)); } catch { /* only feeds the Family row */ }
         }
         catch (Exception ex) { StatusLine.Text = ex.Message; }
