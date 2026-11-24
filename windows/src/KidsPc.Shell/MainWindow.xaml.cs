@@ -22,7 +22,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _poll.Tick += async (_, _) => await RefreshAsync();
-        Loaded += async (_, _) => { await RefreshAsync(); _poll.Start(); StartChat(); };
+        Loaded += async (_, _) => { DrawSpace(); await RefreshAsync(); _poll.Start(); StartChat(); };
+        SizeChanged += (_, _) => DrawSpace();
     }
 
     private async Task RefreshAsync()

@@ -4,20 +4,27 @@
         Title="Home" WindowStyle="None" ResizeMode="NoResize" WindowState="Maximized"
         Topmost="False" ShowInTaskbar="False" Background="{StaticResource Bg}">
   <Grid>
+    <!-- Starfield and planets (drawn in code, MainWindow.Space.cs) -->
+    <Canvas x:Name="Stars" IsHitTestVisible="False" ClipToBounds="True"/>
+
     <!-- ======================= Home / catalogue ======================= -->
     <DockPanel Margin="48,36">
       <Grid DockPanel.Dock="Top" Margin="0,0,0,28">
         <StackPanel>
-          <TextBlock x:Name="Greeting" FontSize="40" FontWeight="SemiBold" Text="Hi!"/>
+          <TextBlock x:Name="Greeting" FontSize="52" FontFamily="{StaticResource Display}" Foreground="{StaticResource Rainbow}" Text="Hi!">
+            <TextBlock.Effect><DropShadowEffect Color="#FF2E97" BlurRadius="18" ShadowDepth="0" Opacity="0.6"/></TextBlock.Effect>
+          </TextBlock>
           <TextBlock x:Name="Clock" FontSize="18" Foreground="{StaticResource Muted}"/>
         </StackPanel>
         <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center">
-          <TextBlock x:Name="TimeLeft" FontSize="36" FontWeight="SemiBold" HorizontalAlignment="Right" Text="--"/>
+          <TextBlock x:Name="TimeLeft" FontSize="48" FontFamily="{StaticResource Display}" Foreground="{StaticResource Warn}" HorizontalAlignment="Right" Text="--">
+            <TextBlock.Effect><DropShadowEffect Color="#FFD23F" BlurRadius="16" ShadowDepth="0" Opacity="0.5"/></TextBlock.Effect>
+          </TextBlock>
           <TextBlock x:Name="TimeLeftLabel" FontSize="16" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Text="left today"/>
         </StackPanel>
       </Grid>
 
-      <Border x:Name="MessageBanner" DockPanel.Dock="Top" Background="{StaticResource Accent}" CornerRadius="10"
+      <Border x:Name="MessageBanner" DockPanel.Dock="Top" Background="{StaticResource Neon}" CornerRadius="16"
               Padding="16,10" Margin="0,0,0,12" Visibility="Collapsed">
         <DockPanel>
           <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Background="Transparent" Content="OK" Click="DismissMessage"/>
@@ -25,7 +32,7 @@
         </DockPanel>
       </Border>
 
-      <Border x:Name="WarningBanner" DockPanel.Dock="Top" Background="{StaticResource Warn}" CornerRadius="10"
+      <Border x:Name="WarningBanner" DockPanel.Dock="Top" Background="{StaticResource Warn}" CornerRadius="16"
               Padding="16,10" Margin="0,0,0,20" Visibility="Collapsed">
         <TextBlock x:Name="WarningText" Foreground="#1B1D21" FontSize="18" FontWeight="SemiBold"/>
       </Border>
@@ -42,9 +49,9 @@
         <StackPanel>
           <WrapPanel x:Name="HomeTiles"/>
           <StackPanel x:Name="CataloguePanel" Visibility="Collapsed">
-            <TextBlock FontSize="22" Margin="0,0,0,12" Text="Games Mom and Dad have approved"/>
+            <TextBlock FontSize="26" FontFamily="{StaticResource Display}" Foreground="{StaticResource Cyan}" Margin="0,0,0,14" Text="Games Mom and Dad have approved"/>
             <WrapPanel x:Name="CatalogueTiles"/>
-            <TextBlock FontSize="22" Margin="0,24,0,12" Text="Want something else? Search for it"/>
+            <TextBlock FontSize="26" FontFamily="{StaticResource Display}" Foreground="{StaticResource Cyan}" Margin="0,28,0,14" Text="Want something else? Search the galaxy"/>
             <StackPanel Orientation="Horizontal">
               <TextBox x:Name="AskGameBox" Width="420" FontSize="18" Padding="10,8" KeyDown="SearchKeyDown"/>
               <Button Style="{StaticResource Pill}" Margin="12,0,0,0" Content="Search" Click="SearchGames"/>
@@ -58,9 +65,9 @@
     </DockPanel>
 
     <!-- ======================= Lock screen ======================= -->
-    <Grid x:Name="LockOverlay" Background="#F0101317" Visibility="Collapsed">
+    <Grid x:Name="LockOverlay" Background="#EE07051E" Visibility="Collapsed">
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="560">
-        <TextBlock x:Name="LockTitle" FontSize="44" FontWeight="SemiBold" TextAlignment="Center" Text="Time's up for today"/>
+        <TextBlock x:Name="LockTitle" FontSize="52" FontFamily="{StaticResource Display}" Foreground="{StaticResource Rainbow}" TextAlignment="Center" Text="Time's up for today"/>
         <TextBlock x:Name="LockSub" FontSize="20" Foreground="{StaticResource Muted}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,28"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
           <Button Style="{StaticResource Pill}" Content="Ask for 15 more minutes" Tag="15" Click="AskForTime"/>
@@ -83,7 +90,7 @@
         </StackPanel>
       </Button>
       <Border x:Name="ChatPanel" Visibility="Collapsed" Width="400" Height="500" Background="{StaticResource Card}"
-              BorderBrush="#2C3340" BorderThickness="1" CornerRadius="14" Padding="14">
+              BorderBrush="#4B3BB0" BorderThickness="2" CornerRadius="20" Padding="14">
         <DockPanel>
           <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
             <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Content="Hide" Click="ToggleChat"/>

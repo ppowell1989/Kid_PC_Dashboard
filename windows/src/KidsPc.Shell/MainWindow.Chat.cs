@@ -66,8 +66,8 @@ public partial class MainWindow
         if (!m.Mine)
             stack.Children.Add(new TextBlock { Text = m.Sender, FontSize = 12, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(4, 0, 0, 2) });
         var bg = m.Mine ? (Brush)FindResource("Accent")
-               : m.KidId is null ? new SolidColorBrush(Color.FromRgb(0x2A, 0x31, 0x3A))   // Mom or Dad
-               : new SolidColorBrush(Color.FromRgb(0x1F, 0x4A, 0x35));                    // brother
+               : m.KidId is null ? new SolidColorBrush(Color.FromRgb(0x3B, 0x2A, 0x8F))   // Mom or Dad
+               : new SolidColorBrush(Color.FromRgb(0x0E, 0x6B, 0x7A));                    // brother
         stack.Children.Add(new Border
         {
             Background = bg, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 6, 10, 6),
