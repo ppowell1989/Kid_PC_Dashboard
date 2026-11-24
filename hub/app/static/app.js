@@ -249,12 +249,26 @@ $("#gameForm [name=launcher]").onchange = (e) => {
   $("#gameForm [name=title]").placeholder = steam ? "Leave blank for Steam: filled in from the store" : "";
 };
 
+// navigator.clipboard only exists on https pages, and the dashboard is usually opened over plain http on the
+// home network, so fall back to the old select-and-copy way.
+async function copyText(text) {
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch { /* fall through */ }
+  const t = document.createElement("textarea");
+  t.value = text; t.readOnly = true; t.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  (document.querySelector("dialog[open]") || document.body).appendChild(t);
+  t.select(); t.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { /* not allowed */ }
+  t.remove();
+  return ok;
+}
+
 async function loadInvites() {
   const inv = await api("/api/parent/invites");
   $("#invites").innerHTML = inv.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} ${i.revoked ? '<span class="tagline bad">Revoked</span>' : ""}
     <div class="muted">${esc(i.link)}</div>
     ${i.revoked ? "" : `<div class="actions"><button data-copy="${esc(i.link)}">Copy link</button><button class="ghost" data-revoke="${esc(i.code)}">Revoke</button></div>`}</li>`).join("") || `<li class="muted">No invites yet.</li>`;
-  document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => (b.textContent = "Copied"))));
+  document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
   document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites(); }));
 }
 $("#inviteForm").onsubmit = async (e) => {
