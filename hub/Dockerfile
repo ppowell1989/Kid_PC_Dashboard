@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 WORKDIR /srv
+# ffmpeg turns chat video clips into small MP4s without location data (app/chat.py save_video).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
