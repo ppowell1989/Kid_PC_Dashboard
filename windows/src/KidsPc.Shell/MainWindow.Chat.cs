@@ -66,13 +66,13 @@ public partial class MainWindow
         if (!m.Mine)
             stack.Children.Add(new TextBlock { Text = m.Sender, FontSize = 12, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(4, 0, 0, 2) });
         var bg = m.Mine ? (Brush)FindResource("Accent")
-               : m.KidId is null ? new SolidColorBrush(Color.FromRgb(0x3B, 0x2A, 0x8F))   // Mom or Dad
-               : new SolidColorBrush(Color.FromRgb(0x0E, 0x6B, 0x7A));                    // brother
+               : m.KidId is null ? Brushes.White                                           // Mom or Dad
+               : new SolidColorBrush(Color.FromRgb(0xDD, 0xF4, 0xEA));                    // brother
         stack.Children.Add(new Border
         {
-            Background = bg, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 6, 10, 6),
+            Background = bg, CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 7, 12, 8),
             HorizontalAlignment = stack.HorizontalAlignment,
-            Child = new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, FontSize = 16, Foreground = Brushes.White },
+            Child = new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, FontSize = 16, Foreground = m.Mine ? Brushes.White : (Brush)FindResource("Text") },
         });
         if (DateTimeOffset.TryParse(m.At, out var at))
             stack.Children.Add(new TextBlock { Text = at.ToString("h:mm tt"), FontSize = 11, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(4, 2, 4, 0), HorizontalAlignment = stack.HorizontalAlignment });

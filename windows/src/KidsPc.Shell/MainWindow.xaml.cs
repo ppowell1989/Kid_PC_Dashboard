@@ -24,10 +24,10 @@ public partial class MainWindow : Window
         _poll.Tick += async (_, _) => await RefreshAsync();
         Loaded += async (_, _) =>
         {
-            DrawSpace(); await RefreshAsync(); _poll.Start(); StartChat();
+            DrawBackdrop(); await RefreshAsync(); _poll.Start(); StartChat();
             if (App.DemoScene is { } scene) await ShowDemoSceneAsync(scene);
         };
-        SizeChanged += (_, _) => DrawSpace();
+        SizeChanged += (_, _) => DrawBackdrop();
     }
 
     private async Task RefreshAsync()
@@ -57,7 +57,6 @@ public partial class MainWindow : Window
         Greeting.Text = $"Hi, {rules.Kid.Name}!";
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
         ShowFuel(t);
-        SetTicker(rules.Kid.Name);
         StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
 
         if (t.Warn)
@@ -160,11 +159,13 @@ public partial class MainWindow : Window
         catch { return Art[url] = null; }
     }
 
-    /// <summary>The neon frame colours tiles take in turn.</summary>
-    private static readonly Color[] TileColours =
+    /// <summary>Soft poster colours for tiles that have no art (Web, voice chat, a game with no picture), taken in turn.</summary>
+    private static readonly (Color From, Color To)[] Posters =
     [
-        Color.FromRgb(0x22, 0xE4, 0xFF), Color.FromRgb(0xFF, 0x2E, 0x97), Color.FromRgb(0xFF, 0xD2, 0x3F),
-        Color.FromRgb(0x7D, 0xFF, 0x5A), Color.FromRgb(0xFF, 0x8A, 0x00), Color.FromRgb(0x9B, 0x5C, 0xFF),
+        (Color.FromRgb(0x5B, 0x8D, 0xFF), Color.FromRgb(0x3D, 0x6B, 0xF5)),   // blue
+        (Color.FromRgb(0x3F, 0xC9, 0x9A), Color.FromRgb(0x1F, 0xA9, 0x71)),   // green
+        (Color.FromRgb(0xFF, 0xB6, 0x5C), Color.FromRgb(0xF2, 0x8C, 0x28)),   // orange
+        (Color.FromRgb(0x9D, 0x86, 0xFF), Color.FromRgb(0x7C, 0x5C, 0xFC)),   // violet
     ];
 
     /// <summary>A tile: art (or an icon on a poster colour) on top, the name on a plate below.
@@ -176,14 +177,14 @@ public partial class MainWindow : Window
         var plate = new StackPanel();
         plate.Children.Add(new TextBlock
         {
-            Text = lines[0], FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
+            Text = lines[0], FontSize = 20, FontFamily = (FontFamily)Application.Current.Resources["Display"],
             TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap, MaxHeight = 50, LineHeight = 24,
         });
         if (lines.Length > 1)
             plate.Children.Add(new TextBlock
             {
-                Text = lines[1].Replace("\n", "  \u2022  "), FontSize = 13, Margin = new Thickness(0, 1, 0, 0),
-                FontFamily = (FontFamily)Application.Current.Resources["Display"], TextTrimming = TextTrimming.CharacterEllipsis,
+                Text = lines[1].Replace("\n", "  \u2022  "), FontSize = 15, Margin = new Thickness(0, 1, 0, 0),
+                Foreground = (Brush)Application.Current.Resources["Muted"], TextTrimming = TextTrimming.CharacterEllipsis,
             });
         var b = new Button
         {
@@ -197,28 +198,23 @@ public partial class MainWindow : Window
         return b;
     }
 
-    /// <summary>Gives each tile in a row the next frame colour, and matches its caption and poster to it.</summary>
+    /// <summary>Gives each tile with no art the next poster colour.</summary>
     private static void Recolour(Panel tiles)
     {
         var i = 0;
-        foreach (var b in tiles.Children.OfType<Button>())
+        foreach (var b in tiles.Children.OfType<Button>().Where(b => b.Background is not ImageBrush))
         {
-            var c = TileColours[i++ % TileColours.Length];
-            var brush = new SolidColorBrush(c);
-            b.BorderBrush = brush;
-            if (b.Content is StackPanel { Children.Count: > 1 } plate && plate.Children[1] is TextBlock caption) caption.Foreground = brush;
-            if (b.Background is not ImageBrush)
-                b.Background = new RadialGradientBrush(Color.FromArgb(0xFF, c.R, c.G, c.B), Color.FromRgb((byte)(c.R / 5), (byte)(c.G / 6), (byte)(c.B / 3 + 20)))
-                    { GradientOrigin = new Point(0.3, 0.25), Center = new Point(0.4, 0.4), RadiusX = 0.9, RadiusY = 0.9 };
+            var (from, to) = Posters[i++ % Posters.Length];
+            b.Background = new LinearGradientBrush(from, to, 45);
         }
     }
 
-    /// <summary>The time left as a fuel gauge: green, then amber, then red.</summary>
+    /// <summary>The time left as a bar: green, then amber, then red.</summary>
     private void ShowFuel(TimeState t)
     {
         var total = Math.Max(1, t.Allowance + t.Granted);
         var left = Math.Clamp((double)t.MinutesLeft / total, 0, 1);
-        FuelFill.Width = Math.Round(348 * left);
+        FuelFill.Width = Math.Round(FuelLane.Width * left);
         FuelFill.Background = (Brush)FindResource(t.Warn || left <= 0.12 ? "FuelEmpty" : left <= 0.34 ? "FuelLow" : "FuelOk");
     }
 
