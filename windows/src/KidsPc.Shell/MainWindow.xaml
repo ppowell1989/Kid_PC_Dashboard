@@ -25,6 +25,7 @@
       <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,20">
         <Button Style="{StaticResource Pill}" Content="My games" Click="ShowHome"/>
         <Button Style="{StaticResource Pill}" Content="Get more games" Click="ShowCatalogue"/>
+        <Button Style="{StaticResource Pill}" Content="Ask for more time" Tag="15" Click="AskForTimeHome"/>
       </StackPanel>
 
       <TextBlock x:Name="StatusLine" DockPanel.Dock="Bottom" Foreground="{StaticResource Muted}" FontSize="14"/>

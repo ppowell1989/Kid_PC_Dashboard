@@ -145,6 +145,9 @@ public partial class MainWindow : Window
     private async void AskForTime(object s, RoutedEventArgs e) =>
         await SendRequest("time", (string)((Button)s).Tag, "Sent! Waiting for Mom or Dad.", LockStatus);
 
+    private async void AskForTimeHome(object s, RoutedEventArgs e) =>
+        await SendRequest("time", "15", "Asked for 15 more minutes. Waiting for Mom or Dad.");
+
     private async Task SendRequest(string kind, string detail, string okText, TextBlock? target = null)
     {
         target ??= StatusLine;
