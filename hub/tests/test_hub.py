@@ -461,3 +461,41 @@ def test_approve_game_request_with_a_battlenet_pick(parent):
     rid = parent.post("/api/device/requests", headers=ADAM, json={"kind": "game", "detail": "Hearthstone"}).json()["id"]
     assert parent.post(f"/api/parent/requests/{rid}", json={"approve": True, "ref": "battlenet:WTCG"}).status_code == 200
     assert [x["launch_ref"] for x in parent.get("/api/device/rules", headers=ADAM).json()["games"]] == ["WTCG"]
+
+
+# --- bedtime holds through the night ------------------------------------------------------------
+
+def test_midnight_does_not_unlock_a_day_with_no_windows():
+    from app import rules
+    rule = rules.DayRule(daily_minutes=90, bedtime="20:30")
+    same = lambda wd: rule
+    at = lambda d, h, m: datetime(2026, 11, d, h, m, tzinfo=TZ)
+    for now in (at(25, 0, 5), at(25, 3, 0), at(25, 5, 59)):
+        st = rules.compute(rule, now, used=0, granted=0, rule_for=same)
+        assert st.locked and st.lock_reason == "bedtime" and st.minutes_left == 0, now
+        assert st.next_play == at(25, 6, 0).isoformat()
+    st = rules.compute(rule, at(25, 6, 0), used=0, granted=0, rule_for=same)
+    assert not st.locked and st.minutes_left == 90
+    # After bedtime the lock screen can say when play starts again.
+    assert rules.compute(rule, at(24, 21, 0), used=0, granted=0, rule_for=same).next_play == at(25, 6, 0).isoformat()
+
+
+def test_no_bedtime_the_night_before_leaves_the_small_hours_open():
+    from app import rules
+    rule = rules.DayRule(daily_minutes=90, bedtime="")
+    st = rules.compute(rule, datetime(2026, 11, 25, 0, 30, tzinfo=TZ), used=0, granted=0, rule_for=lambda wd: rule)
+    assert not st.locked
+
+
+def test_extra_time_granted_before_midnight_runs_past_it(parent, monkeypatch):
+    from app import rules
+    now = [datetime(2026, 11, 24, 23, 50, tzinfo=TZ)]
+    monkeypatch.setattr(rules, "local_now", lambda tz: now[0])
+    assert parent.get("/api/device/rules", headers=ADAM).json()["time"]["lock_reason"] == "bedtime"
+    parent.post("/api/parent/kids/adam/grant", json={"minutes": 30})
+    assert not parent.get("/api/device/rules", headers=ADAM).json()["time"]["locked"]
+    now[0] = datetime(2026, 11, 25, 0, 10, tzinfo=TZ)
+    t = parent.get("/api/device/rules", headers=ADAM).json()["time"]
+    assert not t["locked"] and t["minutes_left"] == 10
+    now[0] = datetime(2026, 11, 25, 0, 21, tzinfo=TZ)
+    assert parent.get("/api/device/rules", headers=ADAM).json()["time"]["lock_reason"] == "bedtime"

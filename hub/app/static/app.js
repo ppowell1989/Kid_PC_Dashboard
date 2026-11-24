@@ -431,7 +431,7 @@ function windowRow(w = { start: "15:30", end: "17:30" }) {
 }
 function wireWindows() {
   const box = $("#ptWindows");
-  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time before bedtime.</p>`;
+  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time from 6 AM until bedtime.</p>`;
   box.querySelectorAll("[data-delwin]").forEach((b) => (b.onclick = () => { b.closest(".winrow").remove(); wireWindows(); }));
 }
 

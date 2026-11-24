@@ -103,7 +103,10 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     day = rules.day_key(now)
     used = (db.one("SELECT minutes FROM usage WHERE kid_id=? AND day=?", (kid.id, day)) or {}).get("minutes", 0)
     g = db.one("SELECT COALESCE(SUM(minutes),0) AS m, MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, day))
-    late_until = datetime.fromisoformat(g["u"]) if g and g["u"] else None
+    # Extra time approved late at night may run past midnight, so last night's "play until" still counts.
+    y = db.one("SELECT MAX(until) AS u FROM grants WHERE kid_id=? AND day=?", (kid.id, rules.day_key(now - timedelta(days=1))))
+    untils = [u for u in (g["u"] if g else "", y["u"] if y else "") if u]
+    late_until = datetime.fromisoformat(max(untils)) if untils else None
     p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
     paused_until = datetime.fromisoformat(p["until"]) if p else None
     return rules.compute(rule_for(db, kid, now.weekday()), now, used, g["m"] if g else 0, late_until, paused_until,
