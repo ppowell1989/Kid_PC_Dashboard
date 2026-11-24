@@ -14,7 +14,7 @@ public partial class VoiceWindow : Window
 {
     private const string Host = "kidspc.local";
 
-    public VoiceWindow(VoiceToken vt, string kidName)
+    public VoiceWindow(VoiceToken vt, string kidName, string theme)
     {
         InitializeComponent();
         Loaded += async (_, _) =>
@@ -38,7 +38,7 @@ public partial class VoiceWindow : Window
             core.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith($"https://{Host}/")) e.Cancel = true; };
             core.NewWindowRequested += (_, e) => e.Handled = true;
 
-            var hash = $"url={Uri.EscapeDataString(vt.Url)}&token={Uri.EscapeDataString(vt.Token)}&name={Uri.EscapeDataString(kidName)}";
+            var hash = $"url={Uri.EscapeDataString(vt.Url)}&token={Uri.EscapeDataString(vt.Token)}&name={Uri.EscapeDataString(kidName)}&theme={Uri.EscapeDataString(theme)}";
             if (DemoOut is not null) core.NavigationCompleted += async (_, e) => await SaveDemoShotAsync(core, e);
             core.Navigate($"https://{Host}/voice.html#{hash}");
           }

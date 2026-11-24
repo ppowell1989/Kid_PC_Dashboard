@@ -1,0 +1,239 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- "Chunky" control shapes: thick frames and buttons with a hard lower edge that sink when pressed.
+       Colours, fonts and corner sizes come from the theme that pulls this file in (Themes\*.xaml), always by
+       DynamicResource so a theme can be swapped while the shell is running. -->
+
+  <Style x:Key="Heading" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="FontSize" Value="26"/>
+    <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+  </Style>
+
+  <!-- Big titles get the theme's hard drop edge. -->
+  <Style x:Key="Title" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="Foreground" Value="{DynamicResource TitleBrush}"/>
+    <Setter Property="Effect" Value="{DynamicResource TitleEffect}"/>
+  </Style>
+
+  <!-- The hard edge under a card. -->
+  <Style x:Key="Shadow" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Line}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RCard}"/>
+    <Setter Property="Margin" Value="0,9,0,-9"/>
+    <Setter Property="Opacity" Value="0.55"/>
+  </Style>
+
+  <Style x:Key="CardBox" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Card}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    <Setter Property="BorderThickness" Value="4"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RCard}"/>
+  </Style>
+
+  <Style x:Key="NavTray" TargetType="Border">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+
+  <Style TargetType="ScrollBar">
+    <Setter Property="Width" Value="12"/>
+    <Setter Property="MinWidth" Value="12"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ScrollBar">
+          <Border Background="Transparent" CornerRadius="{DynamicResource RButton}">
+            <Track x:Name="PART_Track" IsDirectionReversed="True">
+              <Track.Thumb>
+                <Thumb>
+                  <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                      <Border CornerRadius="{DynamicResource RButton}" Background="{DynamicResource Thumb}"/>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Track.Thumb>
+            </Track>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType="TextBox">
+    <Setter Property="Background" Value="{DynamicResource Well}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+    <Setter Property="CaretBrush" Value="{DynamicResource Text}"/>
+    <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    <Setter Property="BorderThickness" Value="3"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Body}"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="bd" CornerRadius="{DynamicResource RButton}" Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Game tile: art on top, name plate below, thick frame with a hard lower edge. Lifts on hover.
+       Background = the art (or a poster colour), BorderBrush = the frame colour, Tag = an icon glyph for tiles with no art. -->
+  <Style x:Key="Tile" TargetType="Button">
+    <Setter Property="Width" Value="338"/>
+    <Setter Property="Height" Value="240"/>
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    <Setter Property="Margin" Value="0,0,22,20"/>
+    <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+    <Setter Property="RenderTransform"><Setter.Value><ScaleTransform/></Setter.Value></Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Border Margin="0,10,0,0" CornerRadius="{DynamicResource RTile}" Background="{TemplateBinding BorderBrush}" Opacity="0.45"/>
+            <Border x:Name="b" Margin="0,0,0,10" CornerRadius="{DynamicResource RTile}" Background="{DynamicResource Card}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="4">
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <Border CornerRadius="{DynamicResource RTileTop}" Background="{TemplateBinding Background}"/>
+                <TextBlock Text="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" FontFamily="{DynamicResource Icons}"
+                           FontSize="72" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <Border Grid.Row="1" MinHeight="62" Padding="16,8,16,10" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="0,3,0,0">
+                  <ContentPresenter VerticalAlignment="Center"/>
+                </Border>
+              </Grid>
+            </Border>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.05" Duration="0:0:0.15"/>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.05" Duration="0:0:0.15"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.2"/>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.2"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="b" Property="Margin" Value="0,7,0,3"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="b" Property="BorderBrush" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Chunky push button. Background = the face colour; it sinks onto its dark edge when pressed. -->
+  <Style x:Key="Pill" TargetType="Button">
+    <Setter Property="Padding" Value="22,10,22,10"/>
+    <Setter Property="Margin" Value="0,0,12,0"/>
+    <Setter Property="FontSize" Value="17"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+    <Setter Property="BorderBrush" Value="#55FFFFFF"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid>
+            <Border Margin="0,6,0,0" CornerRadius="{DynamicResource RButton}" Background="{TemplateBinding Background}"/>
+            <Border Margin="0,6,0,0" CornerRadius="{DynamicResource RButton}" Background="#80000000"/>
+            <Border x:Name="p" Margin="0,0,0,6" CornerRadius="{DynamicResource RButton}" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="2" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <Border x:Name="o" Margin="0,0,0,6" CornerRadius="{DynamicResource RButton}" Background="White" Opacity="0" IsHitTestVisible="False"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="o" Property="Opacity" Value="0.14"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="p" Property="BorderBrush" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="p" Property="Margin" Value="0,5,0,1"/>
+              <Setter TargetName="o" Property="Margin" Value="0,5,0,1"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.5"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Top tabs: chunky buttons. Tag="on" marks the page you are on. -->
+  <Style x:Key="Nav" TargetType="Button">
+    <Setter Property="Height" Value="62"/>
+    <Setter Property="Padding" Value="26,0"/>
+    <Setter Property="FontSize" Value="19"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Grid Margin="0,0,10,0">
+            <Border x:Name="e" Margin="0,7,0,0" CornerRadius="{DynamicResource RButton}" Background="{DynamicResource Line}" Opacity="0.6"/>
+            <Border x:Name="f" Margin="0,0,0,7" CornerRadius="{DynamicResource RButton}" Background="{DynamicResource Card}"
+                    BorderBrush="{DynamicResource Line}" BorderThickness="3" Padding="{TemplateBinding Padding}">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Border>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="f" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            </Trigger>
+            <Trigger Property="Tag" Value="on">
+              <Setter TargetName="f" Property="Background" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="f" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="e" Property="Background" Value="{DynamicResource Accent}"/>
+              <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="f" Property="BorderBrush" Value="White"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="f" Property="Margin" Value="0,5,0,2"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>

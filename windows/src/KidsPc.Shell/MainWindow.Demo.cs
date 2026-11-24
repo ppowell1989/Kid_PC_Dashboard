@@ -24,6 +24,9 @@ public partial class MainWindow
             case "chat":
                 ToggleChat(this, new RoutedEventArgs());
                 break;
+            case "themes":
+                OpenThemes(this, new RoutedEventArgs());
+                break;
             case "voice":
                 OpenVoice();   // voice.html shows a made-up room when the token says "demo"
                 break;

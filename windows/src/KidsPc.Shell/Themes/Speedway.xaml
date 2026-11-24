@@ -1,0 +1,54 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+  <!-- Speedway: a dark racing look. Asphalt greys, orange accent, square-shouldered type.
+       A theme is this one file: a set of colours, fonts and corner sizes, plus which control shapes to use
+       (Styles\Flat.xaml or Styles\Chunky.xaml). To add a theme, copy this file, change the values, and add a
+       line to Theme.All in Theme.cs. Every key below must be present. -->
+  <ResourceDictionary.MergedDictionaries>
+    <ResourceDictionary Source="/KidsPcShell;component/Styles/Flat.xaml"/>
+  </ResourceDictionary.MergedDictionaries>
+
+  <LinearGradientBrush x:Key="Bg" StartPoint="0,0" EndPoint="1,1">
+    <GradientStop Color="#14171C" Offset="0"/>
+    <GradientStop Color="#1F242C" Offset="1"/>
+  </LinearGradientBrush>
+  <SolidColorBrush x:Key="Card" Color="#272D38"/>
+  <SolidColorBrush x:Key="Well" Color="#1A1F27"/>
+  <SolidColorBrush x:Key="Line" Color="#3A4250"/>
+  <SolidColorBrush x:Key="Thumb" Color="#4A5362"/>
+  <SolidColorBrush x:Key="Text" Color="#F2F4F7"/>
+  <SolidColorBrush x:Key="Muted" Color="#9AA4B2"/>
+  <SolidColorBrush x:Key="Accent" Color="#FF6A00"/>
+  <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="AccentSoft" Color="#40FF6A00"/>
+  <SolidColorBrush x:Key="AccentLine" Color="#FF6A00"/>
+  <SolidColorBrush x:Key="Good" Color="#2ED47A"/>
+  <SolidColorBrush x:Key="Bad" Color="#FF4D4F"/>
+  <SolidColorBrush x:Key="WarnSoft" Color="#FFC400"/>
+  <SolidColorBrush x:Key="WarnLine" Color="#FFC400"/>
+  <SolidColorBrush x:Key="WarnText" Color="#1A1300"/>
+  <SolidColorBrush x:Key="Scrim" Color="#CC0A0C10"/>
+  <SolidColorBrush x:Key="TitleBrush" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="BubbleParent" Color="#343C4A"/>
+  <SolidColorBrush x:Key="BubbleSibling" Color="#1F4D3A"/>
+  <SolidColorBrush x:Key="BubbleText" Color="#F2F4F7"/>
+  <SolidColorBrush x:Key="FuelOk" Color="#2ED47A"/>
+  <SolidColorBrush x:Key="FuelLow" Color="#FFC400"/>
+  <SolidColorBrush x:Key="FuelEmpty" Color="#FF4D4F"/>
+
+  <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Russo One, Segoe UI Semibold, Segoe UI</FontFamily>
+  <FontFamily x:Key="Body">/KidsPcShell;component/Assets/Fonts/#Nunito Text, Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="TileTitleFont">/KidsPcShell;component/Assets/Fonts/#Russo One, Segoe UI Semibold, Segoe UI</FontFamily>
+
+  <CornerRadius x:Key="RCard">10</CornerRadius>
+  <CornerRadius x:Key="RTile">10</CornerRadius>
+  <CornerRadius x:Key="RTileTop">7,7,0,0</CornerRadius>
+  <CornerRadius x:Key="RButton">8</CornerRadius>
+
+  <!-- Poster colours for tiles with no art, taken in turn. -->
+  <x:Array x:Key="PosterColours" Type="Color"><Color>#FF6A00</Color><Color>#1E90FF</Color><Color>#2ED47A</Color><Color>#B45CFF</Color></x:Array>
+  <!-- Which backdrop MainWindow.Backdrop.cs draws, and whether the bottom ticker shows. -->
+  <sys:String x:Key="Backdrop">track</sys:String>
+  <Visibility x:Key="TickerVisibility">Collapsed</Visibility>
+</ResourceDictionary>

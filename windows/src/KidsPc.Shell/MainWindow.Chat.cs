@@ -62,20 +62,21 @@ public partial class MainWindow
 
     private UIElement Bubble(ChatMessage m)
     {
+        // Colours are tied to the theme by name, so old bubbles follow when the kid picks another look.
         var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 8), HorizontalAlignment = m.Mine ? HorizontalAlignment.Right : HorizontalAlignment.Left, MaxWidth = 300 };
-        if (!m.Mine)
-            stack.Children.Add(new TextBlock { Text = m.Sender, FontSize = 12, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(4, 0, 0, 2) });
-        var bg = m.Mine ? (Brush)FindResource("Accent")
-               : m.KidId is null ? Brushes.White                                           // Mom or Dad
-               : new SolidColorBrush(Color.FromRgb(0xDD, 0xF4, 0xEA));                    // brother
-        stack.Children.Add(new Border
+        TextBlock Small(string text, Thickness margin)
         {
-            Background = bg, CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 7, 12, 8),
-            HorizontalAlignment = stack.HorizontalAlignment,
-            Child = new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, FontSize = 16, Foreground = m.Mine ? Brushes.White : (Brush)FindResource("Text") },
-        });
-        if (DateTimeOffset.TryParse(m.At, out var at))
-            stack.Children.Add(new TextBlock { Text = at.ToString("h:mm tt"), FontSize = 11, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(4, 2, 4, 0), HorizontalAlignment = stack.HorizontalAlignment });
+            var t = new TextBlock { Text = text, FontSize = 12, Margin = margin, HorizontalAlignment = stack.HorizontalAlignment };
+            t.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+            return t;
+        }
+        if (!m.Mine) stack.Children.Add(Small(m.Sender, new Thickness(4, 0, 0, 2)));
+        var words = new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, FontSize = 16 };
+        words.SetResourceReference(TextBlock.ForegroundProperty, m.Mine ? "OnAccent" : "BubbleText");
+        var bubble = new Border { CornerRadius = new CornerRadius(14), Padding = new Thickness(12, 7, 12, 8), HorizontalAlignment = stack.HorizontalAlignment, Child = words };
+        bubble.SetResourceReference(Border.BackgroundProperty, m.Mine ? "Accent" : m.KidId is null ? "BubbleParent" : "BubbleSibling");   // me / Mom or Dad / brother
+        stack.Children.Add(bubble);
+        if (DateTimeOffset.TryParse(m.At, out var at)) stack.Children.Add(Small(at.ToString("h:mm tt"), new Thickness(4, 2, 4, 0)));
         return stack;
     }
 

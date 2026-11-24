@@ -17,6 +17,8 @@ public partial class App : Application
         if (i >= 0 && i + 1 < e.Args.Length) int.TryParse(e.Args[i + 1], out _restarts);
         var d = Array.IndexOf(e.Args, "--demo");
         if (d >= 0) DemoScene = d + 1 < e.Args.Length ? e.Args[d + 1] : "home";
+        var th = Array.IndexOf(e.Args, "--theme");   // demo runs can ask for a look; otherwise the kid's saved choice
+        Theme.Load(th >= 0 && th + 1 < e.Args.Length ? e.Args[th + 1] : null);
         // This program IS the Windows shell for the kid's account (see setup\Set-KidShell.ps1).
         // If it ever crashes, start a fresh copy rather than leave a black screen.
         DispatcherUnhandledException += (_, args) =>

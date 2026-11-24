@@ -6,35 +6,64 @@
 <!-- GUESS: pinned LiveKit browser client. To avoid the CDN, download this file into Assets\ and point at it. -->
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.7/dist/livekit-client.umd.min.js"></script>
 <style>
-  /* The kid's voice room, in the shell's clean light theme. The window frame and Leave button are drawn by VoiceWindow.xaml. */
+  /* The kid's voice room. It takes the shell's theme from "theme=" in the address (see Theme.cs); each theme is
+     a handful of values below. The window frame and Leave button are drawn by VoiceWindow.xaml. */
   @font-face { font-family: "Nunito Text"; src: url("Fonts/NunitoText.ttf"); }
   @font-face { font-family: "Nunito Display"; src: url("Fonts/NunitoDisplay.ttf"); }
+  @font-face { font-family: "Bungee"; src: url("Fonts/Bungee.ttf"); }
+  @font-face { font-family: "Pixelify Display"; src: url("Fonts/PixelifyDisplay.ttf"); }
+  @font-face { font-family: "Lilita One"; src: url("Fonts/LilitaOne.ttf"); }
+  @font-face { font-family: "Russo One"; src: url("Fonts/RussoOne.ttf"); }
+  body {   /* clean, the default */
+    --bg: #f4f7fc; --card: #fff; --frame: transparent; --text: #18213a; --muted: #67718b;
+    --accent: #3d6bf5; --on-accent: #fff; --ok: #1fa971; --ok-text: #17865a; --bad: #e5484d; --bad-text: #c92a2f; --off: #c5cedf;
+    --r: 20px; --edge: 0 4px 16px #3a4a7820; --display: "Nunito Display"; --o2: #1fa971; --o3: #f28c28; --o4: #7c5cfc;
+  }
+  body.speedway {
+    --bg: #171a20; --card: #272d38; --text: #f2f4f7; --muted: #9aa4b2; --accent: #ff6a00; --ok: #2ed47a; --ok-text: #2ed47a;
+    --bad: #ff4d4f; --bad-text: #ff7a7c; --off: #4a5362; --r: 10px; --edge: 0 4px 16px #0006; --display: "Russo One"; --o2: #1e90ff; --o3: #2ed47a; --o4: #b45cff;
+  }
+  body.retro {
+    --bg: radial-gradient(120% 70% at 85% 0%, #2a1260, #0b0628 55%, #03020f); --card: #1a1060; --frame: #4b3bb0; --text: #fff; --muted: #b3a9e8;
+    --accent: #ff2e97; --ok: #7dff5a; --ok-text: #7dff5a; --bad: #ff4d5e; --bad-text: #ff8a95; --off: #5a5380;
+    --r: 20px; --edge: 0 6px 0 #0a063088; --display: "Bungee"; --o2: #22e4ff; --o3: #ffd23f; --o4: #9b5cff;
+  }
+  body.blocks {
+    --bg: linear-gradient(#6fbdee, #c4e8fb); --card: #f3ecdc; --frame: #5b4632; --text: #2b2118; --muted: #6b5a48;
+    --accent: #4e9a2e; --ok: #2f7d1f; --ok-text: #2f7d1f; --bad: #c0392b; --bad-text: #a02a1e; --off: #a89a84;
+    --r: 4px; --edge: 0 6px 0 #5b463288; --display: "Pixelify Display"; --o2: #3d8bd4; --o3: #c9772b; --o4: #7a5ac2;
+  }
+  body.royale {
+    --bg: linear-gradient(135deg, #3a1fa8, #6a2bd9 50%, #1e7fe5); --card: #1b1464; --frame: #7b6cff; --text: #fff; --muted: #cfc8ff;
+    --accent: #ffd400; --on-accent: #1a1240; --ok: #5cff8a; --ok-text: #5cff8a; --bad: #ff4d6d; --bad-text: #ff9db0; --off: #5a52a0;
+    --r: 18px; --edge: 0 6px 0 #0e083088; --display: "Lilita One"; --o2: #40c4ff; --o3: #ff6fd8; --o4: #5cff8a;
+  }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin: 0; padding: 20px 22px; color: #18213a; font: 17px/1.4 "Nunito Text", "Segoe UI", sans-serif; user-select: none; overflow: hidden;
-         background: #f4f7fc; display: flex; flex-direction: column; gap: 16px; }
-  #status { margin: 0; font-size: 16px; color: #67718b; }
-  #status.bad { color: #c92a2f; }
+  body { margin: 0; padding: 20px 22px; color: var(--text); font: 17px/1.4 "Nunito Text", "Segoe UI", sans-serif; user-select: none; overflow: hidden;
+         background: var(--bg); display: flex; flex-direction: column; gap: 16px; }
+  #status { margin: 0; font-size: 16px; color: var(--muted); }
+  #status.bad { color: var(--bad-text); }
   #people { list-style: none; margin: -10px; padding: 10px; flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: start; overflow-y: auto; }
-  .person { background: #fff; border: 3px solid transparent; border-radius: 20px; padding: 18px 8px 14px; text-align: center; box-shadow: 0 4px 16px #3a4a7820; }
-  .orb { width: 72px; height: 72px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center;
-         font: 32px/1 "Nunito Display", "Segoe UI", sans-serif; color: #fff; background: #3d6bf5; }
-  .person:nth-child(4n+2) .orb { background: #1fa971; }
-  .person:nth-child(4n+3) .orb { background: #f28c28; }
-  .person:nth-child(4n+4) .orb { background: #7c5cfc; }
-  .pname { font: 18px "Nunito Display", "Segoe UI", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pname small { color: #67718b; font: 15px "Nunito Text", "Segoe UI", sans-serif; }
-  .pstate { font-size: 14px; color: #67718b; margin-top: 2px; }
-  .person.talking { border-color: #1fa971; }
-  .person.talking .pstate { color: #17865a; }
-  .person.muted .orb { background: #c5cedf; }
-  .person.muted .pstate { color: #c92a2f; }
-  .empty { grid-column: 1 / -1; color: #67718b; text-align: center; padding: 20px 10px; border: 2px dashed #c5cedf; border-radius: 20px; }
-  #mute { width: 100%; font: 19px/1 "Nunito Display", "Segoe UI", sans-serif; padding: 17px 10px 18px; border: 0; border-radius: 16px; cursor: pointer;
-          color: #fff; background: #3d6bf5; }
+  .person { background: var(--card); border: 3px solid var(--frame); border-radius: var(--r); padding: 18px 8px 14px; text-align: center; box-shadow: var(--edge); }
+  .orb { width: 72px; height: 72px; margin: 0 auto 10px; border-radius: min(50%, calc(var(--r) * 4)); display: grid; place-items: center;
+         font: 32px/1 var(--display), "Segoe UI", sans-serif; color: #fff; background: var(--accent); }
+  .person:nth-child(4n+2) .orb { background: var(--o2); }
+  .person:nth-child(4n+3) .orb { background: var(--o3); }
+  .person:nth-child(4n+4) .orb { background: var(--o4); }
+  .pname { font: 18px var(--display), "Segoe UI", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname small { color: var(--muted); font: 15px "Nunito Text", "Segoe UI", sans-serif; }
+  .pstate { font-size: 14px; color: var(--muted); margin-top: 2px; }
+  .person.talking { border-color: var(--ok); }
+  .person.talking .pstate { color: var(--ok-text); }
+  .person.muted .orb { background: var(--off); }
+  .person.muted .pstate { color: var(--bad-text); }
+  .empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 20px 10px; border: 2px dashed var(--off); border-radius: var(--r); }
+  #mute { width: 100%; font: 19px/1 var(--display), "Segoe UI", sans-serif; padding: 17px 10px 18px; border: 0; border-radius: var(--r); cursor: pointer;
+          color: var(--on-accent, #fff); background: var(--accent); }
   #mute:hover { filter: brightness(.95); }
-  #mute.off { background: #e5484d; }
-  .hint { margin: 0; color: #67718b; font-size: 14px; text-align: center; }
+  #mute.off { color: #fff; background: var(--bad); }
+  .hint { margin: 0; color: var(--muted); font-size: 14px; text-align: center; }
 </style>
 </head>
 <body>
@@ -47,6 +76,7 @@ const p = new URLSearchParams(location.hash.slice(1));
 const LK = window.LivekitClient;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[<>&"]/g, "");
+if (/^[a-z]+$/.test(p.get("theme") || "")) document.body.classList.add(p.get("theme"));   // the shell's current look
 const demo = p.get("url") === "demo";   // "KidsPcShell.exe --demo voice": a made-up room, for looking at the design
 
 // One card per person. The only microphone anyone can switch is their own.
