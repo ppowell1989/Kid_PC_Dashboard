@@ -114,8 +114,8 @@ public sealed class Updater(HttpClient http, ILogger<Updater> log) : BackgroundS
         if (Directory.Exists(staged)) Directory.Delete(staged, true);
         ZipFile.ExtractToDirectory(zip, staged);
         File.Delete(zip);
-        if (!File.Exists(Path.Combine(staged, "Helper", "KidsPcHelper.exe")))
-            throw new InvalidDataException("build is missing Helper\\KidsPcHelper.exe");
+        if (!File.Exists(Path.Combine(staged, "Helper", "KidsPcHelper.exe")) || !File.Exists(Path.Combine(staged, "Shell", "KidsPcShell.exe")))
+            throw new InvalidDataException("build is incomplete (missing the helper or shell)");
         await File.WriteAllTextAsync(Path.Combine(staged, ".ok"), build.Version, ct);
     }
 

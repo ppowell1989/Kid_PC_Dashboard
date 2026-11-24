@@ -45,7 +45,7 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="b" CornerRadius="20" Background="{TemplateBinding Background}" BorderBrush="#4B3BB0" BorderThickness="2" Padding="16">
-              <Border.Effect><DropShadowEffect x:Name="glow" Color="#22E4FF" BlurRadius="0" ShadowDepth="0" Opacity="0.9"/></Border.Effect>
+              <Border.Effect><DropShadowEffect Color="#22E4FF" BlurRadius="0" ShadowDepth="0" Opacity="0.9"/></Border.Effect>
               <ContentPresenter VerticalAlignment="Bottom" TextElement.FontFamily="{StaticResource Display}"/>
             </Border>
             <ControlTemplate.Triggers>
@@ -54,7 +54,7 @@
                 <Trigger.EnterActions>
                   <BeginStoryboard>
                     <Storyboard>
-                      <DoubleAnimation Storyboard.TargetName="glow" Storyboard.TargetProperty="BlurRadius" To="28" Duration="0:0:0.15"/>
+                      <DoubleAnimation Storyboard.TargetName="b" Storyboard.TargetProperty="(Border.Effect).(DropShadowEffect.BlurRadius)" To="28" Duration="0:0:0.15"/>
                       <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.05" Duration="0:0:0.15"/>
                       <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.05" Duration="0:0:0.15"/>
                     </Storyboard>
@@ -63,7 +63,7 @@
                 <Trigger.ExitActions>
                   <BeginStoryboard>
                     <Storyboard>
-                      <DoubleAnimation Storyboard.TargetName="glow" Storyboard.TargetProperty="BlurRadius" To="0" Duration="0:0:0.2"/>
+                      <DoubleAnimation Storyboard.TargetName="b" Storyboard.TargetProperty="(Border.Effect).(DropShadowEffect.BlurRadius)" To="0" Duration="0:0:0.2"/>
                       <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.2"/>
                       <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.2"/>
                     </Storyboard>
@@ -95,13 +95,14 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="p" CornerRadius="22" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
-              <Border.Effect><DropShadowEffect x:Name="pg" Color="#FF2E97" BlurRadius="10" ShadowDepth="0" Opacity="0.7"/></Border.Effect>
+              <Border.Effect><DropShadowEffect Color="#FF2E97" BlurRadius="10" ShadowDepth="0" Opacity="0.7"/></Border.Effect>
               <ContentPresenter HorizontalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="pg" Property="BlurRadius" Value="22"/>
-                <Setter TargetName="pg" Property="Opacity" Value="1"/>
+                <Setter TargetName="p" Property="Effect">
+                  <Setter.Value><DropShadowEffect Color="#FF2E97" BlurRadius="22" ShadowDepth="0" Opacity="1"/></Setter.Value>
+                </Setter>
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="p" Property="Opacity" Value="0.8"/>
