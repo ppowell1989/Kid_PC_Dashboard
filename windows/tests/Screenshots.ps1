@@ -7,8 +7,8 @@
 param([Parameter(Mandatory)] [string] $BuildDir, [string] $Out = "shots", [int] $Width = 1920, [int] $Height = 1080)
 $ErrorActionPreference = "Stop"
 # Every screen in the default look, then a few screens in each of the other themes. "theme/scene"; no theme = clean.
-$shots = "home", "catalogue", "ask", "chat", "voice", "warning", "lock", "themes",
-         "blocks/home", "blocks/ask", "blocks/voice", "blocks/themes",
+$shots = "home", "catalogue", "ask", "chat", "voice", "family", "warning", "lock", "themes",
+         "blocks/home", "blocks/ask", "blocks/voice", "blocks/family", "blocks/themes",
          "royale/home", "royale/chat", "royale/lock",
          "speedway/home", "speedway/catalogue", "speedway/warning",
          "retro/home", "retro/voice", "retro/lock"
@@ -31,7 +31,7 @@ foreach ($shot in $shots) {
   Remove-Item "$Out\voice-page.txt" -ErrorAction SilentlyContinue
   $p = Start-Process $exe -ArgumentList "--demo", $scene, "--theme", $theme -PassThru
   Start-Sleep 9     # window up, game art downloaded
-  if ($scene -eq "voice") {
+  if ($scene -in "voice", "family") {
     # The voice room is a WebView2 page. Its first start on a fresh machine is slow, so wait until the shell
     # reports that the page has loaded (it writes voice-page.txt in demo runs).
     for ($i = 0; $i -lt 40 -and -not (Test-Path "$Out\voice-page.txt"); $i++) { Start-Sleep 1 }

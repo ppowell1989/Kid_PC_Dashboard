@@ -82,6 +82,11 @@
 
       <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="-20,-14,-20,0" Padding="20,14,20,0">
         <StackPanel>
+          <!-- Family: what his brother is playing, Join, and the family voice room (cards built in MainWindow.Family.cs) -->
+          <StackPanel x:Name="FamilyPanel" Visibility="Collapsed" Margin="0,0,0,24">
+            <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,14" Text="Family"/>
+            <WrapPanel x:Name="FamilyCards"/>
+          </StackPanel>
           <WrapPanel x:Name="HomeTiles"/>
           <StackPanel x:Name="CataloguePanel" Visibility="Collapsed">
             <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,16" Text="Games Mom and Dad have approved"/>

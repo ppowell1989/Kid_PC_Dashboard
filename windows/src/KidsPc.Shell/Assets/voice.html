@@ -70,14 +70,16 @@
 <p id="status">Connecting…</p>
 <ul id="people"></ul>
 <button id="mute">Mute my mic</button>
-<p class="hint">This button only changes your own microphone. Friends join with the link Mom or Dad sent them.</p>
+<p class="hint" id="hint">This button only changes your own microphone. Friends join with the link Mom or Dad sent them.</p>
 <script>
 const p = new URLSearchParams(location.hash.slice(1));
 const LK = window.LivekitClient;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[<>&"]/g, "");
 if (/^[a-z]+$/.test(p.get("theme") || "")) document.body.classList.add(p.get("theme"));   // the shell's current look
-const demo = p.get("url") === "demo";   // "KidsPcShell.exe --demo voice": a made-up room, for looking at the design
+const demo = p.get("url") === "demo";
+const family = p.get("room") === "family";   // the family room: brothers only, no invite links
+if (family) $("#hint").textContent = "This button only changes your own microphone. Only your family can join this room.";   // "KidsPcShell.exe --demo voice": a made-up room, for looking at the design
 
 // One card per person. The only microphone anyone can switch is their own.
 function draw(people, micOn) {
@@ -85,7 +87,7 @@ function draw(people, micOn) {
       <div class="orb">${esc(x.name).slice(0, 1).toUpperCase()}</div>
       <div class="pname">${esc(x.name)}${x.me ? " <small>(you)</small>" : ""}</div>
       <div class="pstate">${x.muted ? "mic off" : x.talking ? "talking" : "listening"}</div></li>`).join("")
-    + (people.length < 2 ? `<li class="empty">Waiting for a friend to join…</li>` : "");
+    + (people.length < 2 ? `<li class="empty">Waiting for ${family ? "family" : "a friend"} to join…</li>` : "");
   $("#status").textContent = people.length < 2 ? "You're in. Nobody else is here yet." : "Connected";
   $("#mute").textContent = micOn ? "Mute my mic" : "Unmute my mic";
   $("#mute").classList.toggle("off", !micOn);
@@ -93,7 +95,8 @@ function draw(people, micOn) {
 
 if (demo) {
   let on = true;
-  const show = () => draw([{ name: p.get("name") || "Adam", me: true, muted: !on }, { name: "Max", talking: true }, { name: "Oliver", muted: true }], on);
+  const others = family ? [{ name: "Barrett", talking: true }] : [{ name: "Max", talking: true }, { name: "Oliver", muted: true }];
+  const show = () => draw([{ name: p.get("name") || "Adam", me: true, muted: !on }, ...others], on);
   $("#mute").onclick = () => { on = !on; show(); };
   show();
 } else if (!LK) {

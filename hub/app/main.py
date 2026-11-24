@@ -227,6 +227,8 @@ class Heartbeat(BaseModel):
     running: str = ""            # title of the foreground game/app, "" when on the home screen
     active: bool = False         # true when a game or Chrome is in use (counts against time)
     apps: dict[str, AppState] = Field(default_factory=dict)   # managed apps on this PC
+    game_id: int | None = None   # catalogue id of the game in that title, when it is one
+    voice: Literal["", "family", "friends"] = ""   # voice room the shell has open
 
 
 class KidRequest(BaseModel):
@@ -257,6 +259,8 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
         "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
+        "family": family_for(db, settings, kid),
+        "family_voice": family_settings(db)["voice"],
     }
 
 
@@ -275,10 +279,11 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
                 ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",
              (kid.id, app_name[:30], a.state, a.detail, now.isoformat()))
     st = today_state(db, settings, kid, now)
-    db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked) VALUES(?,?,?,?,?)
+    game_id = hb.game_id if hb.game_id is not None and db.one("SELECT 1 FROM games WHERE id=?", (hb.game_id,)) else None
+    db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked,game_id,voice) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(kid_id) DO UPDATE SET seen_at=excluded.seen_at, running=excluded.running,
-            counted_at=excluded.counted_at, locked=excluded.locked""",
-         (kid.id, now.isoformat(), hb.running, counted_at, int(st.locked)))
+            counted_at=excluded.counted_at, locked=excluded.locked, game_id=excluded.game_id, voice=excluded.voice""",
+         (kid.id, now.isoformat(), hb.running, counted_at, int(st.locked), game_id, hb.voice if not st.locked else ""))
     return {"time": st.__dict__}
 
 
@@ -428,6 +433,96 @@ def device_voice_token(kid: Kid = Depends(current_device), settings: Settings = 
     """The kid's own token for his voice room. One room per kid: friends join his room."""
     return {"url": settings.livekit.url, "room": f"room-{kid.id}",
             "token": livekit_token(settings, f"kid-{kid.id}", kid.name, f"room-{kid.id}")}
+
+
+# Family: brothers see each other, join the same game, talk in one family voice room ----------
+
+FAMILY_ROOM = "family-room"   # kid friend rooms are room-<kid id>, so this can't clash
+FAMILY_DEFAULTS = {"see": True, "join": True, "voice": True}
+ONLINE_WINDOW = timedelta(minutes=3)
+
+
+def family_settings(db: DB) -> dict:
+    row = db.one("SELECT value FROM kv WHERE key='family'")
+    return {**FAMILY_DEFAULTS, **(json.loads(row["value"]) if row else {})}
+
+
+def presence(db: DB, settings: Settings, kid: Kid) -> dict:
+    """What one kid is up to right now, from his PC's last heartbeat."""
+    s = db.one("SELECT * FROM status WHERE kid_id=?", (kid.id,))
+    online = bool(s) and rules.local_now(settings.timezone) - datetime.fromisoformat(s["seen_at"]) < ONLINE_WINDOW
+    return {"id": kid.id, "name": kid.name, "online": online,
+            "running": s["running"] if online else "",
+            "game_id": s["game_id"] if online else None,
+            "voice": (s["voice"] or "") if online else "",
+            "locked": bool(s["locked"]) if online else False}
+
+
+def family_for(db: DB, settings: Settings, kid: Kid) -> list[dict]:
+    """The other kids, as this kid's shell shows them. join_game is set only when the game his brother
+    is playing is approved for him too (the same check the helper makes before installing)."""
+    fam = family_settings(db)
+    if not fam["see"]:
+        return []
+    mine = {g["id"]: g for g in games_for(db, settings, kid.id)}
+    out = []
+    for sib in settings.kids:
+        if sib.id == kid.id:
+            continue
+        p = presence(db, settings, sib)
+        game = db.one("SELECT * FROM games WHERE id=?", (p["game_id"],)) if p["game_id"] else None
+        p["in_family_voice"] = p.pop("voice") == "family"
+        p["game_title"] = game["title"] if game else ""
+        p["join_game"] = mine.get(p["game_id"]) if fam["join"] and p["game_id"] and not p["locked"] else None
+        # Not approved for him: the shell can turn the Join into a request to Mom or Dad.
+        p["ask_ref"] = f"steam:{game['launch_ref']}" if game and not p["join_game"] and game["launcher"] == "steam" else ""
+        del p["game_id"]
+        out.append(p)
+    return out
+
+
+@app.get("/api/device/family-voice-token")
+def device_family_voice_token(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The family voice room: both kids (and nobody else) can join it without an invite link."""
+    if not family_settings(db)["voice"]:
+        raise HTTPException(403, "Family voice is turned off. Ask Mom or Dad.")
+    if today_state(db, settings, kid).locked:
+        raise HTTPException(403, "Voice chat is off while the PC is locked.")
+    return {"url": settings.livekit.url, "room": FAMILY_ROOM,
+            "token": livekit_token(settings, f"kid-{kid.id}", kid.name, FAMILY_ROOM)}
+
+
+class FamilySettings(BaseModel):
+    see: bool | None = None     # brothers see what each other is playing
+    join: bool | None = None    # one-tap Join into the same game
+    voice: bool | None = None   # family voice room
+
+
+@app.get("/api/parent/family")
+def parent_family(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kids = [presence(db, settings, k) for k in settings.kids]
+    for k in kids:
+        k["in_family_voice"] = k.pop("voice") == "family"
+    games = [k["game_id"] for k in kids if k["game_id"]]
+    together = len(games) > 1 and len(set(games)) == 1
+    return {"settings": family_settings(db), "kids": kids, "playing_together": together,
+            "voice_count": sum(k["in_family_voice"] for k in kids)}
+
+
+@app.put("/api/parent/family")
+def parent_set_family(f: FamilySettings, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    new = {**family_settings(db), **{k: v for k, v in f.model_dump().items() if v is not None}}
+    db.x("INSERT INTO kv(key,value) VALUES('family',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(new),))
+    if not new["voice"]:
+        # Turned off mid-call: take the kids out of the room now. Best effort, LiveKit may be down.
+        for k in settings.kids:
+            try:
+                httpx.post(f"{settings.livekit.api_url}/twirp/livekit.RoomService/RemoveParticipant",
+                           json={"room": FAMILY_ROOM, "identity": f"kid-{k.id}"},
+                           headers={"Authorization": f"Bearer {livekit_admin_token(settings, FAMILY_ROOM)}"}, timeout=3)
+            except httpx.HTTPError:
+                pass
+    return new
 
 
 # --------------------------------------------------------------------------- parent API

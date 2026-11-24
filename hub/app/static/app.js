@@ -133,6 +133,31 @@ async function refresh() {
     d.querySelector("ul").innerHTML = rows.map((r) => `<li>${esc(r.text)}<div class="muted">${new Date(r.at).toLocaleString()}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   }));
   fillKidSelects();
+  loadFamily().catch(() => {});
+}
+
+// Family: what the brothers are doing together, and the parents' switches for it.
+async function loadFamily() {
+  const f = await api("/api/parent/family");
+  const on = f.kids.filter((k) => k.online);
+  const names = (ks) => ks.map((k) => esc(k.name)).join(" and ");
+  const voice = f.kids.filter((k) => k.in_family_voice);
+  const together = f.playing_together ? `${names(on.filter((k) => k.running))} are playing <b>${esc(on.find((k) => k.running).running)}</b> together.`
+    : on.length ? on.map((k) => `${esc(k.name)}: ${k.locked ? "done for today" : k.running ? `playing <b>${esc(k.running)}</b>` : "home screen"}`).join(" · ")
+    : "Nobody's PC is on.";
+  const sw = (key, label, hint) => `<label class="switch"><input type="checkbox" data-family="${key}" ${f.settings[key] ? "checked" : ""}>
+      <span><b>${label}</b><small class="muted">${hint}</small></span></label>`;
+  $("#family").innerHTML = `<div class="card family">
+    <h2>Family</h2>
+    <p>${together}</p>
+    <div class="muted">${voice.length ? `In family voice: <b>${names(voice)}</b>` : "Nobody is in family voice."}</div>
+    ${sw("see", "See each other", "Each PC shows what his brother is playing.")}
+    ${sw("join", "Join each other's games", "One tap starts the same game, only if it's approved for both.")}
+    ${sw("voice", "Family voice", "A voice room just for the brothers, no invite link. Turning it off ends a call.")}
+  </div>`;
+  document.querySelectorAll("[data-family]").forEach((c) => (c.onchange = async () => {
+    try { await api("/api/parent/family", { method: "PUT", body: { [c.dataset.family]: c.checked } }); } catch (err) { c.checked = !c.checked; oops(err); }
+  }));
 }
 
 function fillKidSelects() {

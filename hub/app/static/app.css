@@ -226,3 +226,9 @@ dialog .actions > button { flex: 1; }
 .person.talking .pstate { color: var(--ok-text); }
 .person.muted .orb { background: var(--line-2); }
 .person.muted .pstate { color: var(--bad-text); }
+
+/* Family card: the brothers together, and three switches */
+.family p { margin: 6px 0; }
+.family .switch { display: flex; align-items: flex-start; gap: 12px; margin: 14px 0 0; color: var(--text); font-size: 1rem; }
+.family .switch input { flex: none; margin-top: 2px; }
+.family .switch small { display: block; font-size: .85rem; margin-top: 2px; }
