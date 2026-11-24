@@ -49,12 +49,11 @@ public partial class MainWindow : Window
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
         StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
 
-        if (t.Warn && !_warnedToday)
+        if (t.Warn)
         {
-            _warnedToday = true;
-            WarningText.Text = $"{t.MinutesLeft} minutes left. Time to find a place to save.";
+            WarningText.Text = $"{t.MinutesLeft} minute{(t.MinutesLeft == 1 ? "" : "s")} left. Time to find a place to save.";
             WarningBanner.Visibility = Visibility.Visible;
-            Activate();   // pull the shell in front of the game briefly so the warning is seen
+            if (!_warnedToday) { _warnedToday = true; Activate(); }   // pull the shell in front of the game once so the warning is seen
         }
         if (!t.Warn) { WarningBanner.Visibility = Visibility.Collapsed; if (t.MinutesLeft > rules.WarningMinutes) _warnedToday = false; }
 
