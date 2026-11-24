@@ -7,6 +7,9 @@ namespace KidsPc.Helper;
 /// <summary>GameId is the catalogue id of the running game (null for unapproved games and Chrome), so a brother can join it.</summary>
 public sealed record Activity(string Title, bool Active, List<GameProcess> Processes, int? GameId = null);
 
+/// <summary>Steam's appmanifest numbers for one game. Flags is StateFlags.</summary>
+public sealed record SteamManifest(string AppId, long Flags, long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, string File);
+
 /// <summary>A running process the helper recognises, and the catalogue game it belongs to (if any).</summary>
 public sealed record GameProcess(int Pid, string Path, string Kind, string? SteamAppId, Game? Approved);
 
@@ -91,10 +94,41 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
         }
     }
 
+    /// <summary>Where Battle.net puts a game, or null for a product code this PC doesn't know.</summary>
+    public string? BattleNetFolder(string code) =>
+        BattleNetFolders.TryGetValue(code, out var f) ? Path.Combine(cfg.BattleNetGamesRoot, f) : null;
+
+    public string SteamApps => Path.Combine(cfg.SteamPath, "steamapps");
+
+    [GeneratedRegex("^\\s*\"(\\w+)\"\\s+\"([^\"]*)\"", RegexOptions.Multiline)]
+    private static partial Regex AcfAny();
+
+    /// <summary>Steam's own record of a game in the main library (steamapps\appmanifest_ID.acf): how installed it is
+    /// and how much is downloaded. Null when Steam has no record of it. Top-level fields only.</summary>
+    public SteamManifest? SteamManifest(string appId)
+    {
+        var file = Path.Combine(SteamApps, $"appmanifest_{appId}.acf");
+        try
+        {
+            if (!File.Exists(file)) return null;
+            var f = AcfAny().Matches(File.ReadAllText(file))
+                .GroupBy(m => m.Groups[1].Value, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Groups[2].Value, StringComparer.OrdinalIgnoreCase);
+            long N(string k) => long.TryParse(f.GetValueOrDefault(k), out var v) ? v : 0;
+            return new(appId, N("StateFlags"), N("BytesToDownload"), N("BytesDownloaded"), N("BytesToStage"), N("BytesStaged"), file);
+        }
+        catch (IOException) { return null; }     // Steam is writing it; look again next time
+    }
+
+    // Steam's StateFlags: 4 = fully installed. A manifest the helper wrote for a game Steam hasn't fetched yet
+    // has 1026 (update required + update started) and must not make the game look installed.
+    private const long SteamFullyInstalled = 4;
+
     public List<int> InstalledGameIds(Rules? rules)
     {
         if (rules is null) return [];
-        var steamIds = SteamInstalls().Values.Select(v => v.AppId).ToHashSet();
+        var steamIds = SteamInstalls().Values.Select(v => v.AppId)
+            .Where(id => SteamManifest(id) is not { } m || (m.Flags & SteamFullyInstalled) != 0).ToHashSet();
         return rules.Games.Where(g => g.Launcher switch
         {
             "steam" => steamIds.Contains(g.LaunchRef),

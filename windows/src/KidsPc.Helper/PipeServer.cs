@@ -13,7 +13,7 @@ namespace KidsPc.Helper;
 /// Local named pipe the shell talks to. Every request is checked against the rules the helper
 /// pulled from the hub itself, so a kid who finds the pipe still cannot install unapproved games.
 /// </summary>
-public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, AppInstaller apps, EventQueue events, ILogger<PipeServer> log)
+public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, AppInstaller apps, EventQueue events, GameDeployer deployer, ILogger<PipeServer> log)
     : BackgroundService
 {
     // What goes wrong inside the helper is for the log and the parents, never for the kid's screen.
@@ -74,7 +74,9 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         switch (req.Op)
         {
             case "state":
-                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules)));
+                // A game still being put on the PC is not ready to play, even if its folder is already there.
+                var installing = deployer.Captions();
+                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules).Where(id => !installing.ContainsKey(id)), deployer.Nudges(), installing));
 
             case "request":   // ask a parent for a game, more time, or a website
                 if (req.Kind is not ("game" or "time" or "site") || string.IsNullOrWhiteSpace(req.Detail))

@@ -18,6 +18,7 @@ builder.Services.AddSingleton<GameLibrary>();
 builder.Services.AddSingleton<Enforcer>();
 builder.Services.AddSingleton<ChromePolicy>();
 builder.Services.AddSingleton<AppInstaller>();
+builder.Services.AddSingleton<GameDeployer>();
 builder.Services.AddSingleton<EventQueue>();
 builder.Services.AddSingleton<CommandRunner>();
 builder.Services.AddSingleton<NetworkFilter>();

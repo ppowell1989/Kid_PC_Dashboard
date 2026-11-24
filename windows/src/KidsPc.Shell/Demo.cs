@@ -70,7 +70,9 @@ internal sealed class DemoHelper(string scene) : IHelper
             Family: [new FamilyMember("barrett", "Barrett", true, "Brawlhalla", false, InFamilyVoice: scene == "family",
                 GameTitle: "Brawlhalla", JoinGame: games[0], AskRef: "")]);
         var messages = scene == "warning" ? new List<ParentMessage> { new(1, "Mom", "Dinner in 10 minutes!", DateTimeOffset.Now) } : null;
-        return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages);
+        // Two games a parent approved, installing by themselves (the catalogue shows how far along).
+        return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages,
+            Installing: new Dictionary<int, string> { [5] = "Downloading 45%", [6] = "On its way" });
     }
 
     private static List<ChatMessage> Chat()

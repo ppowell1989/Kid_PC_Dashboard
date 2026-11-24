@@ -58,7 +58,17 @@ public sealed record Rules(
     [property: JsonPropertyName("family_voice")] bool FamilyVoice = true,
     // A parent chose "install updates right away" for this PC: a new build goes in as soon as it
     // arrives unless a game is running, instead of waiting for the next restart or sign-in.
-    [property: JsonPropertyName("auto_update")] bool AutoUpdate = false);
+    [property: JsonPropertyName("auto_update")] bool AutoUpdate = false,
+    // Approved games the hub wants on this PC: the helper installs them by itself, no tap from the kid.
+    List<InstallItem>? Installs = null);
+
+/// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.</summary>
+public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0);
+
+/// <summary>Something the helper needs done in the kid's own session, where Steam and Battle.net run as him:
+/// steam_start, steam_restart (so Steam reads a game it was just given), battlenet_install (Arg = product code).
+/// The shell carries out each Id once.</summary>
+public sealed record Nudge(string Id, string Kind, string Arg = "");
 
 /// <summary>A one-off action a parent sent from the dashboard.</summary>
 public sealed record HubCommand(int Id, string Kind, string Arg, [property: JsonPropertyName("created_by")] string CreatedBy);
@@ -71,7 +81,9 @@ public sealed record VoiceToken(string Url, string Room, string Token);
 /// <summary>What the helper hands the shell. Installed and Locked are decided on the PC by the helper
 /// (Locked includes the offline fallback), so the shell just displays them.</summary>
 public sealed record ShellState(Rules? Rules, List<int> InstalledGameIds, bool Locked, bool HubReachable, DateTimeOffset FetchedAt,
-    List<ParentMessage>? Messages = null);
+    List<ParentMessage>? Messages = null,
+    List<Nudge>? Nudges = null,
+    Dictionary<int, string>? Installing = null);   // game id -> a few words for its tile while it installs by itself, e.g. "Downloading 45%"
 
 /// <summary>Reply to an install request: either the helper did it, or the shell should open a launcher URI.</summary>
 public sealed record InstallResult(string Action, string? Uri, string Message, string? Args = null);
