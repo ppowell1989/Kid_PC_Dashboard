@@ -85,7 +85,8 @@ fi
 
 echo "==> Starting hub on port $PORT"
 docker rm -f kidspc-hub >/dev/null 2>&1 || true
-docker run -d --name kidspc-hub --restart unless-stopped -p "$PORT:8080" -v "$DATA/hub:/data" kidspc-hub:local >/dev/null
+docker run -d --name kidspc-hub --restart unless-stopped -p "$PORT:8080" \
+  --add-host host.docker.internal:host-gateway -v "$DATA/hub:/data" kidspc-hub:local >/dev/null   # host.docker.internal: the voice server, if set up
 for _ in $(seq 30); do curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null && break; sleep 1; done
 curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null || { docker logs kidspc-hub | tail -30; exit 1; }
 

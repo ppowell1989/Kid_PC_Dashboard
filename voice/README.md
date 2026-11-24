@@ -11,6 +11,23 @@ nobody can join without a link from you.
   closes the voice window when the lock screen appears.
 - Voice only: tokens grant audio publish/subscribe; the pages never ask for a camera.
 
+## Quick setup on the TrueNAS test install
+
+```
+sudo bash deploy/truenas-voice-setup.sh <pool> <domain> [hub_port] [https_port]
+# e.g. sudo bash deploy/truenas-voice-setup.sh NAS voice.example.com 8088
+```
+
+It starts LiveKit (`kidspc-livekit`) and Caddy (`kidspc-caddy`), points the hub at `wss://<domain>`, and
+prints the DNS record and the three router forwards you need. Caddy listens on 8443 on the TrueNAS
+because the TrueNAS web UI already owns 443; the router maps public 443 to it. Nothing is reachable from
+outside until you add the DNS record and the forwards, and `docker rm -f kidspc-livekit kidspc-caddy`
+plus removing the forwards undoes it.
+
+Known wrinkle: the kids' PCs are inside the house but connect to the public name. Most routers handle
+that ("NAT loopback" or "hairpin NAT"). If the kid's side can't connect while friends outside can, that
+is the cause; the fix is a local DNS override for the domain (AdGuard can do it) pointing at the TrueNAS.
+
 ## What has to be outward-facing
 
 Browsers only allow the microphone on HTTPS pages, and friends connect from outside the house, so:
