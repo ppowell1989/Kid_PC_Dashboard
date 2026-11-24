@@ -1,6 +1,7 @@
 name: build
 on:
   push:
+    branches-ignore: [ci-screenshots]
   pull_request:
   workflow_dispatch:
 
@@ -58,6 +59,41 @@ jobs:
         with:
           name: integration-logs
           path: ${{ runner.temp }}/kidspc-it
+
+  screenshots:
+    # Real Windows screenshots of every shell screen (demo data), so the design is checked on actual pixels.
+    # Download the "shell-screenshots" artifact, or browse the ci-screenshots branch (one folder per branch).
+    needs: [windows]
+    runs-on: windows-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: kidspc-win-x64, path: bundle }
+      - name: Screenshot every shell screen
+        shell: pwsh
+        run: ./windows/tests/Screenshots.ps1 -BuildDir bundle -Out shots
+      - uses: actions/upload-artifact@v4
+        with: { name: shell-screenshots, path: shots }
+      - name: Publish to the ci-screenshots branch
+        if: github.event_name == 'push'
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          slug="${GITHUB_REF_NAME//\//-}"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for try in 1 2 3; do
+            rm -rf pub && git init -q pub && cd pub
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            if git fetch -q --depth 1 "$url" ci-screenshots; then git checkout -q -b ci-screenshots FETCH_HEAD; else git checkout -q --orphan ci-screenshots; fi
+            rm -rf "$slug" && mkdir -p "$slug" && cp ../shots/*.png "$slug/"
+            git add -A
+            git commit -q -m "Shell screenshots: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}" || { echo "No change"; exit 0; }
+            if git push -q "$url" ci-screenshots; then exit 0; fi
+            cd .. && sleep $((try * 5))
+          done
+          exit 1
 
   hub-image:
     runs-on: ubuntu-latest

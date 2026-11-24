@@ -10,7 +10,7 @@ namespace KidsPc.Shell;
 
 public partial class MainWindow : Window
 {
-    private readonly HelperClient _helper = new();
+    private readonly IHelper _helper = App.DemoScene is null ? new PipeHelper() : new DemoHelper(App.DemoScene);
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(15) };
     private ShellState? _state;
     private bool _warnedToday;
@@ -22,7 +22,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _poll.Tick += async (_, _) => await RefreshAsync();
-        Loaded += async (_, _) => { DrawSpace(); await RefreshAsync(); _poll.Start(); StartChat(); };
+        Loaded += async (_, _) =>
+        {
+            DrawSpace(); await RefreshAsync(); _poll.Start(); StartChat();
+            if (App.DemoScene is { } scene) await ShowDemoSceneAsync(scene);
+        };
         SizeChanged += (_, _) => DrawSpace();
     }
 
@@ -306,6 +310,9 @@ public partial class MainWindow : Window
         catch (Exception ex) { StatusLine.Text = ex.Message; }
     }
 
-    private void ShutDown(object s, RoutedEventArgs e) =>
+    private void ShutDown(object s, RoutedEventArgs e)
+    {
+        if (App.DemoScene is not null) return;
         Process.Start(new ProcessStartInfo("shutdown.exe", "/s /t 0") { CreateNoWindow = true, UseShellExecute = false });
+    }
 }

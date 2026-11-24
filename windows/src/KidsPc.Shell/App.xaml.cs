@@ -7,11 +7,16 @@ public partial class App : Application
 {
     private static int _restarts;
 
+    /// <summary>Set by "--demo &lt;scene&gt;": canned data instead of the helper, for looking at the design (see Demo.cs).</summary>
+    public static string? DemoScene { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         // --restart N counts crash restarts so a crash at startup cannot loop forever.
         var i = Array.IndexOf(e.Args, "--restart");
         if (i >= 0 && i + 1 < e.Args.Length) int.TryParse(e.Args[i + 1], out _restarts);
+        var d = Array.IndexOf(e.Args, "--demo");
+        if (d >= 0) DemoScene = d + 1 < e.Args.Length ? e.Args[d + 1] : "home";
         // This program IS the Windows shell for the kid's account (see setup\Set-KidShell.ps1).
         // If it ever crashes, start a fresh copy rather than leave a black screen.
         DispatcherUnhandledException += (_, args) =>
@@ -25,6 +30,7 @@ public partial class App : Application
 
     private static void Restart()
     {
+        if (DemoScene is not null) Environment.Exit(2);   // a demo that crashed should say so, not turn into the real shell
         if (_restarts < 5)
         {
             try { Process.Start(Environment.ProcessPath!, $"--restart {_restarts + 1}"); } catch { /* nothing more we can do */ }
