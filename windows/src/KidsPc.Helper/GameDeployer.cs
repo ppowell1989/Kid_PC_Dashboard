@@ -86,6 +86,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     public void Tick(Rules rules, bool kidHere, bool gameRunning)
     {
         _kidName = rules.Kid.Name;
+        ReportBattleNetProducts();
         var wanted = (rules.Installs ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First().Retry);
         var installed = library.InstalledGameIds(rules).ToHashSet();
         var steamHere = kidHere && SteamRunning();
@@ -314,6 +315,10 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
         if (LauncherNotReady("battlenet", "Battle.net") is { } wait) return wait;
         if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC.");
+        // Battle.net says nothing about size before it starts, and a game that fills the drive breaks the whole PC.
+        // So check against a rough size first (GUESS: current install sizes, rounded up).
+        if (BattleNetSizesGb.TryGetValue(g.LaunchRef, out var needGb) && FreeBytes(cfg.BattleNetGamesRoot) is { } freeNow && freeNow < (long)(needGb * 1.1 * (1L << 30)))
+            return new("no_space", $"{g.Title} needs about {needGb} GB and the PC has {Gb(freeNow)} free. Remove a game he no longer plays, then press Try again.", 0, (long)needGb << 30);
         if (!BattleNetSignedIn())
             return new("needs_signin", $"Battle.net has to be signed in on {_kidName}'s PC once, with a Blizzard account (yours or his). Tick Keep me logged in. After that, games install by themselves.");
         if (at.KickedAt is null)      // once per attempt; "Try again" on the dashboard starts a new attempt
@@ -326,6 +331,34 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         if (DateTimeOffset.Now - at.KickedAt > StuckAfter)
             return new("stuck", "Battle.net didn't start the download. Press Try again. If that doesn't work, open Battle.net on the PC and press Install on the game.");
         return new("waiting", "Battle.net is getting ready to download it.");
+    }
+
+    private static readonly Dictionary<string, int> BattleNetSizesGb = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["WoW"] = 100, ["WoWF"] = 70, ["WoWC"] = 60, ["WoWCE"] = 15, ["WoWA"] = 20, ["Pro"] = 50, ["Hero"] = 30, ["WTCG"] = 5, ["Fen"] = 90, ["S2"] = 35, ["S1"] = 2,
+        ["W3"] = 30, ["D3"] = 25, ["OSI"] = 30, ["ANBS"] = 10, ["WLBY"] = 40, ["RTRO"] = 2,
+    };   // keep in step with BattleNetFolders in GameLibrary.cs
+
+    private string _productsTold = "";
+
+    /// <summary>Tells the parents' activity feed which World of Warcraft versions Battle.net itself knows about on this PC
+    /// (its codes and folders, read from its own product.db), so the guessed codes above can be checked against the
+    /// real ones. Once per change.</summary>
+    private void ReportBattleNetProducts()
+    {
+        try
+        {
+            var db = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Battle.net", "Agent", "product.db");
+            if (!File.Exists(db)) return;
+            var text = System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(db));
+            var found = Regex.Matches(text, @"wow[a-z_]*|World of Warcraft[\\/]_[a-z_]+_", RegexOptions.IgnoreCase)
+                .Select(m => m.Value).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).Take(20).ToList();
+            var line = string.Join(", ", found);
+            if (line == "" || line == _productsTold) return;
+            _productsTold = line;
+            events.Add("battlenet_products", line.Length > 290 ? line[..290] : line);
+        }
+        catch (Exception ex) { log.LogDebug("product.db: {Msg}", ex.Message); }
     }
 
     /// <summary>Battle.net remembers who signed in, in the kid's Battle.net.config (SavedAccountNames). GUESS at the file and key.</summary>

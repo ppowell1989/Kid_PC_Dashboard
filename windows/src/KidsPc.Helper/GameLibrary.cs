@@ -40,7 +40,13 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
 
     private static readonly Dictionary<string, string> BattleNetFolders = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["WoW"] = "World of Warcraft",
+        // World of Warcraft's versions share one folder, each in its own subfolder. The version a parent approved
+        // is the one installed and launched; another version being on the PC doesn't count.
+        ["WoW"] = @"World of Warcraft\_retail_",
+        ["WoWF"] = @"World of Warcraft\_forever_",   // GUESS from fan sites: Blizzard hasn't published the folder
+        ["WoWC"] = @"World of Warcraft\_classic_",        // Mists of Pandaria Classic (the Classic progression client)
+        ["WoWCE"] = @"World of Warcraft\_classic_era_",   // Classic Era, Hardcore, Season of Discovery
+        ["WoWA"] = @"World of Warcraft\_anniversary_",    // Burning Crusade Classic Anniversary. GUESS: folder name
         ["Pro"] = "Overwatch",
         ["Hero"] = "Heroes of the Storm",
         ["WTCG"] = "Hearthstone",

@@ -436,7 +436,7 @@ def test_game_search_merges_stores_and_fills_in_the_launcher(parent, monkeypatch
     assert (p["launcher"], p["launch_ref"], p["addable"]) == ("battlenet", "WoW", True)
     assert parent.post("/api/parent/games/from-search", json={"ref": "battlenet:WoW", "approved_for": ["adam"]}).status_code == 201
     g = parent.get("/api/device/rules", headers=ADAM).json()["games"]
-    assert [(x["title"], x["launcher"], x["launch_ref"], x["rating"]) for x in g] == [("World of Warcraft", "battlenet", "WoW", "T")]
+    assert [(x["title"], x["launcher"], x["launch_ref"], x["rating"]) for x in g] == [("World of Warcraft (Midnight, current)", "battlenet", "WoW", "T")]
     # Adding it again returns the same game, and search now says it's in the catalogue.
     again = parent.post("/api/parent/games/from-search", json={"ref": "battlenet:wow", "approved_for": ["barrett"]}).json()["id"]
     assert again == g[0]["id"]
