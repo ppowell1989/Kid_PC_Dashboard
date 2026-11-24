@@ -274,15 +274,22 @@ def auto_update(db: DB, kid_id: str) -> bool:
 @app.get("/api/device/rules")
 def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     st = today_state(db, settings, kid)
+    games = games_for(db, settings, kid.id)
+    # A game is no use without the program it installs through, so approving a Battle.net game is
+    # enough to get Battle.net put on the PC. Nobody has to remember to list it in managed_apps.
+    managed = list(settings.managed_apps)
+    for launcher in ("steam", "battlenet"):
+        if launcher not in managed and any(g["launcher"] == launcher for g in games):
+            managed.append(launcher)
     return {
         "kid": {"id": kid.id, "name": kid.name},
         "time": st.__dict__,
         "warning_minutes": rules.WARNING_MINUTES,
-        "games": games_for(db, settings, kid.id),
+        "games": games,
         "web": {"mode": settings.decisions.web_mode, "allowed_sites": allowed_sites(db, settings), "dns": dns_for(settings),
                 "search": SEARCH[settings.decisions.search]},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
-        "managed_apps": settings.managed_apps,
+        "managed_apps": managed,
         "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),

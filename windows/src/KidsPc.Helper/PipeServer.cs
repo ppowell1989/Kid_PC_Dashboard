@@ -13,9 +13,13 @@ namespace KidsPc.Helper;
 /// Local named pipe the shell talks to. Every request is checked against the rules the helper
 /// pulled from the hub itself, so a kid who finds the pipe still cannot install unapproved games.
 /// </summary>
-public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, ILogger<PipeServer> log)
+public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cache, GameLibrary library, AppInstaller apps, EventQueue events, ILogger<PipeServer> log)
     : BackgroundService
 {
+    // What goes wrong inside the helper is for the log and the parents, never for the kid's screen.
+    private const string NotNow = "That didn't work just now. Try again in a minute.";
+    private readonly Dictionary<string, DateTimeOffset> _told = [];     // when the parents were last told about each problem
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -56,7 +60,7 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         catch (Exception ex)
         {
             log.LogWarning("pipe request failed: {Msg}", ex.Message);
-            res = new PipeResponse(false, ex.Message);
+            res = new PipeResponse(false, NotNow);
         }
         await writer.WriteLineAsync(JsonSerializer.Serialize(res, Json.Options));
         // Without draining, closing the server end can discard the reply before the client reads it.
@@ -111,6 +115,10 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             case "install":
                 return Ok(await InstallAsync(req.GameId ?? -1, ct));
 
+            case "problem":   // the shell could not start something: the parents hear about it, the kid got a plain sentence
+                if (!string.IsNullOrWhiteSpace(req.Detail)) TellParents("launch_failed", req.Detail.Length > 300 ? req.Detail[..300] : req.Detail);
+                return Ok(new { });
+
             default:
                 return new(false, $"unknown op {req.Op}");
         }
@@ -126,8 +134,10 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             // Steam and Battle.net install games for a standard user without elevation.
             // The shell opens the launcher at the right page; the helper only gates which games.
             case "steam":
+                if (LauncherMissing("steam", "Steam", game) is { } noSteam) return noSteam;
                 return new("uri", $"steam://install/{game.LaunchRef}", "Steam will download it.");
             case "battlenet":
+                if (LauncherMissing("battlenet", "Battle.net", game) is { } noBattleNet) return noBattleNet;
                 return new("exec", cfg.BattleNetPath, "Battle.net will download it.", $"--exec=\"install {game.LaunchRef}\"");   // GUESS: Battle.net CLI verb
             case "gamepass":
                 return new("uri", $"ms-windows-store://pdp/?ProductId={game.LaunchRef}", "The Xbox app will download it.");
@@ -143,5 +153,31 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             default:
                 return new("refused", null, "Unknown launcher.");
         }
+    }
+
+    /// <summary>The program a game installs through (Steam, Battle.net) is not on this PC. Instead of handing the
+    /// shell a program that is not there, start installing it, tell the parents, and ask the kid to come back.</summary>
+    private InstallResult? LauncherMissing(string app, string name, Game game)
+    {
+        var st = apps.Want(app);
+        if (st.State == "installed") return null;
+        TellParents("launcher_missing", $"{name} is not on this PC; {cache.Rules?.Kid.Name ?? "he"} wanted {game.Title}. "
+            + (st.State == "failed" ? "It would not install by itself." : "Installing it now."));
+        return new("wait", null, st.State == "failed"
+            ? $"{name} needs a parent to set it up on this PC. They've been told."
+            : $"{name} is being set up on this PC first. Try {game.Title} again in a few minutes.");
+    }
+
+    /// <summary>Puts a line in the parents' activity feed, at most once every ten minutes per problem.</summary>
+    private void TellParents(string kind, string detail)
+    {
+        lock (_told)
+        {
+            var key = kind + "|" + detail;
+            if (_told.TryGetValue(key, out var at) && DateTimeOffset.Now - at < TimeSpan.FromMinutes(10)) return;
+            if (_told.Count > 200) _told.Clear();
+            _told[key] = DateTimeOffset.Now;
+        }
+        events.Add(kind, detail);
     }
 }

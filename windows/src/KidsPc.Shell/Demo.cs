@@ -49,7 +49,7 @@ internal sealed class DemoHelper(string scene) : IHelper
             },
             "chat" => req.Detail == "0" ? Chat() : new List<ChatMessage>(),
             "install" => new InstallResult("none", null, "Demo mode: nothing was installed."),
-            "voice_token" or "family_voice_token" => scene is "voice" or "family" ? new VoiceToken("demo", "demo", "demo") : throw new InvalidOperationException("Voice chat is off in demo mode."),
+            "voice_token" or "family_voice_token" => scene is "voice" or "family" ? new VoiceToken("demo", "demo", "demo") : throw new HelperSaidNo("Voice chat is off in demo mode."),
             _ => null,
         };
         return Task.FromResult((T?)result);

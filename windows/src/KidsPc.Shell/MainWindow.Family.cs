@@ -139,7 +139,7 @@ public partial class MainWindow
     /// itself (Steam friends, a party code); the shell gets both of them into the game and the voice room.</summary>
     private void JoinGame(FamilyMember f, Game g)
     {
-        Launcher.LaunchGame(g);
-        StatusLine.Text = $"Starting {g.Title}. {f.Name} is already in there!";
+        if (Start(g.Title, () => Launcher.LaunchGame(g)))
+            StatusLine.Text = $"Starting {g.Title}. {f.Name} is already in there!";
     }
 }

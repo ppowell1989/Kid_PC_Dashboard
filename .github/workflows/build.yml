@@ -60,6 +60,29 @@ jobs:
           name: integration-logs
           path: ${{ runner.temp }}/kidspc-it
 
+  launchers:
+    # Tries the one install that has no silent mode (Battle.net) on a real Windows. It takes minutes and
+    # depends on Blizzard's servers, so it reports its result without holding up or failing a build.
+    needs: [hub, windows]
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r hub/requirements.txt
+      - uses: actions/download-artifact@v4
+        with: { name: kidspc-win-x64, path: bundle }
+      - name: Helper installs Battle.net by itself
+        shell: pwsh
+        run: ./windows/tests/Integration.ps1 -BuildDir bundle -LauncherInstall
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-logs
+          path: ${{ runner.temp }}/kidspc-it
+
   screenshots:
     # Real Windows screenshots of every shell screen (demo data), so the design is checked on actual pixels.
     # Download the "shell-screenshots" artifact, or browse the ci-screenshots branch (one folder per branch).

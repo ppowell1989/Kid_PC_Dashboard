@@ -8,12 +8,14 @@ namespace KidsPc.Helper;
 public sealed record AppStatus(string State, string Detail = "");
 
 /// <summary>
-/// Installs the launchers the hub says each PC should have (Steam, Chrome), silently and as SYSTEM,
-/// so nobody has to sit at the PC. Reports progress to the hub in every heartbeat.
+/// Installs the launchers the hub says each PC should have (Steam, Chrome, Battle.net), silently and
+/// as SYSTEM, so nobody has to sit at the PC. Reports progress to the hub in every heartbeat.
 /// </summary>
 public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<AppInstaller> log)
 {
-    private sealed record AppDef(string Name, Func<string> InstalledPath, Func<string> DownloadUrl, string FileName, Func<string, ProcessStartInfo> Installer);
+    // StaysOpen: the installer opens the app when it is done instead of exiting, so it is closed for it.
+    private sealed record AppDef(string Name, Func<string> InstalledPath, Func<string> DownloadUrl, string FileName, Func<string, ProcessStartInfo> Installer,
+        bool StaysOpen = false, string ByHand = "");
 
     private static readonly bool Arm64 = RuntimeInformation.OSArchitecture == Architecture.Arm64;
     private static readonly string Pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
@@ -33,6 +35,15 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
                 : "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
             "chrome.msi",
             f => new ProcessStartInfo("msiexec.exe", $"/i \"{f}\" /qn /norestart")),
+        // Battle.net's setup has no silent switch. With a language and a folder it asks nothing, but it
+        // still opens the app's sign-in window at the end, which nobody can see from a service.
+        ["battlenet"] = new("battlenet",
+            () => cfg.BattleNetPath,
+            () => "https://downloader.battle.net/download/getInstaller?os=win&installer=Battle.net-Setup.exe",
+            "Battle.net-Setup.exe",
+            f => new ProcessStartInfo(f, $"--lang=enUS --installpath=\"{Path.GetDirectoryName(cfg.BattleNetPath)}\""),
+            StaysOpen: true,
+            ByHand: "Battle.net would not install by itself. Sign in to an admin account on this PC and install it from battle.net."),
     };
 
     private readonly ConcurrentDictionary<string, AppStatus> _status = new();
@@ -46,12 +57,6 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
     {
         foreach (var name in apps)
         {
-            if (name == "battlenet")
-            {
-                // Battle.net's installer always shows its own window; it can't be installed unattended.
-                _status[name] = File.Exists(cfg.BattleNetPath) ? new("installed") : new("manual", "Install Battle.net from an admin account");
-                continue;
-            }
             if (!_defs.TryGetValue(name, out var def)) continue;
             if (File.Exists(def.InstalledPath())) { _status[name] = new("installed"); continue; }
             if (_status.TryGetValue(name, out var cur) && cur.State == "installing") continue;
@@ -61,6 +66,23 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             _status[name] = new("installing");
             _ = Task.Run(() => InstallAsync(def));
         }
+    }
+
+    /// <summary>The kid asked for a game whose launcher is missing: get it installed soon, without letting
+    /// him restart a failing install every time he taps. Returns where the launcher stands now.</summary>
+    public AppStatus Want(string name)
+    {
+        if (!_defs.TryGetValue(name, out var def)) return new("failed", "unknown app");
+        if (File.Exists(def.InstalledPath())) return _status[name] = new("installed");
+        var failedBefore = _status.TryGetValue(name, out var cur) && cur.State == "failed";
+        if (!_lastAttempt.TryGetValue(name, out var last) || DateTimeOffset.Now - last > TimeSpan.FromMinutes(5))
+        {
+            _lastAttempt.TryRemove(name, out _);
+            Ensure([name]);
+        }
+        // "failed" stays the answer while a retry starts, so he is told a parent is needed rather than "a few minutes" forever.
+        if (failedBefore) return new("failed", cur!.Detail);
+        return _status.TryGetValue(name, out var now) ? now : new("installing");
     }
 
     /// <summary>Parent pressed "install" on the dashboard: try now, ignoring the retry back-off.</summary>
@@ -87,13 +109,15 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             using var p = Process.Start(psi)!;
-            await p.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(20));
+            if (def.StaysOpen) await WaitThenCloseAsync(def, p);
+            else await p.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(20));
 
             // Steam's /S installer exits before it finishes copying; give it a moment.
             for (var i = 0; i < 30 && !File.Exists(def.InstalledPath()); i++) await Task.Delay(2000);
             _status[def.Name] = File.Exists(def.InstalledPath())
                 ? new("installed")
-                : new("failed", $"installer exited {p.ExitCode} but {Path.GetFileName(def.InstalledPath())} is missing");
+                : new("failed", def.ByHand != "" ? def.ByHand
+                    : $"installer exited {(p.HasExited ? p.ExitCode : -1)} but {Path.GetFileName(def.InstalledPath())} is missing");
             events.Add(_status[def.Name].State == "installed" ? "app_installed" : "app_install_failed", def.Name);
         }
         catch (Exception ex)
@@ -106,5 +130,56 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
         {
             try { File.Delete(file); } catch { /* best effort */ }
         }
+    }
+
+    /// <summary>For an installer that does not exit by itself: wait for the app to appear, let it finish
+    /// writing, then close the installer and the app it opened. Only this service's own session is touched,
+    /// so a launcher the kid is using is never closed.</summary>
+    private async Task WaitThenCloseAsync(AppDef def, Process setup)
+    {
+        var giveUp = DateTimeOffset.Now + TimeSpan.FromMinutes(15);
+        DateTimeOffset? exited = null;
+        while (DateTimeOffset.Now < giveUp && !File.Exists(def.InstalledPath()))
+        {
+            // The first program may hand over to a second one and exit; allow that one a few minutes too.
+            if (setup.HasExited) exited ??= DateTimeOffset.Now;
+            if (exited is { } at && DateTimeOffset.Now - at > TimeSpan.FromMinutes(5)) break;
+            await Task.Delay(2000);
+        }
+        // The app's own program appears before the last files do: wait until its folder has been quiet for a while.
+        var folder = Path.GetDirectoryName(def.InstalledPath())!;
+        for (var i = 0; i < 60 && File.Exists(def.InstalledPath()) && !Quiet(folder, TimeSpan.FromSeconds(20)); i++) await Task.Delay(5000);
+
+        try { if (!setup.HasExited) setup.Kill(entireProcessTree: true); } catch { /* already gone */ }
+        var mine = Process.GetCurrentProcess().SessionId;
+        var appName = Path.GetFileNameWithoutExtension(def.InstalledPath());
+        var appMarker = Path.DirectorySeparatorChar + Path.GetFileName(folder) + Path.DirectorySeparatorChar;   // "\Battle.net\"
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                if (proc.SessionId != mine || proc.Id == Environment.ProcessId) continue;
+                // The app itself, the installer, and the app's background updater (found by its folder, its name is too plain).
+                var ours = proc.ProcessName.Equals(appName, StringComparison.OrdinalIgnoreCase)
+                        || proc.ProcessName.Equals(Path.GetFileNameWithoutExtension(def.FileName), StringComparison.OrdinalIgnoreCase)
+                        || (proc.ProcessName.Equals("Agent", StringComparison.OrdinalIgnoreCase)
+                            && (proc.MainModule?.FileName ?? "").Contains(appMarker, StringComparison.OrdinalIgnoreCase));
+                if (ours) proc.Kill(entireProcessTree: true);
+            }
+            catch { /* it ended by itself, or it is not ours to look at */ }
+            finally { proc.Dispose(); }
+        }
+    }
+
+    /// <summary>Nothing in the folder was written for this long.</summary>
+    private static bool Quiet(string folder, TimeSpan howLong)
+    {
+        try
+        {
+            var newest = new DirectoryInfo(folder).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
+                .Select(f => f.LastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max();
+            return DateTime.UtcNow - newest > howLong;
+        }
+        catch { return true; }      // can't look: don't wait on it
     }
 }

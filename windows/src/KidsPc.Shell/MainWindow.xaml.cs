@@ -159,8 +159,8 @@ public partial class MainWindow : Window
         _homeSig = sig;
         HomeTiles.Children.Clear();
         foreach (var g in installed)
-            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Launcher.LaunchGame(g), image: g.ImageUrl));
-        HomeTiles.Children.Add(Tile("Web\nChrome", Launcher.LaunchChrome, glyph: "\uE774"));
+            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Start(g.Title, () => Launcher.LaunchGame(g)), image: g.ImageUrl));
+        HomeTiles.Children.Add(Tile("Web\nChrome", () => Start("Chrome", Launcher.LaunchChrome), glyph: "\uE774"));
         HomeTiles.Children.Add(Tile("Chat with a friend\nVoice", OpenVoice, enabled: rules.Friends.Count > 0, glyph: "\uE720"));
         Recolour(HomeTiles);
     }
@@ -320,8 +320,32 @@ public partial class MainWindow : Window
             }
             StatusLine.Text = r?.Message ?? "";
         }
-        catch (Exception ex) { StatusLine.Text = ex.Message; }
+        catch (HelperSaidNo no) { StatusLine.Text = no.Message; }
+        catch (Exception ex) { CouldNotStart(g.Title, ex); }
     }
+
+    /// <summary>Starts a program for the kid. One that is missing or will not start gets a plain sentence on
+    /// his screen and a line in his parents' activity feed. Windows' own error text never reaches him.</summary>
+    internal bool Start(string what, Action start)
+    {
+        try { start(); return true; }
+        catch (Exception ex) { CouldNotStart(what, ex); return false; }
+    }
+
+    private void CouldNotStart(string what, Exception ex)
+    {
+        StatusLine.Text = $"{what} couldn't start on this PC. A parent has been told.";
+        _ = TellParentsAsync($"{what} could not start: {ex.Message}");
+    }
+
+    private async Task TellParentsAsync(string detail)
+    {
+        try { await _helper.GetAsync<object>(new PipeRequest("problem", Detail: detail)); }
+        catch { /* the helper is restarting; the kid already has his answer */ }
+    }
+
+    /// <summary>What to show the kid when something failed: the helper's own sentence if it gave one, otherwise nothing technical.</summary>
+    internal static string Plain(Exception ex) => ex is HelperSaidNo ? ex.Message : "Try again in a minute.";
 
     private async void AskForGame(object s, RoutedEventArgs e)
     {
@@ -362,7 +386,7 @@ public partial class MainWindow : Window
             }
             Recolour(SearchResults);
         }
-        catch (Exception ex) { SearchStatus.Text = $"Search isn't working right now: {ex.Message}"; }
+        catch (Exception ex) { SearchStatus.Text = $"Search isn't working right now. {Plain(ex)}"; }
     }
 
     private bool AlreadyAsked(string title) =>
@@ -402,7 +426,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AskStatus.Text = $"Couldn't send: {ex.Message}";
+            AskStatus.Text = $"Couldn't send. {Plain(ex)}";
             AskSend.IsEnabled = true;
         }
     }
@@ -415,7 +439,7 @@ public partial class MainWindow : Window
             await _helper.GetAsync<object>(new PipeRequest("request", Kind: kind, Detail: detail, Ref: reference));
             target.Text = okText;
         }
-        catch (Exception ex) { target.Text = $"Couldn't send: {ex.Message}"; }
+        catch (Exception ex) { target.Text = $"Couldn't send. {Plain(ex)}"; }
     }
 
     private void OpenVoice() => _ = OpenVoiceAsync(family: false);
@@ -448,7 +472,8 @@ public partial class MainWindow : Window
             RedrawFamily();   // the Talk button turns into "You're in family voice" straight away
             try { await _helper.GetAsync<object>(new PipeRequest("voice_state", Detail: room)); } catch { /* only feeds the Family row */ }
         }
-        catch (Exception ex) { StatusLine.Text = ex.Message; }
+        catch (HelperSaidNo no) { StatusLine.Text = no.Message; }      // "Voice chat is off while the PC is locked."
+        catch (Exception ex) { CouldNotStart("Voice chat", ex); }
     }
 
     private void ShutDown(object s, RoutedEventArgs e)
