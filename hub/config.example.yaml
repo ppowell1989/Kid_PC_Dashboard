@@ -18,6 +18,8 @@ kids:
     device_token: "CHANGE-ME-adam-device-token"     # admin helper on the PC only (stored admin-only)
     extension_token: "CHANGE-ME-adam-extension-token"  # Chrome extension: may only report visits
     adguard_client: adam-pc                         # client name in AdGuard Home
+    # Starting values only, copied into the hub's database the first time the hub sees this kid.
+    # After that, limits, bedtimes and play windows are changed in the dashboard's Playtimes tab.
     daily_minutes: { weekday: 90, weekend: 180 }
     bedtime: { weekday: "20:30", weekend: "21:30" } # no play after this time
   - id: barrett

@@ -121,6 +121,16 @@ CREATE TABLE IF NOT EXISTS chat (           -- one family chat: parents and kids
     text   TEXT NOT NULL,
     at     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS playtimes (      -- per kid, per day of week; no row = config.yaml defaults
+    kid_id        TEXT NOT NULL,
+    weekday       INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),   -- 0 = Monday
+    daily_minutes INTEGER NOT NULL,
+    bedtime       TEXT NOT NULL DEFAULT '',  -- "HH:MM", "" = none
+    windows       TEXT NOT NULL DEFAULT '[]', -- JSON [["15:30","17:30"], ...]; [] = any time before bedtime
+    updated_by    TEXT NOT NULL DEFAULT '',
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (kid_id, weekday)
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
 
