@@ -2,7 +2,20 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="Chat with a friend" Width="460" Height="560" WindowStyle="ToolWindow"
-        Topmost="True" Background="{StaticResource Bg}">
-  <wv2:WebView2 x:Name="Web"/>
+        Title="Chat with a friend" Width="470" Height="640" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" Topmost="True" Background="#0B0628"
+        FontFamily="{StaticResource Body}" Foreground="White">
+  <!-- Our own frame instead of the grey Windows one: drag it by the header, Leave closes it (and leaves the room). -->
+  <Border BorderBrush="{StaticResource Accent}" BorderThickness="4">
+    <DockPanel>
+      <Border DockPanel.Dock="Top" Background="{StaticResource Panel}" BorderBrush="{StaticResource Accent}" BorderThickness="0,0,0,3"
+              Padding="18,10,10,6" Cursor="SizeAll" MouseLeftButtonDown="DragWindow">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Style="{StaticResource Pill}" Margin="0" FontSize="14" Padding="18,9,18,8" Background="#FF4D5E" Cursor="Hand" Content="Leave" Click="Leave"/>
+          <TextBlock Text="Chat with a friend" FontSize="20" FontFamily="{StaticResource Display}" Foreground="{StaticResource Warn}" VerticalAlignment="Center"/>
+        </DockPanel>
+      </Border>
+      <wv2:WebView2 x:Name="Web"/>
+    </DockPanel>
+  </Border>
 </Window>

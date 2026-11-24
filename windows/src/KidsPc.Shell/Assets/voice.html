@@ -6,52 +6,100 @@
 <!-- GUESS: pinned LiveKit browser client. To avoid the CDN, download this file into Assets\ and point at it. -->
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.7/dist/livekit-client.umd.min.js"></script>
 <style>
-  /* Matches the shell's retro-space theme (colours only: this page has no access to the app's fonts). */
-  body { margin: 0; padding: 24px; color: #fff; font: 18px/1.4 Bahnschrift, "Segoe UI", sans-serif;
-         background: radial-gradient(120% 80% at 80% 0%, #2a1260, #0b0628 55%, #03020f); min-height: 100vh; box-sizing: border-box; }
-  h1 { font: 900 26px/1.1 "Segoe UI Black", "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: .02em; margin: 0 0 14px;
-       color: #ffd23f; text-shadow: 2px 2px 0 #ff2e97; }
-  button { font: 900 15px/1 "Segoe UI Black", "Segoe UI", sans-serif; text-transform: uppercase; padding: 12px 22px; border-radius: 14px; border: 0;
-           background: linear-gradient(#7df1ff, #22e4ff); color: #06122b; margin-right: 8px; cursor: pointer; box-shadow: 0 5px 0 #0a7fa3; }
-  button:active { transform: translateY(4px); box-shadow: 0 1px 0 #0a7fa3; }
-  ul { list-style: none; padding: 0; margin: 18px 0; }
-  li { background: #1a1060; border: 2px solid #4b3bb0; border-radius: 14px; padding: 10px 14px; margin: 8px 0; }
-  .muted { color: #b3a9e8; font-size: 15px; }
+  /* The kid's voice room, in the shell's retro-space theme. The window frame and Leave button are drawn by VoiceWindow.xaml. */
+  @font-face { font-family: "Bungee"; src: url("Fonts/Bungee.ttf"); }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; padding: 18px 20px; color: #fff; font: 17px/1.4 Bahnschrift, "Segoe UI", sans-serif; user-select: none; overflow: hidden;
+         background: radial-gradient(120% 70% at 85% 0%, #2a1260, #0b0628 55%, #03020f);
+         display: flex; flex-direction: column; gap: 14px; }
+  #status { margin: 0; font: 14px "Bungee", "Segoe UI Black", sans-serif; text-transform: uppercase; color: #22e4ff; }
+  #status.bad { color: #ff4d5e; }
+  #people { list-style: none; margin: 0; padding: 0; flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; overflow-y: auto; }
+  .person { background: #1a1060; border: 3px solid #4b3bb0; border-radius: 20px; padding: 14px 8px 12px; text-align: center; }
+  .orb { width: 76px; height: 76px; margin: 0 auto 8px; border-radius: 50%; display: grid; place-items: center;
+         font: 34px/1 "Bungee", "Segoe UI Black", sans-serif; text-shadow: 0 3px 0 #0006;
+         background: radial-gradient(circle at 32% 28%, #ffd1ec, #ff2e97 45%, #6a0dad); box-shadow: inset -8px -8px 14px #0006; }
+  .person:nth-child(2n) .orb { background: radial-gradient(circle at 32% 28%, #d9fbff, #22e4ff 45%, #1b3bff); }
+  .person:nth-child(3n) .orb { background: radial-gradient(circle at 32% 28%, #fff7c2, #ffd23f 45%, #ff6a00); }
+  .pname { font-weight: 700; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname small { color: #b3a9e8; font-weight: 400; }
+  .pstate { font: 12px "Bungee", "Segoe UI Black", sans-serif; text-transform: uppercase; color: #b3a9e8; margin-top: 2px; }
+  .person.talking { border-color: #7dff5a; box-shadow: 0 0 22px #7dff5a88; }
+  .person.talking .orb { box-shadow: inset -8px -8px 14px #0006, 0 0 0 4px #1a1060, 0 0 0 8px #7dff5a; animation: talk .7s infinite alternate; }
+  .person.talking .pstate { color: #7dff5a; }
+  .person.muted .orb { filter: grayscale(.85) brightness(.75); }
+  .person.muted .pstate { color: #ff4d5e; }
+  @keyframes talk { to { transform: scale(1.07); } }
+  .empty { grid-column: 1 / -1; color: #b3a9e8; text-align: center; padding: 18px 10px; border: 3px dashed #4b3bb0; border-radius: 20px; }
+  #mute { width: 100%; font: 18px/1 "Bungee", "Segoe UI Black", sans-serif; text-transform: uppercase; padding: 17px 10px 15px; border: 0; border-radius: 18px; cursor: pointer;
+          color: #06122b; background: linear-gradient(#7df1ff, #22e4ff); box-shadow: 0 6px 0 #0a7fa3; margin-bottom: 6px; }
+  #mute:active { transform: translateY(5px); box-shadow: 0 1px 0 #0a7fa3; }
+  #mute.off { color: #fff; background: linear-gradient(#ff7a8a, #ff4d5e); box-shadow: 0 6px 0 #9c1230; }
+  #mute.off:active { box-shadow: 0 1px 0 #9c1230; }
+  .hint { margin: 0; color: #b3a9e8; font-size: 14px; text-align: center; }
 </style>
 </head>
 <body>
-<h1>Voice chat</h1>
-<p id="status" class="muted">Connecting…</p>
-<div><button id="mute">Mute</button></div>
+<p id="status">Connecting…</p>
 <ul id="people"></ul>
-<p class="muted">Friends join with the link Mom or Dad sent them. Close this window to leave.</p>
+<button id="mute">Mute my mic</button>
+<p class="hint">This button only changes your own microphone. Friends join with the link Mom or Dad sent them.</p>
 <script>
 const p = new URLSearchParams(location.hash.slice(1));
 const LK = window.LivekitClient;
-const room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s).replace(/[<>&]/g, "");
-function render() {
-  const all = [room.localParticipant, ...room.remoteParticipants.values()];
-  $("#people").innerHTML = all.map((x) => `<li>${x.isSpeaking ? "🔊" : "🔈"} ${esc(x.name || x.identity)}${x === room.localParticipant ? " (you)" : ""}</li>`).join("");
-  $("#status").textContent = room.remoteParticipants.size ? "Connected." : "Waiting for a friend to join…";
+const esc = (s) => String(s).replace(/[<>&"]/g, "");
+const demo = p.get("url") === "demo";   // "KidsPcShell.exe --demo voice": a made-up room, for looking at the design
+
+// One card per person. The only microphone anyone can switch is their own.
+function draw(people, micOn) {
+  $("#people").innerHTML = people.map((x) => `<li class="person ${x.muted ? "muted" : x.talking ? "talking" : ""}">
+      <div class="orb">${esc(x.name).slice(0, 1).toUpperCase()}</div>
+      <div class="pname">${esc(x.name)}${x.me ? " <small>(you)</small>" : ""}</div>
+      <div class="pstate">${x.muted ? "mic off" : x.talking ? "talking" : "listening"}</div></li>`).join("")
+    + (people.length < 2 ? `<li class="empty">Waiting for a friend to join…</li>` : "");
+  $("#status").textContent = people.length < 2 ? "You're in. Nobody else is here yet." : "Connected";
+  $("#mute").textContent = micOn ? "Mute my mic" : "Unmute my mic";
+  $("#mute").classList.toggle("off", !micOn);
 }
-room.on(LK.RoomEvent.TrackSubscribed, (t) => { if (t.kind === "audio") document.body.appendChild(t.attach()); })
-    .on(LK.RoomEvent.ParticipantConnected, render).on(LK.RoomEvent.ParticipantDisconnected, render)
-    .on(LK.RoomEvent.ActiveSpeakersChanged, render)
-    .on(LK.RoomEvent.Disconnected, () => ($("#status").textContent = "Disconnected."));
-(async () => {
-  try {
-    await room.connect(p.get("url"), p.get("token"));
-    await room.localParticipant.setMicrophoneEnabled(true);
+
+if (demo) {
+  let on = true;
+  const show = () => draw([{ name: p.get("name") || "Adam", me: true, muted: !on }, { name: "Max", talking: true }, { name: "Oliver", muted: true }], on);
+  $("#mute").onclick = () => { on = !on; show(); };
+  show();
+} else if (!LK) {
+  $("#status").textContent = "Voice chat couldn't load. Ask Mom or Dad."; $("#status").className = "bad";
+} else {
+  const room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+  let micNote = "";   // set when the microphone can't be switched on, shown in place of the status
+  const render = () => {
+    if (room.state !== LK.ConnectionState.Connected) return;
+    const all = [room.localParticipant, ...room.remoteParticipants.values()];
+    draw(all.map((x) => ({ name: x.name || x.identity, me: x === room.localParticipant, muted: !x.isMicrophoneEnabled, talking: x.isSpeaking })),
+         room.localParticipant.isMicrophoneEnabled);
+    if (micNote) $("#status").textContent = micNote;
+    $("#status").className = micNote ? "bad" : "";
+  };
+  async function setMic(on) {
+    try { await room.localParticipant.setMicrophoneEnabled(on); micNote = ""; }
+    catch (e) { micNote = "Your microphone isn't working. You can still listen. Ask Mom or Dad."; }
     render();
-  } catch (e) { $("#status").textContent = "Couldn't connect: " + e.message; }
-})();
-$("#mute").onclick = async () => {
-  const on = room.localParticipant.isMicrophoneEnabled;
-  await room.localParticipant.setMicrophoneEnabled(!on);
-  $("#mute").textContent = on ? "Unmute" : "Mute";
-};
+  }
+  const E = LK.RoomEvent;
+  room.on(E.TrackSubscribed, (t) => { if (t.kind === "audio") document.body.appendChild(t.attach()); render(); });
+  for (const e of [E.ParticipantConnected, E.ParticipantDisconnected, E.ActiveSpeakersChanged, E.TrackMuted, E.TrackUnmuted,
+                   E.TrackPublished, E.TrackUnpublished, E.LocalTrackPublished, E.LocalTrackUnpublished])
+    room.on(e, render);
+  room.on(E.Disconnected, () => { $("#status").textContent = "Disconnected"; $("#status").className = "bad"; });
+  (async () => {
+    try { await room.connect(p.get("url"), p.get("token")); }
+    catch (e) { $("#status").textContent = "Couldn't connect: " + e.message; $("#status").className = "bad"; return; }
+    await setMic(true);
+  })();
+  $("#mute").onclick = () => setMic(!room.localParticipant.isMicrophoneEnabled);
+}
 </script>
 </body>
 </html>

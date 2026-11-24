@@ -6,7 +6,7 @@
 #>
 param([Parameter(Mandatory)] [string] $BuildDir, [string] $Out = "shots", [int] $Width = 1920, [int] $Height = 1080)
 $ErrorActionPreference = "Stop"
-$scenes = "home", "catalogue", "ask", "chat", "warning", "lock"
+$scenes = "home", "catalogue", "ask", "chat", "voice", "warning", "lock"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $exe = (Resolve-Path "$BuildDir\Shell\KidsPcShell.exe").Path
 

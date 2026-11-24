@@ -5,60 +5,88 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05031a">
 <title>Voice Chat</title>
+<!-- Friends open this page from outside the house. Only app.css and /static/fonts/ are reachable there,
+     so everything else this page needs is inline. -->
 <link rel="stylesheet" href="/static/app.css">
 <!-- GUESS: pinned LiveKit browser client. Vendor this file into /static if you prefer no CDN. -->
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.7/dist/livekit-client.umd.min.js"></script>
 </head>
-<body>
+<body class="voice">
 <div class="sky" aria-hidden="true"></div>
 <main>
-  <div class="brand"><div class="logo" aria-hidden="true"></div><h1 id="title">Voice chat</h1></div>
-  <div class="card">
-    <p id="status">Press Join to talk. Your browser will ask to use the microphone.</p>
-    <div class="actions">
-      <button id="join">Join</button>
-      <button id="mute" class="ghost" hidden>Mute</button>
-      <button id="leave" class="bad" hidden>Leave</button>
-    </div>
+  <div class="brand hero">
+    <div class="logo" aria-hidden="true"></div>
+    <h1 id="title">Voice chat</h1>
+    <p class="tag">Friends only</p>
   </div>
-  <ul id="people" class="list"></ul>
-  <p class="muted">Voice only. A parent created this link and can switch it off at any time.</p>
+  <p id="status">Press Join to talk. Your browser will ask to use the microphone.</p>
+  <ul id="people" class="crew"></ul>
+  <div class="actions even">
+    <button id="join" class="good">Join</button>
+    <button id="mute" hidden>Mute my mic</button>
+    <button id="leave" class="ghost" hidden>Leave</button>
+  </div>
+  <p class="muted" id="hint">Voice only. A parent created this link and can switch it off at any time.</p>
 </main>
 <script>
 const code = location.pathname.split("/").pop();
 const LK = window.LivekitClient;
-let room;
+let room, micNote = "";   // micNote: set when the microphone can't be switched on, shown in place of the status
 const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[<>&"]/g, "");
+const say = (text, bad = false) => { $("#status").textContent = text; $("#status").className = bad ? "bad" : ""; };
 
+// One card per person. The only microphone anyone can switch is their own.
 function renderPeople() {
-  if (!room) return;
-  const all = [room.localParticipant, ...room.remoteParticipants.values()];
-  $("#people").innerHTML = all.map((p) => `<li>${p.isSpeaking ? "🔊" : "🔈"} ${(p.name || p.identity).replace(/[<>&]/g, "")}${p === room.localParticipant ? " (you)" : ""}</li>`).join("");
+  if (!room || room.state !== LK.ConnectionState.Connected) return;
+  const me = room.localParticipant, all = [me, ...room.remoteParticipants.values()];
+  $("#people").innerHTML = all.map((p) => {
+    const muted = !p.isMicrophoneEnabled, name = esc(p.name || p.identity);
+    return `<li class="person ${muted ? "muted" : p.isSpeaking ? "talking" : ""}">
+      <div class="orb">${name.slice(0, 1).toUpperCase()}</div>
+      <div class="pname">${name}${p === me ? " <small>(you)</small>" : ""}</div>
+      <div class="pstate">${muted ? "mic off" : p.isSpeaking ? "talking" : "listening"}</div></li>`;
+  }).join("");
+  $("#mute").textContent = me.isMicrophoneEnabled ? "Mute my mic" : "Unmute my mic";
+  $("#mute").className = me.isMicrophoneEnabled ? "" : "bad";
+  if (micNote) say(micNote, true);
+}
+
+async function setMic(on) {
+  try { await room.localParticipant.setMicrophoneEnabled(on); micNote = ""; }
+  catch (e) { micNote = "Your microphone isn't working. Allow it in your browser, then press Unmute my mic. You can still listen."; }
+  renderPeople();
+}
+
+function showJoined(on) {
+  $("#join").hidden = on; $("#mute").hidden = $("#leave").hidden = !on;
+  $("#hint").textContent = on ? "The mic button only changes your own microphone." : "Voice only. A parent created this link and can switch it off at any time.";
+  if (!on) $("#people").innerHTML = "";
 }
 
 $("#join").onclick = async () => {
-  $("#status").textContent = "Connecting…";
-  const r = await fetch(`/api/voice/join/${code}`, { method: "POST" });
-  const j = await r.json();
-  if (!r.ok) { $("#status").textContent = j.detail || "This link is not active."; return; }
-  $("#title").textContent = `Voice chat with ${j.kid_name}`;
-  room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
-  room.on(LK.RoomEvent.TrackSubscribed, (track) => { if (track.kind === "audio") document.body.appendChild(track.attach()); })
-      .on(LK.RoomEvent.ParticipantConnected, renderPeople)
-      .on(LK.RoomEvent.ParticipantDisconnected, renderPeople)
-      .on(LK.RoomEvent.ActiveSpeakersChanged, renderPeople)
-      .on(LK.RoomEvent.Disconnected, () => { $("#status").textContent = "Disconnected."; $("#join").hidden = false; $("#mute").hidden = $("#leave").hidden = true; });
-  await room.connect(j.url, j.token);
-  await room.localParticipant.setMicrophoneEnabled(true);
-  $("#status").textContent = `Connected as ${j.friend_name}.`;
-  $("#join").hidden = true; $("#mute").hidden = $("#leave").hidden = false;
-  renderPeople();
+  if (!LK) return say("Voice chat couldn't load. Check your internet connection and reload.", true);
+  say("Connecting…");
+  let j;
+  try {
+    const r = await fetch(`/api/voice/join/${code}`, { method: "POST" });
+    j = await r.json();
+    if (!r.ok) return say(j.detail || "This link is not active.", true);
+    $("#title").textContent = `Voice chat with ${j.kid_name}`;
+    room = new LK.Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+    const E = LK.RoomEvent;
+    room.on(E.TrackSubscribed, (track) => { if (track.kind === "audio") document.body.appendChild(track.attach()); renderPeople(); });
+    for (const e of [E.ParticipantConnected, E.ParticipantDisconnected, E.ActiveSpeakersChanged, E.TrackMuted, E.TrackUnmuted,
+                     E.TrackPublished, E.TrackUnpublished, E.LocalTrackPublished, E.LocalTrackUnpublished])
+      room.on(e, renderPeople);
+    room.on(E.Disconnected, () => { say("You left the chat."); showJoined(false); });
+    await room.connect(j.url, j.token);
+  } catch (e) { return say("Couldn't connect: " + e.message, true); }
+  say(`Connected as ${j.friend_name}.`);
+  showJoined(true);
+  await setMic(true);
 };
-$("#mute").onclick = async () => {
-  const on = room.localParticipant.isMicrophoneEnabled;
-  await room.localParticipant.setMicrophoneEnabled(!on);
-  $("#mute").textContent = on ? "Unmute" : "Mute";
-};
+$("#mute").onclick = () => setMic(!room.localParticipant.isMicrophoneEnabled);
 $("#leave").onclick = () => room && room.disconnect();
 </script>
 </body>

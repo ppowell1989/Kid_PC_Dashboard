@@ -13,6 +13,8 @@
     <ProjectReference Include="..\KidsPc.Shared\KidsPc.Shared.csproj" />
     <None Remove="Assets\Fonts\*.ttf" />
     <Resource Include="Assets\Fonts\*.ttf" />
+    <!-- Also next to the exe, for the voice page (a web page in Assets cannot read fonts inside the exe). -->
+    <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -17,7 +17,7 @@ internal sealed class PipeHelper : IHelper
 /// <summary>
 /// Stand-in helper for "KidsPcShell.exe --demo &lt;scene&gt;": canned data, no hub, no helper, nothing launches.
 /// Used by windows\tests\Screenshots.ps1 so every screen of the design can be looked at on real Windows pixels.
-/// Scenes: home, catalogue, ask, chat, warning, lock.
+/// Scenes: home, catalogue, ask, chat, voice, warning, lock.
 /// </summary>
 internal sealed class DemoHelper(string scene) : IHelper
 {
@@ -49,7 +49,7 @@ internal sealed class DemoHelper(string scene) : IHelper
             },
             "chat" => req.Detail == "0" ? Chat() : new List<ChatMessage>(),
             "install" => new InstallResult("none", null, "Demo mode: nothing was installed."),
-            "voice_token" => throw new InvalidOperationException("Voice chat is off in demo mode."),
+            "voice_token" => scene == "voice" ? new VoiceToken("demo", "demo", "demo") : throw new InvalidOperationException("Voice chat is off in demo mode."),
             _ => null,
         };
         return Task.FromResult((T?)result);

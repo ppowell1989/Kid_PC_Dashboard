@@ -41,4 +41,8 @@ public partial class VoiceWindow : Window
         };
         Closed += (_, _) => Web.Dispose();   // leaving the window leaves the room
     }
+
+    private void DragWindow(object s, System.Windows.Input.MouseButtonEventArgs e) => DragMove();
+
+    private void Leave(object s, RoutedEventArgs e) => Close();
 }
