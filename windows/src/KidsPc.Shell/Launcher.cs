@@ -12,7 +12,22 @@ public static class Launcher
     private const string BattleNet = @"C:\Program Files (x86)\Battle.net\Battle.net.exe";
     private const string Chrome = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
 
-    public static void LaunchGame(Game g)
+    /// <summary>A game, Chrome or a launcher would not start. The home screen shows the message.
+    /// Without this a tile for a launcher that isn't installed crashed the kid's screen on every press.</summary>
+    public static event Action<string>? Failed;
+
+    private static void Try(string what, Action start)
+    {
+        try { start(); }
+        catch (Exception)   // not installed, moved, or Windows refused: none of these should take the screen down
+        {
+            Failed?.Invoke($"{what} wouldn't start. Ask Mom or Dad.");
+        }
+    }
+
+    public static void LaunchGame(Game g) => Try(g.Title, () => StartGame(g));
+
+    private static void StartGame(Game g)
     {
         if (App.DemoScene is not null) return;
         switch (g.Launcher)
@@ -33,24 +48,24 @@ public static class Launcher
         }
     }
 
-    public static void LaunchChrome()
+    public static void LaunchChrome() => Try("Chrome", () =>
     {
         if (App.DemoScene is not null) return;
         Process.Start(new ProcessStartInfo(Chrome, "--start-maximized") { UseShellExecute = false });
-    }
+    });
 
     private const string Steam = @"C:\Program Files (x86)\Steam\steam.exe";
 
     /// <summary>Opens a protocol URI. steam:// goes straight to steam.exe, because the protocol is often
     /// registered only for the account that installed Steam (the parent), not for the kid.</summary>
-    public static void OpenUri(string uri)
+    public static void OpenUri(string uri) => Try("That", () =>
     {
         if (App.DemoScene is not null) return;
         if (uri.StartsWith("steam://", StringComparison.OrdinalIgnoreCase) && File.Exists(Steam))
             Process.Start(new ProcessStartInfo(Steam, uri) { UseShellExecute = false });
         else
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-    }
+    });
 }
 
 /// <summary>Launches a packaged (Store / Game Pass) app without explorer.exe.</summary>

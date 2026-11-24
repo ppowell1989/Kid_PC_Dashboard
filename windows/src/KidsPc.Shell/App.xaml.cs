@@ -33,9 +33,13 @@ public partial class App : Application
     private static void Restart()
     {
         if (DemoScene is not null) Environment.Exit(2);   // a demo that crashed should say so, not turn into the real shell
-        if (_restarts < 5)
+        // Only crashes soon after starting count towards giving up. A screen that ran for a while and then
+        // tripped starts the count again; otherwise five mishaps in one long day left him with a black screen.
+        var n = _restarts + 1;
+        try { if (DateTime.Now - Process.GetCurrentProcess().StartTime > TimeSpan.FromMinutes(1)) n = 1; } catch { /* keep counting */ }
+        if (n <= 5)
         {
-            try { Process.Start(Environment.ProcessPath!, $"--restart {_restarts + 1}"); } catch { /* nothing more we can do */ }
+            try { Process.Start(Environment.ProcessPath!, $"--restart {n}"); } catch { /* nothing more we can do */ }
         }
         Environment.Exit(1);
     }
