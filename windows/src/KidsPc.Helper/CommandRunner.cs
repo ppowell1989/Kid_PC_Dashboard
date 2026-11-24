@@ -5,7 +5,7 @@ using KidsPc.Shared;
 namespace KidsPc.Helper;
 
 /// <summary>Carries out one-off commands from the dashboard and reports the result back.</summary>
-public sealed class CommandRunner(HttpClient http, StateCache cache, AppInstaller apps, ILogger<CommandRunner> log)
+public sealed class CommandRunner(HttpClient http, StateCache cache, AppInstaller apps, Updater updater, ILogger<CommandRunner> log)
 {
     private readonly Dictionary<int, (bool Ok, string Result)> _done = [];   // ran, but the hub may not know yet
 
@@ -40,6 +40,8 @@ public sealed class CommandRunner(HttpClient http, StateCache cache, AppInstalle
                         { UseShellExecute = false, CreateNoWindow = true });
                     cache.AddMessage(new ParentMessage(c.Id, c.CreatedBy, $"This PC will {(c.Kind == "restart" ? "restart" : "shut down")} in 1 minute. Save your game!", DateTimeOffset.Now));
                     return (true, "in 60 seconds");
+                case "install_app" when c.Arg == "kidspc":      // the shell and helper themselves: "Install now" on the dashboard
+                    return (true, updater.InstallNow(c.CreatedBy));
                 case "install_app":
                     apps.InstallNow(c.Arg);
                     return (true, "install started");

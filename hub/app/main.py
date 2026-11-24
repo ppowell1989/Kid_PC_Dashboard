@@ -266,6 +266,11 @@ class Visit(BaseModel):
     at: str                      # ISO time from the extension
 
 
+def auto_update(db: DB, kid_id: str) -> bool:
+    """A parent chose "install updates as soon as they arrive" for this kid's PC. Off unless switched on."""
+    return (db.one("SELECT value FROM kv WHERE key=?", (f"auto_update:{kid_id}",)) or {}).get("value") == "1"
+
+
 @app.get("/api/device/rules")
 def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     st = today_state(db, settings, kid)
@@ -278,6 +283,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
                 "search": SEARCH[settings.decisions.search]},
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": settings.managed_apps,
+        "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
         "friends": db.q("SELECT code,friend_name FROM invites WHERE kid_id=? AND revoked=0", (kid.id,)),
@@ -586,10 +592,11 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "time": today_state(db, settings, kid).__dict__,
             "pending": db.one("SELECT COUNT(*) n FROM requests WHERE kid_id=? AND state='pending'", (kid.id,))["n"],
             "apps": db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=? ORDER BY app", (kid.id,)),
+            "auto_update": auto_update(db, kid.id),
             "flagged_today": db.one("SELECT COUNT(*) n FROM searches WHERE kid_id=? AND flagged=1 AND at >= ?",
                                     (kid.id, rules.day_key(rules.local_now(settings.timezone))))["n"],
         })
-    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump()}
+    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline()}
 
 
 @app.get("/api/parent/searches/{kid_id}")
@@ -774,10 +781,25 @@ def parent_command(kid_id: str, c: CommandIn, parent: str = Depends(current_pare
     kid = kid_or_404(settings, kid_id)
     if c.kind == "message" and not c.arg.strip():
         raise HTTPException(422, "message is empty")
-    if c.kind == "install_app" and c.arg not in ("steam", "chrome", "battlenet"):
+    # "kidspc" is the kid shell and helper themselves: put the waiting build in now.
+    if c.kind == "install_app" and c.arg not in ("steam", "chrome", "battlenet", "kidspc"):
         raise HTTPException(422, "unknown app")
     cid = db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)", (kid.id, c.kind, c.arg.strip(), parent))
     return {"id": cid}
+
+
+class AutoUpdateIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/parent/kids/{kid_id}/auto-update")
+def parent_auto_update(kid_id: str, body: AutoUpdateIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """On: a new build goes in as soon as it arrives, signing the kid out for a minute unless a game is running.
+    Off (the default): it waits for the next restart or sign-in."""
+    kid = kid_or_404(settings, kid_id)
+    db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+         (f"auto_update:{kid.id}", "1" if body.on else "0"))
+    return {"auto_update": body.on}
 
 
 @app.get("/api/parent/kids/{kid_id}/activity")

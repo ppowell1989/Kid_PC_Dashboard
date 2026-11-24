@@ -55,7 +55,10 @@ public sealed record Rules(
     [property: JsonPropertyName("managed_apps")] List<string>? ManagedApps = null,
     List<HubCommand>? Commands = null,
     List<FamilyMember>? Family = null,
-    [property: JsonPropertyName("family_voice")] bool FamilyVoice = true);
+    [property: JsonPropertyName("family_voice")] bool FamilyVoice = true,
+    // A parent chose "install updates right away" for this PC: a new build goes in as soon as it
+    // arrives unless a game is running, instead of waiting for the next restart or sign-in.
+    [property: JsonPropertyName("auto_update")] bool AutoUpdate = false);
 
 /// <summary>A one-off action a parent sent from the dashboard.</summary>
 public sealed record HubCommand(int Id, string Kind, string Arg, [property: JsonPropertyName("created_by")] string CreatedBy);
