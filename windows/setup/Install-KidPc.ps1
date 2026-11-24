@@ -241,6 +241,12 @@ try {
   Set-ItemProperty "$pol\System" DisableChangePassword 1 -Type DWord
   Set-ItemProperty "$pol\Explorer" NoRun 1 -Type DWord
   Set-ItemProperty "$pol\Explorer" NoControlPanel 1 -Type DWord
+  Set-ItemProperty "$pol\Explorer" NoWinKeys 1 -Type DWord               # Win+ shortcuts
+  # Quick Settings (Win+A) and the notification panel (Win+N). The helper keeps all of these in place
+  # afterwards (KidLockdown.cs), and the kid screen swallows the Windows key itself (KeyGuard.cs).
+  New-Item -Force "$h\Software\Policies\Microsoft\Windows\Explorer" | Out-Null
+  Set-ItemProperty "$h\Software\Policies\Microsoft\Windows\Explorer" DisableControlCenter 1 -Type DWord
+  Set-ItemProperty "$h\Software\Policies\Microsoft\Windows\Explorer" DisableNotificationCenter 1 -Type DWord
   New-Item -Force "$h\Software\Policies\Microsoft\Windows\System" | Out-Null
   Set-ItemProperty "$h\Software\Policies\Microsoft\Windows\System" DisableCMD 1 -Type DWord   # cmd.exe and .bat
   # No "let's finish setting up your device" pages on his account.

@@ -36,6 +36,7 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
         "powershell.exe", "pwsh.exe", "powershell_ise.exe", "cmd.exe", "WindowsTerminal.exe", "wt.exe",
         "regedit.exe", "reg.exe", "taskmgr.exe", "mmc.exe", "explorer.exe",
         "wscript.exe", "cscript.exe", "mshta.exe", "curl.exe", "bitsadmin.exe", "certutil.exe",
+        "SystemSettings.exe", "control.exe",    // Windows Settings (the gear in Quick Settings, Win+I) and Control Panel
     };
 
     private static readonly Dictionary<string, string> BattleNetFolders = new(StringComparer.OrdinalIgnoreCase)
