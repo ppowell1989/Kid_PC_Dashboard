@@ -58,8 +58,10 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
         foreach (var name in apps)
         {
             if (!_defs.TryGetValue(name, out var def)) continue;
-            if (File.Exists(def.InstalledPath())) { _status[name] = new("installed"); continue; }
+            // An install in flight is not done when the app's program appears: the installer is still writing,
+            // and may have a window to close. InstallAsync sets the result when it is.
             if (_status.TryGetValue(name, out var cur) && cur.State == "installing") continue;
+            if (File.Exists(def.InstalledPath())) { _status[name] = new("installed"); continue; }
             if (_lastAttempt.TryGetValue(name, out var last) && DateTimeOffset.Now - last < TimeSpan.FromMinutes(30)) continue;
 
             _lastAttempt[name] = DateTimeOffset.Now;
@@ -73,8 +75,9 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
     public AppStatus Want(string name)
     {
         if (!_defs.TryGetValue(name, out var def)) return new("failed", "unknown app");
+        if (_status.TryGetValue(name, out var cur) && cur.State == "installing") return cur;
         if (File.Exists(def.InstalledPath())) return _status[name] = new("installed");
-        var failedBefore = _status.TryGetValue(name, out var cur) && cur.State == "failed";
+        var failedBefore = cur?.State == "failed";
         if (!_lastAttempt.TryGetValue(name, out var last) || DateTimeOffset.Now - last > TimeSpan.FromMinutes(5))
         {
             _lastAttempt.TryRemove(name, out _);

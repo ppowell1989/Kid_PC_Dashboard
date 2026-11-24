@@ -61,8 +61,9 @@ jobs:
           path: ${{ runner.temp }}/kidspc-it
 
   launchers:
-    # Tries the one install that has no silent mode (Battle.net) on a real Windows. It takes minutes and
-    # depends on Blizzard's servers, so it reports its result without holding up or failing a build.
+    # Tries the one install that has no silent mode (Battle.net) on a real Windows, with the helper running
+    # as SYSTEM with no desktop like the installed service. It takes minutes and depends on Blizzard's
+    # servers, so it reports its result without holding up or failing a build.
     needs: [hub, windows]
     runs-on: windows-latest
     continue-on-error: true
@@ -76,7 +77,7 @@ jobs:
         with: { name: kidspc-win-x64, path: bundle }
       - name: Helper installs Battle.net by itself
         shell: pwsh
-        run: ./windows/tests/Integration.ps1 -BuildDir bundle -LauncherInstall
+        run: ./windows/tests/Integration.ps1 -BuildDir bundle -LauncherInstall -AsSystem
       - if: always()
         uses: actions/upload-artifact@v4
         with:

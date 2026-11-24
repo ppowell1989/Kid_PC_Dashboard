@@ -5,8 +5,10 @@
   Usage: .\windows\tests\Integration.ps1 -BuildDir windows\publish\win-x64
   -LauncherInstall also waits for the helper to install Battle.net by itself (minutes, and it depends on
   Blizzard's servers), so CI runs that in its own job where it cannot hold up a build.
+  -AsSystem starts the helper as the SYSTEM account with no desktop, the way the installed service runs,
+  instead of as the signed-in admin. That is the honest test of an installer that wants to show a window.
 #>
-param([Parameter(Mandatory)] [string] $BuildDir, [int] $Port = 8765, [switch] $LauncherInstall)
+param([Parameter(Mandatory)] [string] $BuildDir, [int] $Port = 8765, [switch] $LauncherInstall, [switch] $AsSystem)
 $ErrorActionPreference = "Stop"
 $fail = 0
 trap {
@@ -88,8 +90,19 @@ db.commit()
 python "$work\mkhist.py" "$hist\History"
 Remove-Item -Recurse -Force "HKLM:\SOFTWARE\Policies\Google\Chrome\URLBlocklist" -ErrorAction SilentlyContinue
 
-$helper = Start-Process "$BuildDir\Helper\KidsPcHelper.exe" -PassThru -NoNewWindow `
-  -RedirectStandardOutput "$work\helper.out.log" -RedirectStandardError "$work\helper.err.log"
+if ($AsSystem) {
+  $helperExe = (Resolve-Path "$BuildDir\Helper\KidsPcHelper.exe").Path
+  $run = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"`"$helperExe`" > `"$work\helper.out.log`" 2> `"$work\helper.err.log`"`""
+  Register-ScheduledTask -TaskName "KidsPcHelperTest" -Action $run -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+  Start-ScheduledTask "KidsPcHelperTest"
+  $helper = $null
+  for ($i = 0; $i -lt 20 -and -not $helper; $i++) { Start-Sleep 1; $helper = Get-Process KidsPcHelper -ErrorAction SilentlyContinue | Select-Object -First 1 }
+  if (-not $helper) { throw "the helper did not start as SYSTEM" }
+  Write-Host "INFO  helper runs as SYSTEM in session $($helper.SessionId)"
+} else {
+  $helper = Start-Process "$BuildDir\Helper\KidsPcHelper.exe" -PassThru -NoNewWindow `
+    -RedirectStandardOutput "$work\helper.out.log" -RedirectStandardError "$work\helper.err.log"
+}
 Start-Sleep 8
 Check "helper stays up" ($helper.HasExited -eq $false) (Get-Content "$work\helper.err.log" -Raw -ErrorAction SilentlyContinue)
 
@@ -211,17 +224,20 @@ Check "parents are told when something would not start" (($act.events | Where-Ob
 if ($LauncherInstall) {
   # Battle.net has no silent installer. The helper runs it unattended, waits for the app to appear and
   # closes the sign-in window it leaves open. This is the only place that is tried on a real Windows.
-  $bnApp = $null
-  for ($i = 0; $i -lt 120; $i++) {   # up to 10 minutes
-    $ov = Invoke-RestMethod "$hub/api/parent/overview" -WebSession $s
+  $bnApp = $null; $began = Get-Date; $exeAfter = $null
+  for ($i = 0; $i -lt 240; $i++) {   # up to 20 minutes; the helper gives up by itself after 15
+    # The installer restarts network pieces of Windows; a dropped connection to the hub here is not a result.
+    try { $ov = Invoke-RestMethod "$hub/api/parent/overview" -WebSession $s } catch { Write-Host "INFO  hub did not answer once: $_"; Start-Sleep 5; continue }
     $bnApp = @($ov.kids[0].apps) | Where-Object { $_.app -eq "battlenet" }
+    if (-not $exeAfter -and (Test-Path $bnExe)) { $exeAfter = [int]((Get-Date) - $began).TotalSeconds }
     if ($bnApp.state -in "installed", "failed") { break }
     Start-Sleep 5
   }
-  Write-Host "INFO  Battle.net: state=$($bnApp.state) detail=$($bnApp.detail) exe=$(Test-Path $bnExe)"
+  Write-Host "INFO  Battle.net: state=$($bnApp.state) detail=$($bnApp.detail) exe=$(Test-Path $bnExe) program appeared after ${exeAfter}s, finished after $([int]((Get-Date) - $began).TotalSeconds)s"
   Get-ChildItem (Split-Path $bnExe) -ErrorAction SilentlyContinue | Select-Object -First 12 | ForEach-Object { Write-Host "INFO    $($_.Name)" }
+  Get-Process "Battle.net*", "Agent" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "INFO    still running: $($_.Name) in session $($_.SessionId)" }
   Check "helper installed Battle.net by itself and reported it" ($bnApp.state -eq "installed" -and (Test-Path $bnExe)) ($bnApp | ConvertTo-Json)
-  Start-Sleep 5
+  # "installed" is only said once the installer and the sign-in window it opens have been closed.
   Check "the install left no Battle.net window or installer running" (@(Get-Process "Battle.net", "Battle.net-Setup" -ErrorAction SilentlyContinue).Count -eq 0) ((Get-Process "Battle.net*" -ErrorAction SilentlyContinue | ForEach-Object Name) -join ",")
   $bn = Pipe @{ op = "install"; gameId = $wow.id }
   Check "install a Battle.net game once Battle.net is there -> starts Battle.net" ($bn.data.action -eq "exec" -and $bn.data.uri -eq $bnExe) ($bn | ConvertTo-Json)
@@ -250,6 +266,7 @@ try {
 
 Get-Process KidsPcShell -ErrorAction SilentlyContinue | Stop-Process -Force
 Stop-Process $helper -Force -ErrorAction SilentlyContinue
+if ($AsSystem) { Unregister-ScheduledTask -TaskName "KidsPcHelperTest" -Confirm:$false -ErrorAction SilentlyContinue }
 Stop-Process $hubProc -Force -ErrorAction SilentlyContinue
 Write-Host "`n--- helper log ---"; Get-Content "$work\helper.out.log" -ErrorAction SilentlyContinue | Select-Object -Last 30
 if ($fail) { Write-Host "$fail check(s) failed" -ForegroundColor Red; exit 1 }
