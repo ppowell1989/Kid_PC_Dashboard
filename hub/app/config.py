@@ -76,6 +76,13 @@ class Updates(BaseModel):
     poll_minutes: int = 1             # a merged change should reach the PCs soon after its build finishes
 
 
+class Consoles(BaseModel):
+    # Game consoles a parent links on the Playtimes tab share each kid's daily time. Nothing happens until
+    # an account is linked. False turns the feature off entirely (no Nintendo sign-in, no polling).
+    enabled: bool = True
+    poll_seconds: int = 180
+
+
 class Settings(BaseModel):
     timezone: str = "America/New_York"
     parents: list[Parent] = Field(default_factory=list)
@@ -100,6 +107,7 @@ class Settings(BaseModel):
     livekit: LiveKit = LiveKit()
     discord_oauth: DiscordOAuth = DiscordOAuth()
     updates: Updates = Updates()
+    consoles: Consoles = Consoles()
 
     def kid(self, kid_id: str) -> Kid | None:
         return next((k for k in self.kids if k.id == kid_id), None)

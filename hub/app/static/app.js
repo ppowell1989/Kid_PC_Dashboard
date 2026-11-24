@@ -96,6 +96,7 @@ async function refresh() {
       </div>
       <div class="fuel ${t.locked || left <= 12 ? "empty" : left <= 34 ? "low" : ""}"><div style="width:${left}%"></div></div>
       <div class="muted">Played ${fmtMin(t.used)} of ${fmtMin(total)} today. ${lock}${t.next_play ? ` Next play time ${esc(nextPlay(t.next_play))}.` : ""}</div>
+      ${(k.consoles || []).length ? `<div class="muted">Includes ${k.consoles.map((c) => `${fmtMin(c.minutes)} on ${esc(c.device)}${c.games.length ? ` (${c.games.slice(0, 3).map((g) => esc(g.name)).join(", ")})` : ""}`).join(" and ")}.</div>` : ""}
       ${k.flagged_today ? `<div class="alert"><span>${k.flagged_today} flagged search${k.flagged_today > 1 ? "es" : ""} today</span><button class="bad small" data-seesearch="${k.id}">See</button></div>` : ""}
       <div class="actions even">
         ${[15, 30, 60].map((m) => `<button class="ghost" data-grant="${k.id}" data-min="${m}">+${m}m</button>`).join("")}
@@ -530,6 +531,66 @@ async function loadPlaytimes() {
   pt.data = await api("/api/parent/playtimes");
   if (!pt.kid || !pt.data.kids.some((k) => k.id === pt.kid)) pt.kid = pt.data.kids[0]?.id;
   renderPlaytimes();
+  loadConsoles();
+}
+
+// Consoles: a linked Nintendo Switch shares the same daily time ------------------
+async function loadConsoles() {
+  let c;
+  try { c = await api("/api/parent/consoles"); } catch { $("#consoles").innerHTML = ""; return; }   // turned off in config.yaml
+  renderConsoles(c);
+}
+function renderConsoles(c) {
+  const box = $("#consoles"), n = c.nintendo;
+  const kidOpts = (sel, none) => `<option value="">${none}</option>` + c.kids.map((k) => `<option value="${k.id}" ${k.id === sel ? "selected" : ""}>${esc(k.name)}</option>`).join("");
+  if (!n) {
+    box.innerHTML = `<div class="card"><h2>Nintendo Switch</h2>
+      <p class="muted">Link the Nintendo account you use in the Nintendo Switch Parental Controls app. Switch play then comes out of the same daily time as the PC, and the Switch stops the game when that time runs out.</p>
+      <button data-nconnect="1">Connect Nintendo account</button></div>`;
+  } else {
+    const synced = n.synced_at ? new Date(n.synced_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "not yet";
+    box.innerHTML = `<div class="card"><h2 class="split">Nintendo Switch <button class="ghost small" data-nsync="1">Check now</button></h2>
+      <p class="muted">Linked as ${esc(n.label)}. Last checked ${esc(synced)}. Switch play reaches the hub about every 15 minutes.</p>
+      ${n.error ? `<div class="alert"><span>${esc(n.error)}</span>${/again/.test(n.error) ? `<button class="bad small" data-nconnect="1">Connect</button>` : ""}</div>` : ""}
+      ${c.devices.map((d) => `<div class="card day">
+        <div class="dayhead"><b>${esc(d.name)}</b><span class="tagline">${esc(d.model)}</span></div>
+        <label class="muted">Daily limit on this Switch
+          <select data-nlimit="${esc(d.device_id)}">${kidOpts(d.limit_kid, "Leave it to Nintendo's app")}</select></label>
+        ${d.limit_kid ? `<p><label class="check" style="white-space:normal"><input type="checkbox" data-nstop="${esc(d.device_id)}" ${d.stop_game ? "checked" : ""}> Stop the game when time is up, not just an alarm</label></p>
+          <div class="muted">${d.extra_time ? "Bonus time from Nintendo's app is running, so the hub waits until it ends." : d.limit_now != null ? `Limit today: ${fmtMin(d.limit_now)} on this Switch.` : ""}</div>` : ""}
+        <ul class="list">${d.players.map((p) => `<li class="split"><span>${esc(p.nickname)} <span class="muted">${fmtMin(p.minutes)} today</span></span>
+          <select data-nplayer="${esc(p.player_id)}" data-dev="${esc(d.device_id)}" aria-label="Whose time is ${esc(p.nickname)}">${kidOpts(p.kid_id, "Not counted")}</select></li>`).join("")}</ul>
+      </div>`).join("") || `<p class="muted">No Switch found yet. Set one up in the Parental Controls app first.</p>`}
+      <button class="ghost small" data-nunlink="1">Unlink</button></div>`;
+  }
+  box.querySelectorAll("[data-nconnect]").forEach((b) => (b.onclick = () => connectNintendo().catch(oops)));
+  box.querySelectorAll("[data-nsync]").forEach((b) => (b.onclick = async () => renderConsoles(await api("/api/parent/consoles/sync", { method: "POST" }).catch(oops) || c)));
+  box.querySelectorAll("[data-nplayer]").forEach((s) => (s.onchange = async () => {
+    renderConsoles(await api(`/api/parent/consoles/nintendo/devices/${encodeURIComponent(s.dataset.dev)}/players/${encodeURIComponent(s.dataset.nplayer)}`, { method: "PUT", body: { kid_id: s.value } }));
+    refresh();
+  }));
+  const saveDev = async (id) => {
+    const lim = box.querySelector(`[data-nlimit="${CSS.escape(id)}"]`).value, stop = box.querySelector(`[data-nstop="${CSS.escape(id)}"]`);
+    renderConsoles(await api(`/api/parent/consoles/nintendo/devices/${encodeURIComponent(id)}`, { method: "PUT", body: { limit_kid: lim, stop_game: stop ? stop.checked : true } }));
+  };
+  box.querySelectorAll("[data-nlimit]").forEach((s) => (s.onchange = () => saveDev(s.dataset.nlimit).catch(oops)));
+  box.querySelectorAll("[data-nstop]").forEach((s) => (s.onchange = () => saveDev(s.dataset.nstop).catch(oops)));
+  box.querySelectorAll("[data-nunlink]").forEach((b) => (b.onclick = async () => {
+    if (!(await sheet({ title: "Unlink Nintendo?", text: "Switch play stops counting toward the PC. Each Switch keeps today's limit; change it in Nintendo's app if you need to.", ok: "Unlink", kind: "bad" }))) return;
+    await api("/api/parent/consoles/nintendo", { method: "DELETE" }).catch(oops);
+    loadConsoles();
+  }));
+}
+async function connectNintendo() {
+  const { login_url } = await api("/api/parent/consoles/nintendo/start", { method: "POST" });
+  window.open(login_url, "_blank", "noopener");
+  const link = await sheet({
+    title: "Paste the Nintendo link",
+    text: "Sign in on the page that just opened. On \"Linking an external account\", press and hold the red \"Select this person\" button, copy the link, and paste it here.",
+    input: "npf54789befb391a838://auth#…", ok: "Link",
+  });
+  if (!link) return;
+  renderConsoles(await api("/api/parent/consoles/nintendo/finish", { method: "POST", body: { link } }));
 }
 
 function renderPlaytimes() {
