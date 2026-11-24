@@ -23,6 +23,18 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
     private static readonly HashSet<string> OtherBrowsers = new(StringComparer.OrdinalIgnoreCase)
         { "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe", "iexplore.exe", "waterfox.exe", "librewolf.exe", "tor.exe" };
 
+    // Windows' own tools that turn a locked-down account into an open one: a command line, the registry,
+    // Task Manager (which can end the kid shell), a file window (which can start anything), and downloaders.
+    // The kid's screen offers none of them, but a file picker in Chrome or Steam can start a program by
+    // right-click > Open. Closed on sight in the kid's session only; a parent's own sign-in is never touched.
+    // This is a stopgap until an allow-list (App Control / AppLocker) is in place.
+    private static readonly HashSet<string> EscapeTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "powershell.exe", "pwsh.exe", "powershell_ise.exe", "cmd.exe", "WindowsTerminal.exe", "wt.exe",
+        "regedit.exe", "reg.exe", "taskmgr.exe", "mmc.exe", "explorer.exe",
+        "wscript.exe", "cscript.exe", "mshta.exe", "curl.exe", "bitsadmin.exe", "certutil.exe",
+    };
+
     private static readonly Dictionary<string, string> BattleNetFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         ["WoW"] = "World of Warcraft",
@@ -133,13 +145,15 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
                 found.Add(new(pid, path, "chrome", null, null));
             else if (OtherBrowsers.Contains(Path.GetFileName(path)))
                 found.Add(new(pid, path, "browser", null, null));   // Chrome is the managed browser; others skip its policies
+            else if (EscapeTools.Contains(Path.GetFileName(path)))
+                found.Add(new(pid, path, "tool", null, null));
             next:;
         }
 
-        var game = found.FirstOrDefault(p => p.Kind is not ("chrome" or "browser"));
+        var game = found.FirstOrDefault(p => p.Kind is not ("chrome" or "browser" or "tool"));
         var title = game?.Approved?.Title
                     ?? (game?.SteamAppId is { } id ? steam.Values.FirstOrDefault(v => v.AppId == id).Name : null)
                     ?? (found.Any(p => p.Kind == "chrome") ? "Chrome" : "");
-        return new Activity(title ?? "", found.Count > 0, found, game?.Approved?.Id);
+        return new Activity(title ?? "", found.Any(p => p.Kind != "tool"), found, game?.Approved?.Id);
     }
 }
