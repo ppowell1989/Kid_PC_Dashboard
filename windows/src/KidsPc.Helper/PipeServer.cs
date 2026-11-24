@@ -76,7 +76,8 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             case "state":
                 // A game still being put on the PC is not ready to play, even if its folder is already there.
                 var installing = deployer.Captions();
-                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules).Where(id => !installing.ContainsKey(id)), deployer.Nudges(), installing));
+                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules).Where(id => !installing.ContainsKey(id)), deployer.Nudges(), installing,
+                    deployer.Percents(), deployer.SignInNeeded()));
 
             case "request":   // ask a parent for a game, more time, or a website
                 if (req.Kind is not ("game" or "time" or "site") || string.IsNullOrWhiteSpace(req.Detail))

@@ -6,8 +6,10 @@ using Microsoft.Win32;
 
 namespace KidsPc.Helper;
 
-/// <summary>Where one approved game stands on this PC, as reported to the hub. Retry is the hub's "Try again" round it belongs to.</summary>
-public sealed record GameInstallStatus(string State, string Detail = "", long DoneBytes = 0, long TotalBytes = 0, int Retry = 0);
+/// <summary>Where one approved game stands on this PC, as reported to the hub. Retry is the hub's "Try again" round it belongs to.
+/// Stage is a few words on exactly what the store is doing right now ("Waiting for Steam", "Downloading", "Installing",
+/// "Checking files", "Paused"): it goes on the kid's tile and the parents' PCs page, so "on its way" is never all anyone sees.</summary>
+public sealed record GameInstallStatus(string State, string Detail = "", long DoneBytes = 0, long TotalBytes = 0, int Retry = 0, string Stage = "");
 
 /// <summary>
 /// Puts the games on the hub's install list onto this PC by themselves, like software pushed out by an IT office:
@@ -31,6 +33,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         public bool ManifestWritten;
         public bool NeedsKick;
         public DateTimeOffset? KickedAt;
+        public bool Restarted;                // the kick restarted Steam (rather than starting it)
         public long LogOffset = -1;           // Steam's content_log.txt length when this attempt began: only newer lines are about it
         public long LastSize = -1;            // Battle.net: folder size last time, and since when it hasn't changed
         public DateTimeOffset SizeSince = DateTimeOffset.Now;
@@ -45,6 +48,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     private DateTimeOffset _lastSteamKick = DateTimeOffset.MinValue;
     private DateTimeOffset? _steamSeenSince;     // when Steam was first seen running in the kid's session this time
     private string _kidName = "him";
+    private Dictionary<int, string> _launcherOf = [];
 
     // Steam's StateFlags bits (from the Steam client's EAppState).
     private const long UpdateRequired = 2, FullyInstalled = 4, UpdateRunning = 256, UpdatePaused = 512, UpdateStarted = 1024,
@@ -66,14 +70,39 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         }
     }
 
-    /// <summary>Games on their way, with the few words their tile shows instead of "Install".</summary>
+    /// <summary>Games on their way, with the few words their tile shows instead of "Install" or "Play": what is really
+    /// happening ("Waiting for Steam", "Downloading 45%"), or that a grown-up has to do something first.</summary>
     public Dictionary<int, string> Captions()
     {
         lock (_gate)
-            return _status.Where(kv => kv.Value.State is "installing" or "waiting" or "queued")
-                .ToDictionary(kv => kv.Key, kv => kv.Value.State == "installing" && kv.Value.TotalBytes > 0
-                    ? $"Downloading {Math.Min(99, kv.Value.DoneBytes * 100 / kv.Value.TotalBytes)}%"
-                    : kv.Value.State == "installing" ? "Installing" : "On its way");
+            return _status.Where(kv => kv.Value.State is "installing" or "waiting" or "queued" or "needs_signin" or "not_owned" or "no_space" or "stuck" or "failed")
+                .ToDictionary(kv => kv.Key, kv => KidWords(kv.Value));
+    }
+
+    private static string KidWords(GameInstallStatus s) => s.State switch
+    {
+        "installing" when Pct(s) is { } p && s.Stage is "" or "Downloading" => $"Downloading {p}%",
+        "installing" => s.Stage is "" ? "Installing" : s.Stage,
+        "waiting" or "queued" => s.Stage is "" ? "Starting soon" : s.Stage,
+        _ => "Waiting for Mom or Dad",
+    };
+
+    private static int? Pct(GameInstallStatus s) => s.TotalBytes > 0 ? (int)Math.Min(99, s.DoneBytes * 100 / s.TotalBytes) : null;
+
+    /// <summary>How far each download is, for the bar on its tile.</summary>
+    public Dictionary<int, int> Percents()
+    {
+        lock (_gate)
+            return _status.Where(kv => kv.Value.State == "installing" && Pct(kv.Value) is not null)
+                .ToDictionary(kv => kv.Key, kv => Pct(kv.Value)!.Value);
+    }
+
+    /// <summary>Stores waiting for someone to sign in on this PC. The shell leaves their windows on screen for that.</summary>
+    public List<string> SignInNeeded()
+    {
+        lock (_gate)
+            return _status.Where(kv => kv.Value.State == "needs_signin" && _launcherOf.ContainsKey(kv.Key))
+                .Select(kv => _launcherOf[kv.Key]).Distinct().ToList();
     }
 
     /// <summary>Free space on the drive games go to, in GB, for the parents' PC page.</summary>
@@ -86,6 +115,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     public void Tick(Rules rules, bool kidHere, bool gameRunning)
     {
         _kidName = rules.Kid.Name;
+        _launcherOf = rules.Games.ToDictionary(g => g.Id, g => g.Launcher);
         ReportBattleNetProducts();
         var wanted = (rules.Installs ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First().Retry);
         var installed = library.InstalledGameIds(rules).ToHashSet();
@@ -128,7 +158,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
                 _lastSteamKick = DateTimeOffset.Now;
                 var kind = steamHere ? "steam_restart" : "steam_start";
                 _nudges.Add((new Nudge($"{kind}-{DateTimeOffset.Now.ToUnixTimeSeconds()}", kind), DateTimeOffset.Now));
-                foreach (var a in kick) { a.NeedsKick = false; a.KickedAt = DateTimeOffset.Now; }
+                foreach (var a in kick) { a.NeedsKick = false; a.KickedAt = DateTimeOffset.Now; a.Restarted = steamHere; }
                 log.LogInformation("asked the shell to {Kind} so Steam picks up {Count} new game(s)", kind, kick.Count);
             }
         }
@@ -159,22 +189,32 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         if (total > 0 && free is { } f && total - done > f + (512L << 20))
             return new("no_space", $"It needs {Gb(total - done)} more and the PC has {Gb(f)} free. Remove a game he no longer plays, then press Try again.");
         if ((m.Flags & Busy) != 0 || done > 0)
-            return new("installing", (m.Flags & UpdatePaused) != 0 ? "Paused in Steam." : "", done, total);
+        {
+            var (stage, says) = (m.Flags & UpdatePaused) != 0 ? ("Paused", "Paused in Steam. It carries on when Steam is told to, or after Try again.")
+                : (m.Flags & Validating) != 0 ? ("Checking files", "Steam is checking the files it has so far.")
+                : (m.Flags & Preallocating) != 0 ? ("Making room", "Steam is setting aside space on the drive for it.")
+                : (m.Flags & (Staging | Committing)) != 0 ? ("Installing", "Downloaded. Steam is unpacking it.")
+                : ("Downloading", "");
+            return new("installing", says, done, total, Stage: stage);
+        }
 
-        if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC. Steam downloads it then, even on the lock screen.");
+        if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC. Steam downloads it then, even on the lock screen.", Stage: "Waiting for the PC");
         if (!SteamEverSignedIn())
-            return new("needs_signin", $"Steam has never been signed in on {_kidName}'s PC. Sign in once with {_kidName}'s Steam account and tick Remember me. After that, games install by themselves.");
+            return new("needs_signin", $"Steam has never been signed in on {_kidName}'s PC. Sign in once with {_kidName}'s Steam account and tick Remember me. After that, games install by themselves.", Stage: "Needs Steam sign-in");
         if (steamHere && SteamSignedInNow() == false && _steamSeenSince is { } since && DateTimeOffset.Now - since > TimeSpan.FromMinutes(1))
-            return new("needs_signin", $"Steam is open on {_kidName}'s PC but signed out. Sign in once with his Steam account and tick Remember me.");
+            return new("needs_signin", $"Steam is open on {_kidName}'s PC but signed out. Sign in once with his Steam account and tick Remember me.", Stage: "Needs Steam sign-in");
 
         if (at.KickedAt is null)
         {
             at.NeedsKick = true;
-            return new("waiting", gameRunning ? $"Starts after {_kidName} closes his game, so it doesn't interrupt him." : "Getting Steam to start the download.");
+            return gameRunning
+                ? new("waiting", $"Starts after {_kidName} closes his game, so it doesn't interrupt him.", Stage: "After his game")
+                : new("waiting", "Handing it to Steam. Steam starts or restarts in the background within a few minutes.", Stage: "Starting Steam");
         }
+        var kicked = $"Steam was {(at.Restarted ? "restarted" : "started")} at {at.KickedAt.Value:h:mm tt} to pick it up";
         if (DateTimeOffset.Now - at.KickedAt > StuckAfter)
-            return new("stuck", $"Steam didn't start the download. Try again restarts Steam on the PC. If that doesn't work, open Steam on the PC and press Install on the game.");
-        return new("waiting", "Steam is getting ready to download it.");
+            return new("stuck", $"{kicked}, but it hasn't downloaded anything since. Try again restarts Steam on the PC. If that doesn't work, open Steam on the PC and press Install on the game.", Stage: "Stuck");
+        return new("waiting", $"{kicked}. It hasn't started downloading yet; that usually takes a minute or two.", Stage: "Waiting for Steam");
     }
 
     [GeneratedRegex("[^A-Za-z0-9 _.-]")]
@@ -310,7 +350,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
                 at.KickedAt = null;          // done: from now on the folder alone says installed
                 return new("installed");
             }
-            return new("installing", "", Math.Max(at.LastSize, 0), 0);
+            return new("installing", $"Battle.net is downloading it. {Gb(Math.Max(at.LastSize, 0))} on the PC so far.", Math.Max(at.LastSize, 0), 0, Stage: "Downloading");
         }
 
         if (LauncherNotReady("battlenet", "Battle.net") is { } wait) return wait;
@@ -326,11 +366,11 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
             at.KickedAt = DateTimeOffset.Now;
             _nudges.Add((new Nudge($"bnet-{g.Id}-{at.Retry}-{DateTimeOffset.Now.ToUnixTimeSeconds()}", "battlenet_install", g.LaunchRef), DateTimeOffset.Now));
             events.Add("game_install_started", $"{g.Title} (Battle.net)");
-            return new("waiting", "Asked Battle.net to install it.");
+            return new("waiting", $"Asked Battle.net to install it at {DateTimeOffset.Now:h:mm tt}.", Stage: "Waiting for Battle.net");
         }
         if (DateTimeOffset.Now - at.KickedAt > StuckAfter)
             return new("stuck", "Battle.net didn't start the download. Press Try again. If that doesn't work, open Battle.net on the PC and press Install on the game.");
-        return new("waiting", "Battle.net is getting ready to download it.");
+        return new("waiting", $"Battle.net was asked at {at.KickedAt.Value:h:mm tt} and hasn't started downloading yet.", Stage: "Waiting for Battle.net");
     }
 
     private static readonly Dictionary<string, int> BattleNetSizesGb = new(StringComparer.OrdinalIgnoreCase)

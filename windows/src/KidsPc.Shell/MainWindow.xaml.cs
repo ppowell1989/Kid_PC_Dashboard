@@ -33,6 +33,23 @@ public partial class MainWindow : Window
     }
 
     private readonly HashSet<string> _nudged = [];
+    private DateTimeOffset _tidyUntil = DateTimeOffset.MinValue;
+
+    /// <summary>While the PC is putting a game on by itself (and for a while after it started a store to do it), store
+    /// windows that pop up are hidden so they can't cover his screen. See <see cref="StrayWindows"/>.</summary>
+    private void TidyStoreWindows()
+    {
+        if (App.DemoScene is not null || _state is null) return;
+        var signIn = _state.SignInNeeded ?? [];
+        var busy = (_state.Installing?.Count ?? 0) > 0 || DateTimeOffset.Now < _tidyUntil;
+        var hisOwn = DateTimeOffset.Now - Launcher.KidOpenedStoreAt < TimeSpan.FromMinutes(3);
+        try
+        {
+            if (busy && !hisOwn) StrayWindows.Tidy(signIn);
+            else StrayWindows.ShowAgain(signIn);
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"tidy failed: {ex.Message}"); }
+    }
 
     private async Task RefreshAsync()
     {
@@ -41,7 +58,8 @@ public partial class MainWindow : Window
         {
             _state = await _helper.GetAsync<ShellState>(new PipeRequest("state"));
             foreach (var n in _state?.Nudges ?? [])
-                if (_nudged.Add(n.Id)) Launcher.RunNudge(n);    // Steam or Battle.net, started as him, so a game a parent approved installs by itself
+                if (_nudged.Add(n.Id)) { Launcher.RunNudge(n); _tidyUntil = DateTimeOffset.Now.AddMinutes(10); }   // Steam or Battle.net, started as him, so a game a parent approved installs by itself
+            TidyStoreWindows();
         }
         catch (Exception)
         {
@@ -158,13 +176,27 @@ public partial class MainWindow : Window
     private void BuildHomeTiles(Rules rules)
     {
         var installed = rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id)).ToList();
+        // Games a parent approved that are still being put on the PC show here too, with what is happening and a bar,
+        // so he can see it coming (and so can a parent standing behind him).
+        var coming = _state!.Installing ?? [];
+        var percent = _state.InstallPercent ?? [];
+        var onTheWay = rules.Games.Where(g => coming.ContainsKey(g.Id) && !_state.InstalledGameIds.Contains(g.Id)).ToList();
         // Only rebuild when something changed, so a tile doesn't lose its hover glow every time the shell polls.
-        var sig = string.Join("|", installed.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}")) + $"|friends:{rules.Friends.Count}";
+        var sig = string.Join("|", installed.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}")) + $"|friends:{rules.Friends.Count}|"
+            + string.Join("|", onTheWay.Select(g => $"{g.Id}:{coming[g.Id]}:{percent.GetValueOrDefault(g.Id, -1)}"));
         if (sig == _homeSig && HomeTiles.Children.Count > 0) return;
         _homeSig = sig;
         HomeTiles.Children.Clear();
         foreach (var g in installed)
             HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Launcher.LaunchGame(g), image: g.ImageUrl));
+        foreach (var g in onTheWay)
+        {
+            var words = coming[g.Id];
+            var tile = Tile($"{g.Title}\n{words}", () => StatusLine.Text = ComingText(g, words), image: g.ImageUrl,
+                percent: percent.TryGetValue(g.Id, out var p) ? p : null);
+            tile.Opacity = 0.8;
+            HomeTiles.Children.Add(tile);
+        }
         HomeTiles.Children.Add(Tile("Web\nChrome", () => Launcher.LaunchChrome(), glyph: "\uE774"));
         HomeTiles.Children.Add(Tile("Chat with a friend\nVoice", OpenVoice, enabled: rules.Friends.Count > 0, glyph: "\uE720"));
         Recolour(HomeTiles);
@@ -183,7 +215,7 @@ public partial class MainWindow : Window
         foreach (var g in notInstalled)
             CatalogueTiles.Children.Add(Tile($"{g.Title}\n{Caption(g)}", async () =>
             {
-                if (coming.ContainsKey(g.Id)) { StatusLine.Text = $"{g.Title} is on its way. It shows up on your home screen when it's ready."; return; }
+                if (coming.TryGetValue(g.Id, out var words)) { StatusLine.Text = ComingText(g, words); return; }
                 await InstallAsync(g);
             }, image: g.ImageUrl));
         if (notInstalled.Count == 0)
@@ -194,6 +226,14 @@ public partial class MainWindow : Window
         }
         Recolour(CatalogueTiles);
     }
+
+    /// <summary>What a tap on a game that's on its way tells him.</summary>
+    private static string ComingText(Game g, string words) => words switch
+    {
+        "Waiting for Mom or Dad" => $"{g.Title} needs Mom or Dad before it can finish. They've been told.",
+        _ when words.StartsWith("Downloading") => $"{g.Title} is downloading ({words[12..]}). It turns into Play when it's done.",
+        _ => $"{g.Title} is on its way: {words.ToLowerInvariant()}. It turns into Play when it's ready.",
+    };
 
     private static readonly Dictionary<string, ImageSource?> Art = [];
 
@@ -218,7 +258,7 @@ public partial class MainWindow : Window
 
     /// <summary>A tile: art (or an icon on a poster colour) on top, the name on a plate below.
     /// A second line in <paramref name="text"/> becomes the small coloured caption, e.g. "Portal 2\nInstall".</summary>
-    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null)
+    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null, int? percent = null)
     {
         var art = LoadArt(image);
         var lines = text.Split('\n', 2);
@@ -237,6 +277,13 @@ public partial class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
             ((TextBlock)plate.Children[1]).SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+        }
+        if (percent is { } pct)
+        {
+            var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = pct, Height = 6, Margin = new Thickness(0, 6, 0, 0), BorderThickness = new Thickness(0) };
+            bar.SetResourceReference(ForegroundProperty, "Accent");
+            bar.SetResourceReference(BackgroundProperty, "Line");
+            plate.Children.Add(bar);
         }
         var b = new Button
         {

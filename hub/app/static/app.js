@@ -389,7 +389,7 @@ async function loadPcs() {
         ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
         <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
           ${pct !== null ? `<div class="bar"><div style="width:${pct}%"></div></div>` : t.tone === "busy" ? `<div class="bar busy"><div></div></div>` : ""}
-          <div class="muted">${esc(t.text)}</div></div>
+          <div class="muted">${esc(t.text)}</div>${t.since ? `<div class="since">${esc(t.since)}</div>` : ""}</div>
         <div class="do">${btn}</div></li>`;
     }).join("") || `<li class="muted">No games approved for ${esc(p.name)} yet. Approve one in Games or Requests and it installs here by itself.</li>`;
     return `<div class="card pc ${p.online ? "online" : ""}">

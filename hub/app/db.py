@@ -163,6 +163,11 @@ MIGRATIONS = [
     # 1 = the hub puts this game on the kid's PC by itself. Approvals made before automatic installs existed
     # stay 0 (the kid installs them from Get more games), so an upgrade never starts a pile of big downloads.
     ("approvals", "auto_install", "INTEGER NOT NULL DEFAULT 0"),
+    # Clearer install status: what the store is doing in a few words, when the state, stage or progress last moved
+    # (not just when the PC last reported), and the download speed worked out from progress between reports.
+    ("game_installs", "stage", "TEXT DEFAULT ''"),
+    ("game_installs", "changed_at", "TEXT DEFAULT ''"),
+    ("game_installs", "rate", "REAL NOT NULL DEFAULT 0"),   # bytes per second, smoothed
 ]
 
 

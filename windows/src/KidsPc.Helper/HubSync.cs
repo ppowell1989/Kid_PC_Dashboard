@@ -27,12 +27,13 @@ public sealed class StateCache
 
     public Rules? Rules { get { lock (_gate) return _rules; } }
 
-    public ShellState Snapshot(IEnumerable<int> installed, List<Nudge>? nudges = null, Dictionary<int, string>? installing = null)
+    public ShellState Snapshot(IEnumerable<int> installed, List<Nudge>? nudges = null, Dictionary<int, string>? installing = null,
+        Dictionary<int, int>? percent = null, List<string>? signIn = null)
     {
         lock (_gate)
         {
             _messages.RemoveAll(m => DateTimeOffset.Now - m.At > TimeSpan.FromMinutes(30));
-            return new ShellState(_rules, installed.ToList(), _locked, _reachable, _fetchedAt, [.. _messages], nudges, installing);
+            return new ShellState(_rules, installed.ToList(), _locked, _reachable, _fetchedAt, [.. _messages], nudges, installing, percent, signIn);
         }
     }
 
@@ -92,7 +93,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 appStates["kidspc"] = new { state = updater.Status.State, detail = updater.Status.Detail };
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
                 var owed = (int)(_offlineSeconds / 60);
-                var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry });
+                var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry, stage = kv.Value.Stage });
                 var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed, games, disk_free_gb = deployer.FreeGb() }, ct);
                 if (owed > 0 && hb.IsSuccessStatusCode)
                 {
