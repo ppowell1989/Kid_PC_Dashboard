@@ -182,8 +182,8 @@ Check "PC uses the family DNS filter" $dnsSet (Get-DnsClientServerAddress | Out-
 $cp = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Google\Chrome"
 Check "chrome secure DNS pinned to the family filter" ($cp.DnsOverHttpsMode -eq "secure" -and $cp.DnsOverHttpsTemplates -like "https://family.*")
 Check "kid game search answers" ((Pipe @{ op = "game_search"; detail = "portal" }).ok)
-$wow = Pipe @{ op = "game_search"; detail = "world of warcraft" }
-Check "kid game search finds Battle.net games, with the store in the pick" (@($wow.data | Where-Object { $_.ref -eq "battlenet:WoWC" -and $_.store -eq "Battle.net" }).Count -eq 1) ($wow | ConvertTo-Json -Depth 4)
+$wowHits = Pipe @{ op = "game_search"; detail = "world of warcraft" }
+Check "kid game search finds Battle.net games, with the store in the pick" (@($wowHits.data | Where-Object { $_.ref -eq "battlenet:WoWC" -and $_.store -eq "Battle.net" }).Count -eq 1) ($wowHits | ConvertTo-Json -Depth 4)
 Check "PC clock follows the hub's time zone" ((Get-TimeZone).Id -eq "Eastern Standard Time") "PC is on $((Get-TimeZone).Id)"
 
 # Chrome history reader: pages and searches reach the dashboard, flagged words light up.
