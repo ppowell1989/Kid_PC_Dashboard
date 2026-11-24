@@ -66,7 +66,13 @@ async def remote_access_gate(request: Request, call_next):
     ip = h.get("cf-connecting-ip") or h.get("x-real-ip") or (request.client.host if request.client else "")
     if not origin_allowed(get_settings(), ip, request.url.path):
         return JSONResponse({"detail": "hub is home-network only"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    # Pages and their scripts change with every hub update. Without this a browser keeps showing
+    # its saved copy for a while; with it the browser asks each time and usually gets a quick "unchanged".
+    path = request.url.path
+    if path == "/" or path.startswith(("/join/", "/static/")):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 # --------------------------------------------------------------------------- helpers

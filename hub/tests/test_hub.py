@@ -103,6 +103,12 @@ def test_remote_access_gate(client):
     assert client.get("/static/app.css", headers={"cf-connecting-ip": "8.8.8.8"}).status_code == 200
 
 
+def test_pages_are_revalidated_not_served_stale(client):
+    for path in ("/", "/static/app.js", "/static/app.css"):
+        assert client.get(path).headers["cache-control"] == "no-cache", path
+    assert "cache-control" not in client.get("/healthz").headers
+
+
 KID = Kid(id="a", name="A", device_token="t", daily_minutes={"weekday": 60, "weekend": 120},
           bedtime={"weekday": "20:30", "weekend": "21:30"})
 TZ = ZoneInfo("UTC")
