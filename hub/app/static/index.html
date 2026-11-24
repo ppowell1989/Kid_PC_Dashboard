@@ -37,6 +37,7 @@
       <button data-tab="now" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Now</span></button>
       <button data-tab="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Chat</span><span id="chatDot"></span></button>
       <button data-tab="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0112 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 004 0"/></svg><span>Requests</span><span id="reqCount"></span></button>
+      <button data-tab="playtimes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg><span>Playtimes</span></button>
       <button data-tab="web"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Web</span></button>
       <button data-tab="games"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M16 11.5h.01M18 13.5h.01"/></svg><span>Games</span></button>
       <button data-tab="voice"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><span>Voice</span></button>
@@ -48,6 +49,13 @@
   <section data-panel="requests" hidden>
     <h2 class="title">Requests</h2>
     <div id="requests"></div>
+  </section>
+
+  <section data-panel="playtimes" hidden>
+    <h2 class="title">Playtimes</h2>
+    <div class="seg" id="ptKids" role="tablist"></div>
+    <p class="hint">Each day has a time limit, a bedtime and the times he may play. With no play times set, he can play any time before bedtime.</p>
+    <div id="ptDays"></div>
   </section>
 
   <section data-panel="web" hidden>
@@ -129,6 +137,35 @@
     <div class="actions rev">
       <button value="ok" id="sheetOk">OK</button>
       <button value="cancel" id="sheetCancel" class="ghost" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+<!-- Playtime editor for one day (and any other days or kids it should copy to). -->
+<dialog id="ptSheet" class="tall">
+  <form id="ptForm" method="dialog">
+    <h2 id="ptTitle"></h2>
+    <label>Time limit
+      <span class="inrow"><input name="daily_minutes" type="number" min="0" max="1440" step="15" inputmode="numeric" required><span class="unit">minutes</span></span>
+    </label>
+    <div class="quick" id="ptQuick"></div>
+    <div class="field">Bedtime
+      <span class="inrow"><input name="bedtime" type="time" aria-label="Bedtime"><label class="check"><input type="checkbox" name="nobed"> None</label></span>
+    </div>
+    <h3>Play times</h3>
+    <div id="ptWindows"></div>
+    <button type="button" class="ghost small" id="ptAdd">+ Add a play time</button>
+    <h3>Also use this for</h3>
+    <div class="daypick" id="ptDaysPick"></div>
+    <div class="quick" id="ptDayQuick">
+      <button type="button" class="ghost small" data-pick="0,1,2,3,4">Weekdays</button>
+      <button type="button" class="ghost small" data-pick="5,6">Weekend</button>
+      <button type="button" class="ghost small" data-pick="0,1,2,3,4,5,6">Every day</button>
+    </div>
+    <div class="daypick" id="ptKidsPick"></div>
+    <p class="err" id="ptErr"></p>
+    <div class="actions rev">
+      <button value="ok" id="ptSave">Save</button>
+      <button value="cancel" class="ghost" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>

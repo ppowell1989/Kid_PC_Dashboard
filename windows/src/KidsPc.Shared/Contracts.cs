@@ -12,8 +12,10 @@ public sealed record TimeState(
     [property: JsonPropertyName("minutes_left")] int MinutesLeft,
     [property: JsonPropertyName("minutes_to_bedtime")] int MinutesToBedtime,
     bool Locked,
-    [property: JsonPropertyName("lock_reason")] string LockReason,
-    bool Warn);
+    [property: JsonPropertyName("lock_reason")] string LockReason,   // "", time, bedtime, outside_hours, paused
+    bool Warn,
+    [property: JsonPropertyName("minutes_to_stop")] int MinutesToStop = 0,   // until the play window ends or bedtime
+    [property: JsonPropertyName("next_play")] string? NextPlay = null);      // ISO local time the next play window opens
 
 public sealed record Game(
     int Id, string Title, string Launcher,
