@@ -15,6 +15,17 @@ Target: both PCs working by about 20 December, leaving a few days of slack befor
 5. Open `http://<truenas>:8080` on your phone, sign in, add games on the Games tab.
 6. AdGuard: `http://<truenas>:3000`, then follow `network/README.md`.
 
+**The test install keeps itself up to date.** `sudo bash deploy/truenas-test-setup.sh <pool> [port]` (the
+one-command install) also adds a TrueNAS cron job (System, Advanced, Cron Jobs: "Kids PC hub: install new
+versions from main") that runs `deploy/hub-autoupdate.sh` every minute. When main moves it builds the new
+hub, backs up the database, swaps the container and checks `/healthz`; if the new version doesn't come up
+within a minute it puts the database and the old version back and waits for the next merge. A merge is on
+the hub about 2 minutes later. The PCs page on the dashboard shows the hub's version and the last result.
+Log: `/mnt/<pool>/apps/kidspc-data/updater/updater.log`. Status: `sudo bash /mnt/<pool>/apps/kidspc-data/updater/hub-autoupdate.sh --status`.
+Retry a version that failed: the same with `--now`. Turn it off: disable the cron job.
+A cloud-hosted hub would do the same with a published image instead of a checkout; the health check and
+rollback in `hub-autoupdate.sh` carry over.
+
 ## 2. Each PC (about 20 minutes each, mostly downloads)
 
 1. Install Windows 11 and finish its setup with a **parent admin account**. Your Microsoft account

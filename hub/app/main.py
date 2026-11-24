@@ -941,7 +941,29 @@ def parent_installs(parent: str = Depends(current_parent), db: DB = Depends(get_
     """The parents' view of every PC, like an IT office's: each approved game, installed or how far along, and what to do if stuck."""
     now = rules.local_now(settings.timezone)
     pcs = [installs_for(db, settings, kid, now) for kid in settings.kids]
-    return {"summary": installs.summary(pcs), "pcs": pcs}
+    return {"summary": installs.summary(pcs), "pcs": pcs, "hub": hub_status()}
+
+
+def hub_version() -> str:
+    return os.environ.get("HUB_VERSION", "dev")
+
+
+def hub_status() -> dict:
+    """For the PCs page: which version the hub runs, what the self-updater last did, and whether main is ahead."""
+    out = {"version": hub_version(), "self_update": False}
+    state = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "hub-update.json"
+    try:
+        s = json.loads(state.read_text())
+        out["self_update"] = True
+        for k in ("result", "message", "title", "updated_at", "checked_at", "failed_version", "failed_title"):
+            if s.get(k):
+                out[k] = s[k]
+    except (OSError, ValueError):
+        pass
+    head = updates.seen.get("head", "")
+    if head and out["version"] != "dev" and head != out["version"] and head != out.get("failed_version"):
+        out["behind"] = {"version": head, "title": updates.seen.get("head_title", "")}
+    return out
 
 
 class InstallIn(BaseModel):
@@ -1323,5 +1345,7 @@ def dashboard():
 
 
 @app.get("/healthz")
-def healthz():
-    return {"ok": True}
+def healthz(db: DB = Depends(get_db)):
+    """The self-updater's health check (deploy/hub-autoupdate.sh): up, database readable, which version."""
+    db.one("SELECT COUNT(*) AS n FROM sqlite_master")
+    return {"ok": True, "version": hub_version()}

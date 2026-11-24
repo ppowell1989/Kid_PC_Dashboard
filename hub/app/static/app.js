@@ -351,6 +351,24 @@ $("#gameSearch").onsubmit = async (e) => {
 // along it is, and the one thing to do when it's stuck. The hub writes the words (installs.py).
 const APP_NAME = { steam: "Steam", battlenet: "Battle.net", chrome: "Chrome" };
 let pcTimer = 0;
+// The hub itself: which version it runs and whether it keeps itself up to date (deploy/hub-autoupdate.sh).
+function hubCard(h) {
+  if (!h) return "";
+  const when = (t) => t ? new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+  const v = h.version === "dev" ? "" : ` ${h.version.slice(0, 7)}`;
+  let line, tone = "";
+  if (!h.self_update) line = `On version${v}. It doesn't update itself yet: run the setup line on the TrueNAS once to turn that on.`;
+  else if (h.result === "rolled_back" || h.result === "build_failed" || h.result === "down") {
+    tone = "attn";
+    line = `${h.failed_title ? `"${esc(h.failed_title)}" didn't go in. ` : ""}${esc(h.message || "")}`;
+  } else {
+    line = `Updates itself within about 2 minutes of a merge. On${v}${h.title ? `: ${esc(h.title)}` : ""}${h.updated_at ? `, since ${esc(when(h.updated_at))}` : ""}.`;
+    if (h.result === "fetch_failed") { tone = "attn"; line += ` ${esc(h.message)}`; }
+  }
+  const behind = h.behind && !tone ? `<div class="muted">On its way to the hub: ${esc(h.behind.title || h.behind.version.slice(0, 7))}.</div>` : "";
+  return `<div class="card pc hub ${tone}"><div class="pchead"><div class="avatar">H</div>
+    <div><h2>The hub</h2><div class="status">${line}</div></div></div>${behind}</div>`;
+}
 function gb(n) { return n == null ? "" : n >= 100 ? `${Math.round(n)} GB free` : `${n.toFixed(1)} GB free`; }
 async function loadPcs() {
   clearTimeout(pcTimer);
@@ -379,7 +397,7 @@ async function loadPcs() {
         <div><h2>${esc(p.name)}'s PC</h2><div class="status"><span class="dot ${p.online ? "on" : ""}"></span>${esc(seen)}${p.disk_free_gb != null ? ` · ${gb(p.disk_free_gb)}` : ""}</div></div></div>
       ${launchers ? `<div class="chips">${launchers}</div>` : ""}
       <ul class="list">${rows}</ul></div>`;
-  }).join("");
+  }).join("") + hubCard(d.hub);
   document.querySelectorAll("[data-pcretry]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Starting…";
     try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcretry}/retry`, { method: "POST" }); } catch (err) { oops(err); }

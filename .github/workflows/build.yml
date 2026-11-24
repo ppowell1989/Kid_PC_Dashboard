@@ -156,6 +156,16 @@ jobs:
           curl -fs -H "Authorization: Bearer CHANGE-ME-adam-device-token" localhost:8080/api/device/rules   # exercises timezone data
           docker logs hub
 
+  hub-autoupdate:
+    # The hub's self-updater on a pretend TrueNAS with real Docker: a good merge goes in by itself, a broken
+    # one is rolled back with the database put back, and the GitHub token never reaches a log.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: sudo bash deploy/tests/autoupdate-test.sh
+
   test-release:
     # Publishes the latest main build as a pre-release named "test-build", so it downloads like a normal file.
     if: github.ref == 'refs/heads/main'

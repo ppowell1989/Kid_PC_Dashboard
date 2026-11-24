@@ -2,18 +2,25 @@
 # One-shot test install of the hub on TrueNAS SCALE (Docker). Run from the repo root:
 #   sudo bash deploy/truenas-test-setup.sh <pool> [port]
 # Creates /mnt/<pool>/apps/kidspc-data, writes config.yaml with fresh tokens, builds and starts
-# the hub container. Safe to re-run: keeps an existing config.yaml and database.
+# the hub container, and installs the self-updater (a TrueNAS cron job, see deploy/hub-autoupdate.sh)
+# so every later change merged to main reaches the hub by itself. Safe to re-run: keeps an existing
+# config.yaml and database. NO_AUTOUPDATE=1 skips the self-updater.
 set -euo pipefail
 POOL="${1:?usage: sudo bash deploy/truenas-test-setup.sh <pool> [port]}"
 PORT="${2:-8088}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="/mnt/$POOL/apps/kidspc-data"
 CFG="$DATA/hub/config.yaml"
+UPD="$DATA/updater"
+# shellcheck source=hub-run.sh
+. "$REPO/deploy/hub-run.sh"
+VERSION="$(hub_repo_version "$REPO")"
+
+mkdir -p "$DATA/hub" "$UPD"
+hub_lock "$UPD"   # waits if an automatic update is running right now
 
 echo "==> Building hub image"
-docker build -q -t kidspc-hub:local "$REPO/hub" >/dev/null
-
-mkdir -p "$DATA/hub"
+hub_build "$REPO/hub" kidspc-hub:local "$VERSION"
 if [ ! -f "$CFG" ]; then
   echo "==> Creating $CFG"
   read -rsp "Choose a dashboard password for Patrick and Barbara: " PW; echo
@@ -84,11 +91,29 @@ if ! grep -q '^updates:' "$CFG"; then
 fi
 
 echo "==> Starting hub on port $PORT"
-docker rm -f kidspc-hub >/dev/null 2>&1 || true
-docker run -d --name kidspc-hub --restart unless-stopped -p "$PORT:8080" \
-  --add-host host.docker.internal:host-gateway -v "$DATA/hub:/data" kidspc-hub:local >/dev/null   # host.docker.internal: the voice server, if set up
-for _ in $(seq 30); do curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null && break; sleep 1; done
-curl -fs "http://127.0.0.1:$PORT/healthz" >/dev/null || { docker logs kidspc-hub | tail -30; exit 1; }
+hub_start kidspc-hub:local "$PORT" "$DATA"
+hub_healthy "$PORT" "$VERSION" 30 || { docker logs kidspc-hub | tail -30; exit 1; }
+
+if [ "${NO_AUTOUPDATE:-0}" != 1 ]; then
+  echo "==> Self-updater: the hub installs each change merged to main by itself"
+  cp -f "$REPO/deploy/hub-autoupdate.sh" "$REPO/deploy/hub-run.sh" "$UPD/"
+  printf 'REPO=%q\nPORT=%q\nBRANCH=main\n' "$REPO" "$PORT" > "$UPD/updater.env"
+  rm -f "$DATA/hub/hub-update.json"   # a manual run starts with a clean slate (also clears a failed version)
+  CMD="bash $UPD/hub-autoupdate.sh"
+  if command -v midclt >/dev/null 2>&1; then
+    # A TrueNAS cron job (System, Advanced, Cron Jobs) survives TrueNAS updates; /etc/cron.d does not.
+    ID="$(midclt call cronjob.query | python3 -c 'import json,sys; print(next((str(j["id"]) for j in json.load(sys.stdin) if "hub-autoupdate.sh" in j["command"]), ""))')"
+    JOB="$(python3 -c 'import json,sys; print(json.dumps({"enabled": True, "user": "root", "command": sys.argv[1],
+      "description": "Kids PC hub: install new versions from main", "stdout": True, "stderr": True,
+      "schedule": {"minute": "*", "hour": "*", "dom": "*", "month": "*", "dow": "*"}}))' "$CMD")"
+    if [ -n "$ID" ]; then midclt call cronjob.update "$ID" "$JOB" >/dev/null; else midclt call cronjob.create "$JOB" >/dev/null; fi
+    echo "    TrueNAS cron job set: every minute"
+  else
+    printf 'SHELL=/bin/bash\n* * * * * root %s >/dev/null 2>&1\n' "$CMD" > /etc/cron.d/kidspc-hub-autoupdate
+    echo "    /etc/cron.d/kidspc-hub-autoupdate set: every minute"
+  fi
+  echo "    Log: $UPD/updater.log   Last result: sudo bash $UPD/hub-autoupdate.sh --status"
+fi
 
 IP="$(ip -4 -br addr show | awk '$1 !~ /^(lo|docker|br-|veth)/ && $2=="UP" {split($3,a,"/"); print a[1]; exit}')"
 echo

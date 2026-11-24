@@ -405,3 +405,4 @@ button.small.attn { color: var(--bad-text); }
 .chip.on { color: #fff; background: var(--accent); }
 .chip:disabled { opacity: .5; text-decoration: line-through; cursor: default; }
 .tagline.rating { background: var(--well); color: var(--text); }
+.card.hub.attn .status { color: var(--bad-text); }
