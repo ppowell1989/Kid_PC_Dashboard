@@ -144,6 +144,8 @@ function fillKidSelects() {
 
 const kidName = (id) => (state.kids.find((k) => k.id === id) || {}).name || id;
 
+// Visit times arrive as ISO text from the PC; show them like every other time on the dashboard.
+const when = (at) => { const d = new Date(at); return isNaN(d) ? at : d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }); };
 const localTime = (utc) => new Date(utc.replace(" ", "T") + (utc.endsWith("Z") || utc.includes("+") ? "" : "Z"))
   .toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
 
@@ -215,7 +217,7 @@ async function loadWeb() {
   $("#searches").innerHTML = searches.map((q) => `<li>${q.flagged ? '<span class="tagline bad">Flagged</span> ' : ""}${esc(q.term)}
     <div class="muted">${esc(new Date(q.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div></li>`).join("") || `<li class="muted">No searches yet.</li>`;
   $("#visits").innerHTML = visits.map((v) => `<li>${v.blocked ? '<span class="tagline bad">Blocked</span> ' : ""}<b>${esc(v.title || v.domain)}</b>
-    <div class="muted">${esc(v.url || v.domain)} · ${esc(v.at)} · ${v.source}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
+    <div class="muted">${esc(v.url || v.domain)}</div><div class="muted">${esc(when(v.at))} · ${v.source === "chrome" ? "Chrome" : "network"}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
   $("#webMode").textContent = sites.mode === "allowlist" ? "(allow-list mode: only these load)" : "(filtered mode: list is informational)";
   $("#sites").innerHTML = sites.sites.map((d) => `<li class="split">${esc(d)} <button class="ghost small" data-delsite="${esc(d)}">Remove</button></li>`).join("");
   document.querySelectorAll("[data-delsite]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/sites/${encodeURIComponent(b.dataset.delsite)}`, { method: "DELETE" }); loadWeb(); }));

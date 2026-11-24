@@ -16,6 +16,8 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 Write-Host "Screen is $($bounds.Width)x$($bounds.Height)"
 
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(($bounds.Width - 2), ($bounds.Height - 2))   # off the tiles, so nothing is caught mid-hover
+
 $fail = 0
 foreach ($scene in $scenes) {
   $p = Start-Process $exe -ArgumentList "--demo", $scene -PassThru

@@ -177,7 +177,7 @@ public partial class MainWindow : Window
         plate.Children.Add(new TextBlock
         {
             Text = lines[0], FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap, MaxHeight = 50, LineHeight = 24,
         });
         if (lines.Length > 1)
             plate.Children.Add(new TextBlock
@@ -190,7 +190,6 @@ public partial class MainWindow : Window
             Style = (Style)Application.Current.Resources["Tile"],
             Content = plate,
             IsEnabled = enabled,
-            ToolTip = lines[0],
         };
         if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
         else b.Tag = glyph ?? "\uE7FC";   // no art: a game controller

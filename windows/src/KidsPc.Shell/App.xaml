@@ -75,7 +75,6 @@
     </RadialGradientBrush>
 
     <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Bungee, Bahnschrift SemiBold, Segoe UI Black, Segoe UI</FontFamily>
-    <FontFamily x:Key="DisplayShade">/KidsPcShell;component/Assets/Fonts/#Bungee Shade, Bahnschrift SemiBold, Segoe UI Black, Segoe UI</FontFamily>
     <FontFamily x:Key="Body">Bahnschrift, Segoe UI Variable, Segoe UI</FontFamily>
     <FontFamily x:Key="Icons">Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol</FontFamily>
 
@@ -119,7 +118,7 @@
     <!-- Game tile: art on top, name plate below, thick neon frame with a hard lower edge. Lifts and glows on hover.
          Background = the art (or a poster colour), BorderBrush = the frame colour, Tag = an icon glyph for tiles with no art. -->
     <Style x:Key="Tile" TargetType="Button">
-      <Setter Property="Width" Value="344"/>
+      <Setter Property="Width" Value="342"/>
       <Setter Property="Height" Value="240"/>
       <Setter Property="Background" Value="{StaticResource PlanetCyan}"/>
       <Setter Property="BorderBrush" Value="{StaticResource Cyan}"/>
