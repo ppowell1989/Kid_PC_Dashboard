@@ -181,7 +181,7 @@ public partial class MainWindow
         ChatTitle.Text = c.Kind switch { "family" => "Family chat", "kids" => $"Chat with {c.Title}", _ => $"Chat with {c.Title}" };
         ChatWho.Text = c.Kind switch
         {
-            "family" => "Mom, Dad and your brother are all in this chat.",
+            "family" => "Your whole family is in this chat, Mom and Dad too.",
             _ => "Mom and Dad can read this chat, and see every picture, video and link in it.",
         };
         var can = c.CanSend;

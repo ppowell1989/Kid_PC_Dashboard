@@ -198,6 +198,33 @@ CREATE TABLE IF NOT EXISTS console_usage (    -- a player's minutes on a console
     games     TEXT DEFAULT '[]',
     PRIMARY KEY (provider, device_id, player_id, day)
 );
+CREATE TABLE IF NOT EXISTS playtime_dates (  -- a parent's change for one date (holiday, vacation): wins over the weekday rule
+    kid_id        TEXT NOT NULL,
+    day           TEXT NOT NULL,              -- YYYY-MM-DD, local
+    daily_minutes INTEGER NOT NULL,
+    bedtime       TEXT NOT NULL DEFAULT '',
+    windows       TEXT NOT NULL DEFAULT '[]',
+    label         TEXT NOT NULL DEFAULT '',   -- "Thanksgiving", "Beach week"
+    updated_by    TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (kid_id, day)
+);
+CREATE TABLE IF NOT EXISTS sessions (        -- stretches of play and of voice calls, built from the PC's check-ins
+    id         INTEGER PRIMARY KEY,
+    kid_id     TEXT NOT NULL,
+    kind       TEXT NOT NULL,                 -- play / voice
+    what       TEXT NOT NULL,                 -- the game's name, or the voice room (family / friends)
+    started_at TEXT NOT NULL,
+    ended_at   TEXT NOT NULL                  -- last check-in seen in it; moves forward while it lasts
+);
+CREATE INDEX IF NOT EXISTS sessions_kid ON sessions(kid_id, kind, ended_at);
+CREATE TABLE IF NOT EXISTS kids_added (      -- kids a parent added from the dashboard (config.yaml kids still work)
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    device_token    TEXT NOT NULL,
+    extension_token TEXT NOT NULL,
+    added_by        TEXT NOT NULL DEFAULT '',
+    added_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -225,6 +252,7 @@ MIGRATIONS = [
     ("chat", "links", "TEXT DEFAULT '[]'"),               # JSON list of the links in the text
     ("chat", "flagged", "INTEGER NOT NULL DEFAULT 0"),    # a word from the flag list (same list as searches)
     ("chat", "removed_by", "TEXT DEFAULT ''"),            # parent who hid it from the kids
+    ("chat", "held", "TEXT DEFAULT ''"),                  # why the picture check held it ('' = shown); a parent releases it
     # Xbox (Microsoft Family Safety) members are console players too; these only matter for provider 'xbox'.
     ("console_players", "role", "TEXT DEFAULT ''"),              # Family Safety role: User (child) or Admin (organizer)
     ("console_players", "enforce", "INTEGER NOT NULL DEFAULT 0"),  # 1 = block his Xbox when he is locked on the hub
