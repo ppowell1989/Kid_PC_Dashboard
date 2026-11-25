@@ -23,7 +23,7 @@
           <Border Style="{DynamicResource CardBox}" Padding="22,12,22,14">
             <StackPanel VerticalAlignment="Center">
               <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="24" Foreground="{DynamicResource WarnText}" VerticalAlignment="Center" Margin="0,2,10,0"/>
+                <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="24" Foreground="#F5B400" VerticalAlignment="Center" Margin="0,2,10,0"/>
                 <TextBlock x:Name="PointsBalance" FontSize="34" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="0"/>
                 <TextBlock Text="points" FontSize="16" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="8,0,0,8"/>
               </StackPanel>
