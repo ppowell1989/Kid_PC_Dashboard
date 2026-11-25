@@ -65,7 +65,19 @@ public sealed record Rules(
     List<InstallItem>? Installs = null,
     // The family's time zone (IANA, e.g. "America/New_York"). The hub decides "today" and bedtime in it, and the
     // helper sets the PC's clock to match so the time on his screen agrees with when the PC locks.
-    string? Timezone = null);
+    string? Timezone = null,
+    // Skylight chore points he can spend on extra time; null when a parent hasn't linked Skylight for him.
+    PointsOffer? Points = null);
+
+/// <summary>His Skylight points and the price of extra time. CanBuy false comes with Why, in his words.</summary>
+public sealed record PointsOffer(int Balance,
+    [property: JsonPropertyName("price_points")] int PricePoints,
+    [property: JsonPropertyName("price_minutes")] int PriceMinutes,
+    [property: JsonPropertyName("can_buy")] bool CanBuy,
+    string Why = "",
+    [property: JsonPropertyName("left_today")] int LeftToday = 0);
+
+public sealed record BoughtTime(int Minutes, int Points, int Balance);
 
 /// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.</summary>
 public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0);

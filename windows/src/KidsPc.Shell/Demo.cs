@@ -52,6 +52,7 @@ internal sealed class DemoHelper(string scene) : IHelper
                 new("steam:275850", "No Man's Sky", ArtFor(275850), "T", "A game about exploration and survival in an infinite procedurally generated universe."),
             },
             "game_discover" => DemoShelves(),
+            "buy_time" => new BoughtTime(15, 10, 32),
             "chat_convs" => new ChatList(
             [
                 new("family", "Family", "family", 5, 4, true),
@@ -90,7 +91,8 @@ internal sealed class DemoHelper(string scene) : IHelper
                 : new List<PendingRequest> { new(2, "game", "Minecraft", "pending", DateTime.UtcNow.ToString("u")), new(3, "game", "Golf With Your Friends", "pending", DateTime.UtcNow.ToString("u")) },
             [new Friend("demo", "Max")],
             Family: [new FamilyMember("barrett", "Barrett", true, "Brawlhalla", false, InFamilyVoice: scene == "family",
-                GameTitle: "Brawlhalla", JoinGame: games[0], AskRef: "")]);
+                GameTitle: "Brawlhalla", JoinGame: games[0], AskRef: "")],
+            Points: new PointsOffer(42, 10, 15, true, "", 30));   // Skylight chore points he can spend on time
         var messages = scene == "warning" ? new List<ParentMessage> { new(1, "Mom", "Dinner in 10 minutes!", DateTimeOffset.Now) } : null;
         // Two games a parent approved, installing by themselves (the catalogue shows how far along).
         return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages,

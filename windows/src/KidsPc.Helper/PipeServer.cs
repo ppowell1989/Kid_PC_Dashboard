@@ -105,6 +105,18 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var found = await http.GetFromJsonAsync<List<GameHit>>($"/api/device/games/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
                 return Ok(found ?? []);
 
+            case "buy_time":   // spend Skylight points on extra minutes; the hub checks the price, the cap and bedtime
+            {
+                var res = await HubJson<BoughtTime>(await http.PostAsync("/api/device/points/buy", null, ct), ct);
+                if (res.Ok)
+                {
+                    // Pick up the new minutes now rather than at the next sync, so a locked screen opens straight away.
+                    try { if (await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct) is { } fresh) cache.Set(fresh); }
+                    catch (Exception) { /* the next regular sync gets it */ }
+                }
+                return res;
+            }
+
             case "game_discover":   // "Get more games" shelves to browse; the hub applies the parent's rating cap
                 return Ok(await http.GetFromJsonAsync<Discover>("/api/device/games/discover", Json.Options, ct) ?? new Discover("", []));
 
@@ -172,7 +184,7 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         using var _ = r;
         if (r.IsSuccessStatusCode)
             return Ok((await r.Content.ReadFromJsonAsync<T>(Json.Options, ct))!);
-        if ((int)r.StatusCode is 403 or 404 or 413 or 422 or 429)
+        if ((int)r.StatusCode is 400 or 403 or 404 or 413 or 422 or 429)
         {
             try
             {
