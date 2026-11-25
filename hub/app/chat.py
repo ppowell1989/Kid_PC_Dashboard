@@ -27,10 +27,11 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import rules
+from . import media, rules, screening
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import current_device, current_parent
@@ -38,14 +39,22 @@ from .security import current_device, current_parent
 router = APIRouter()
 
 FAMILY, KIDS, FRIEND = "family", "kids", "friend-"
-DEFAULTS = {"kids": True, "friends": True, "pictures": True, "links": True}
+DEFAULTS = {"kids": True, "friends": True, "pictures": True, "videos": True, "links": True}
 MAX_TEXT = 500
-MAX_PICTURE_BYTES = 8 * 1024 * 1024    # what a browser or the shell may send, before the hub shrinks it
+MAX_PICTURE_BYTES = 15 * 1024 * 1024   # what a browser or the shell may send, before the hub shrinks it (an iPhone photo is 2-6 MB)
+# Picture formats the hub takes in. Everything is re-saved as PNG or JPEG, so the kids' PCs and every browser can show it.
+# MPO is how iPhones and many cameras save an ordinary JPEG; HEIF/HEIC is the iPhone's own photo format.
+PICTURE_FORMATS = ("PNG", "JPEG", "MPO", "GIF", "WEBP", "BMP", "TIFF", "HEIF", "AVIF")
+MAX_VIDEO_BYTES = 100 * 1024 * 1024    # a 30-second phone clip in 4K is about this; the hub keeps a much smaller copy
+MAX_VIDEO_SECONDS = 30
+VIDEO_SIDE = 1280                       # longest side of the copy the hub keeps (720p)
+VIDEO_BRANDS = (b"qt  ", b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"3gp4", b"3gp5", b"dash")
 MAX_SIDE = 1600                        # longest side the hub keeps; plenty for a screenshot on a phone
 REMOVED = "A parent removed this message."
+HELD = "A picture is waiting for Mom or Dad to look at it."
 LINK_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
 # Per sender, in memory: a friend's page is on the internet, so a stuck key or a script can't fill the hub.
-RATE = {"text": (30, 60), "picture": (10, 600)}    # at most N in so many seconds
+RATE = {"text": (30, 60), "picture": (10, 600), "video": (5, 600)}    # at most N in so many seconds
 _sent: dict[tuple[str, str], list[float]] = {}
 
 
@@ -53,8 +62,8 @@ def get_db(request: Request) -> DB:
     return request.app.state.db
 
 
-def pictures_dir(request: Request) -> Path:
-    return request.app.state.chat_dir
+def store(request: Request) -> media.LocalStore:
+    return request.app.state.media
 
 
 def chat_settings(db: DB) -> dict:
@@ -88,16 +97,53 @@ def _limit(who: str, kind: str) -> None:
 
 # --------------------------------------------------------------------------- conversations
 
+def chat_name(db: DB, conv: str) -> str:
+    r = db.one("SELECT name FROM chat_names WHERE conv=?", (conv,))
+    return r["name"] if r else ""
+
+
+def extra_members(db: DB, conv: str) -> list[dict]:
+    """People a parent added to this chat (see add_member). Friends only while their own link is live."""
+    out = []
+    for m in db.q("SELECT kind, who, from_id FROM chat_members WHERE conv=? ORDER BY added_at", (conv,)):
+        if m["kind"] == "friend":
+            inv = db.one("SELECT friend_name FROM invites WHERE code=? AND revoked=0", (m["who"],))
+            if not inv:
+                continue
+            m["name"] = inv["friend_name"]
+        out.append(m)
+    return out
+
+
+def _floor(db: DB, conv: str, kind: str, who: str) -> int:
+    """An added member sees only what was said after they were added."""
+    r = db.one("SELECT from_id FROM chat_members WHERE conv=? AND kind=? AND who=?", (conv, kind, who))
+    return r["from_id"] if r else 0
+
+
+def _title(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " & " + names[-1]
+
+
 def kid_convs(db: DB, settings: Settings, kid: Kid) -> list[dict]:
-    """The conversations one kid's shell shows, in order: family, his brothers, then each friend."""
+    """The conversations one kid's shell shows, in order: family, the kids at home, each friend's chat (with anyone
+    a parent added to it), then chats a parent added him to."""
     cs = chat_settings(db)
+    kids = {k.id: k.name for k in settings.kids}
     out = [{"id": FAMILY, "title": "Family", "kind": "family"}]
     sibs = [k.name for k in settings.kids if k.id != kid.id]
     if cs["kids"] and sibs:
-        out.append({"id": KIDS, "title": " & ".join(sibs), "kind": "kids"})
+        out.append({"id": KIDS, "title": chat_name(db, KIDS) or " & ".join(sibs), "kind": "kids"})
     if cs["friends"]:
-        for inv in db.q("SELECT code, friend_name FROM invites WHERE kid_id=? AND revoked=0 ORDER BY created_at", (kid.id,)):
-            out.append({"id": friend_conv(inv["code"]), "title": inv["friend_name"], "kind": "friend"})
+        for inv in db.q("SELECT code, kid_id, friend_name FROM invites WHERE revoked=0 ORDER BY created_at"):
+            conv = friend_conv(inv["code"])
+            extra = extra_members(db, conv)
+            mine = inv["kid_id"] == kid.id
+            if not mine and not any(m["kind"] == "kid" and m["who"] == kid.id for m in extra):
+                continue
+            people = ([] if mine else [kids.get(inv["kid_id"], inv["kid_id"])]) + [inv["friend_name"]] + \
+                     [m.get("name") or kids.get(m["who"], m["who"]) for m in extra if not (m["kind"] == "kid" and m["who"] == kid.id)]
+            out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "kind": "group" if extra or not mine else "friend"})
     return out
 
 
@@ -107,6 +153,30 @@ def kid_conv(db: DB, settings: Settings, kid: Kid, conv: str) -> dict:
         raise HTTPException(404, "That chat isn't turned on.")
     if c["kind"] != "family" and _locked(db, settings, kid):
         raise HTTPException(403, "This chat is off while the PC is locked. Family chat still works.")
+    return c
+
+
+def friend_convs(db: DB, settings: Settings, code: str) -> list[dict]:
+    """A friend's chats: their own with the kid who invited them, plus any a parent added them to."""
+    kids = {k.id: k.name for k in settings.kids}
+    own = live_friend(db, code)
+    out = []
+    for inv in db.q("SELECT code, kid_id, friend_name FROM invites WHERE revoked=0 ORDER BY created_at"):
+        conv = friend_conv(inv["code"])
+        extra = extra_members(db, conv)
+        if inv["code"] != code and not any(m["kind"] == "friend" and m["who"] == code for m in extra):
+            continue
+        people = [kids.get(inv["kid_id"], inv["kid_id"])] + ([] if inv["code"] == code else [inv["friend_name"]]) + \
+                 [m.get("name") or kids.get(m["who"], m["who"]) for m in extra if not (m["kind"] == "friend" and m["who"] == code)]
+        out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "own": inv["code"] == code,
+                    "floor": _floor(db, conv, "friend", code)})
+    return out or [{"id": friend_conv(code), "title": kids.get(own["kid_id"], ""), "own": True, "floor": 0}]
+
+
+def _friend_conv_ok(db: DB, settings: Settings, code: str, conv: str) -> dict:
+    c = next((c for c in friend_convs(db, settings, code) if c["id"] == (conv or friend_conv(code))), None)
+    if not c:
+        raise HTTPException(404, "That chat isn't open to you.")
     return c
 
 
@@ -125,29 +195,32 @@ def live_friend(db: DB, code: str) -> dict:
 
 # --------------------------------------------------------------------------- messages
 
-COLS = "id, conv, sender, kid_id, friend, text, at, picture, links, flagged, removed_by"
+COLS = "id, conv, sender, kid_id, friend, text, at, picture, video, links, flagged, removed_by, held"
 
 
-def _rows(db: DB, conv: str, after: int, limit: int = 100) -> list[dict]:
-    rows = db.q(f"SELECT {COLS} FROM chat WHERE conv=? AND id>? ORDER BY id DESC LIMIT ?", (conv, after, limit))
+def _rows(db: DB, conv: str, after: int, limit: int = 100, floor: int = 0) -> list[dict]:
+    rows = db.q(f"SELECT {COLS} FROM chat WHERE conv=? AND id>? ORDER BY id DESC LIMIT ?", (conv, max(after, floor), limit))
     return rows[::-1]
 
 
 def _shown(m: dict, parent: bool) -> dict:
     """One message as a screen shows it. Kids and friends see a removed message as a short note; parents see it all."""
     out = {"id": m["id"], "conv": m["conv"], "sender": m["sender"], "kid_id": m["kid_id"], "friend": bool(m["friend"]),
-           "text": m["text"], "at": m["at"], "picture": bool(m["picture"]), "links": json.loads(m["links"] or "[]"),
+           "text": m["text"], "at": m["at"], "picture": bool(m["picture"]), "video": bool(m.get("video")), "links": json.loads(m["links"] or "[]"),
            "removed": bool(m["removed_by"])}
     if parent:
         out["flagged"] = bool(m["flagged"])
         out["removed_by"] = m["removed_by"]
+        out["held"] = m.get("held") or ""
     elif m["removed_by"]:
-        out.update(text=REMOVED, picture=False, links=[])
+        out.update(text=REMOVED, picture=False, video=False, links=[])
+    elif m.get("held"):
+        out.update(text=HELD, picture=False, video=False, links=[])
     return out
 
 
 def _post(db: DB, settings: Settings, conv: str, sender: str, kid_id: str | None, friend: bool, text: str,
-          picture: str = "", from_parent: bool = False) -> int:
+          picture: str = "", from_parent: bool = False, video: str = "", st: media.LocalStore | None = None) -> int:
     text = text.strip()
     if not text and not picture:
         raise HTTPException(422, "message is empty")
@@ -156,39 +229,61 @@ def _post(db: DB, settings: Settings, conv: str, sender: str, kid_id: str | None
         raise HTTPException(403, "Links are switched off in chat.")
     from .main import is_flagged
     now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return db.x("INSERT INTO chat(conv,sender,kid_id,friend,text,at,picture,links,flagged) VALUES(?,?,?,?,?,?,?,?,?)",
-                (conv, sender, kid_id, int(friend), text, now, picture, json.dumps(links), int(is_flagged(text, settings.flag_words))))
+    # The picture check (screening.py): a flagged picture or video is held until a parent lets it through.
+    held = screening.check(st, picture, video) if st is not None and (picture or video) and not from_parent else ""
+    return db.x("INSERT INTO chat(conv,sender,kid_id,friend,text,at,picture,video,links,flagged,held) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (conv, sender, kid_id, int(friend), text, now, picture, video, json.dumps(links), int(is_flagged(text, settings.flag_words)), held))
 
 
-def save_picture(folder: Path, data: str) -> str:
+def _heif() -> None:
+    """Teach Pillow to open iPhone HEIC photos (once). Without the package the hub still runs, minus HEIC."""
+    global _heif_done
+    if _heif_done:
+        return
+    _heif_done = True
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except ImportError:
+        pass
+
+
+_heif_done = False
+
+
+def save_picture(st: media.LocalStore, data: str) -> str:
     """Checks the picture really is one, shrinks it, and re-saves it without hidden data (camera, GPS)."""
     from PIL import Image, ImageOps
+    _heif()
     try:
         raw = base64.b64decode(data.split(",", 1)[-1], validate=True)   # a browser's data: URL is fine too
     except (binascii.Error, ValueError):
         raise HTTPException(422, "That picture didn't come through. Try again.")
     if len(raw) > MAX_PICTURE_BYTES:
         raise HTTPException(413, "That picture is too big. Try a smaller one.")
-    Image.MAX_IMAGE_PIXELS = 40_000_000
+    Image.MAX_IMAGE_PIXELS = 60_000_000
     try:
         im = Image.open(io.BytesIO(raw))
         fmt = im.format
-        if fmt not in ("PNG", "JPEG", "GIF", "WEBP"):
-            raise HTTPException(422, "Only photos and screenshots can be sent (PNG, JPEG, GIF or WebP).")
+        if fmt not in PICTURE_FORMATS:
+            raise HTTPException(422, "That kind of picture can't be sent. Photos and screenshots work (JPEG, PNG, HEIC, GIF or WebP).")
+        im.seek(0)                         # GIF, MPO, HEIC bursts: the first picture
         im = ImageOps.exif_transpose(im)   # keep a phone photo the right way up once its EXIF is gone
         im.thumbnail((MAX_SIDE, MAX_SIDE))
     except HTTPException:
         raise
     except Exception:
+        if raw[4:8] == b"ftyp" and raw[8:12] in VIDEO_BRANDS:
+            raise HTTPException(422, "That's a video. Use the video button, or send a photo or screenshot.")
         raise HTTPException(422, "That file isn't a picture the hub can open.")
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = st.ready()
     if fmt == "PNG":   # screenshots: keep them sharp
-        name = secrets.token_hex(16) + ".png"
+        name = st.new_key("png")
         if im.mode not in ("RGB", "RGBA", "L", "LA"):
             im = im.convert("RGBA")
         im.save(folder / name, "PNG", optimize=True)
     else:
-        name = secrets.token_hex(16) + ".jpg"
+        name = st.new_key("jpg")
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA")
             bg = Image.new("RGB", im.size, "white")
@@ -200,15 +295,87 @@ def save_picture(folder: Path, data: str) -> str:
     return name
 
 
-def _picture_file(db: DB, folder: Path, mid: int, conv_ok) -> FileResponse:
-    m = db.one("SELECT conv, picture, removed_by FROM chat WHERE id=?", (mid,))
-    if not m or not m["picture"] or not conv_ok(m):
+def save_video(st: media.LocalStore, raw: bytes) -> tuple[str, str]:
+    """Checks a clip, keeps a small copy (720p H.264 MP4, at most 30 s, no location or camera data) and a still
+    picture from its start for the chat bubble. Returns (video key, picture key)."""
+    import json as _json
+    import shutil
+    import subprocess
+    if not raw:
+        raise HTTPException(422, "That video didn't come through. Try again.")
+    if len(raw) > MAX_VIDEO_BYTES:
+        raise HTTPException(413, "That video is too big. Try a shorter one.")
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise HTTPException(503, "Videos aren't set up on the home server yet.")
+    src = st.scratch(".in")
+    src.write_bytes(raw)
+    out_key, pic_key = st.new_key("mp4"), st.new_key("jpg")
+    out = st.ready() / out_key
+    try:
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=codec_type",
+                                "-of", "json", str(src)], capture_output=True, text=True, timeout=30)
+        info = _json.loads(probe.stdout or "{}")
+        if probe.returncode != 0 or not info.get("streams"):
+            raise HTTPException(422, "That file isn't a video the hub can open.")
+        seconds = float(info.get("format", {}).get("duration") or 0)
+        if seconds > MAX_VIDEO_SECONDS + 0.5:
+            raise HTTPException(422, f"Videos can be up to {MAX_VIDEO_SECONDS} seconds. This one is {round(seconds)} seconds.")
+        side = f"scale='if(gt(iw,ih),min({VIDEO_SIDE},iw),-2)':'if(gt(iw,ih),-2,min({VIDEO_SIDE},ih))'"
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-t", str(MAX_VIDEO_SECONDS), "-map", "0:v:0", "-map", "0:a:0?",
+                            "-map_metadata", "-1", "-map_chapters", "-1", "-vf", side, "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-movflags", "+faststart", str(out)],
+                           capture_output=True, text=True, timeout=240)
+        if r.returncode != 0 or not out.exists():
+            out.unlink(missing_ok=True)
+            raise HTTPException(422, "That video couldn't be converted. Try another one.")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(out), "-frames:v", "1", "-q:v", "4", str(st.ready() / pic_key)],
+                       capture_output=True, timeout=60)
+        if not (st.ready() / pic_key).exists():
+            pic_key = ""
+    except subprocess.TimeoutExpired:
+        out.unlink(missing_ok=True)
+        raise HTTPException(422, "That video took too long to convert. Try a shorter one.")
+    finally:
+        src.unlink(missing_ok=True)
+    return out_key, pic_key
+
+
+async def read_upload(request: Request, limit: int) -> bytes:
+    """The raw request body, refused as soon as it passes the limit."""
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(413, "That video is too big. Try a shorter one.")
+    return bytes(buf)
+
+
+def _media_link(request: Request, db: DB, mid: int, col: str, conv_ok) -> RedirectResponse:
+    """Access is checked here; the file itself is reached through a short-lived signed link (see media.py)."""
+    m = db.one(f"SELECT id, conv, {col} AS key, removed_by, held FROM chat WHERE id=?", (mid,))
+    if not m or not m["key"] or not conv_ok(m) or not store(request).path(m["key"]).exists():
         raise HTTPException(404)
-    path = folder / m["picture"]
+    return RedirectResponse(media.signed_link(get_settings().session_secret, m["key"]), status_code=307,
+                            headers={"Cache-Control": "private, max-age=600"})
+
+
+def _picture_file(request: Request, db: DB, mid: int, conv_ok) -> RedirectResponse:
+    return _media_link(request, db, mid, "picture", conv_ok)
+
+
+def _video_file(request: Request, db: DB, mid: int, conv_ok) -> RedirectResponse:
+    return _media_link(request, db, mid, "video", conv_ok)
+
+
+@router.get("/media/{key}")
+def media_file(key: str, exp: int, sig: str, request: Request):
+    """A photo or clip, for whoever holds a signed link. Reachable from outside the house, like /join."""
+    if not media.KEY_RE.match(key) or not media.link_ok(get_settings().session_secret, key, exp, sig):
+        raise HTTPException(404)
+    path = store(request).path(key)
     if not path.exists():
         raise HTTPException(404)
-    return FileResponse(path, media_type="image/png" if path.suffix == ".png" else "image/jpeg",
-                        headers={"Cache-Control": "private, max-age=86400"})
+    return FileResponse(path, media_type=media.TYPES[path.suffix], headers={"Cache-Control": "private, max-age=3600"})
 
 
 class ChatIn(BaseModel):
@@ -217,7 +384,7 @@ class ChatIn(BaseModel):
 
 
 class PictureIn(BaseModel):
-    data: str = Field(min_length=8, max_length=12_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
+    data: str = Field(min_length=8, max_length=21_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
     text: str = Field(default="", max_length=MAX_TEXT)
     conv: str = Field(default=FAMILY, max_length=40)
 
@@ -236,14 +403,14 @@ def device_chats(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         off = locked and c["kind"] != "family"
         out.append({**c, "last_id": last, "last_other_id": other, "can_send": not off,
                     "note": "Off while the PC is locked" if off else ""})
-    return {"convs": out, "pictures": cs["pictures"], "links": cs["links"]}
+    return {"convs": out, "pictures": cs["pictures"], "videos": cs["videos"], "links": cs["links"]}
 
 
 @router.get("/api/device/chat")
 def device_chat(after: int = 0, conv: str = FAMILY, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                 settings: Settings = Depends(get_settings)):
     kid_conv(db, settings, kid, conv)
-    return [{**_shown(m, False), "mine": m["kid_id"] == kid.id} for m in _rows(db, conv, after)]
+    return [{**_shown(m, False), "mine": m["kid_id"] == kid.id} for m in _rows(db, conv, after, floor=_floor(db, conv, "kid", kid.id))]
 
 
 @router.post("/api/device/chat", status_code=201)
@@ -260,15 +427,39 @@ def device_chat_picture(p: PictureIn, request: Request, kid: Kid = Depends(curre
     if not chat_settings(db)["pictures"]:
         raise HTTPException(403, "Pictures are switched off in chat.")
     _limit(f"kid-{kid.id}", "picture")
-    name = save_picture(pictures_dir(request), p.data)
-    return {"id": _post(db, settings, p.conv, kid.name, kid.id, False, p.text, picture=name)}
+    name = save_picture(store(request), p.data)
+    return {"id": _post(db, settings, p.conv, kid.name, kid.id, False, p.text, picture=name, st=store(request))}
 
 
 @router.get("/api/device/chat/picture/{mid}")
 def device_chat_picture_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                              settings: Settings = Depends(get_settings)):
     mine = {c["id"] for c in kid_convs(db, settings, kid)}
-    return _picture_file(db, pictures_dir(request), mid, lambda m: m["conv"] in mine and not m["removed_by"])
+    return _picture_file(request, db, mid, lambda m: m["conv"] in mine and m["id"] > _floor(db, m["conv"], "kid", kid.id) and not m["removed_by"] and not m["held"])
+
+
+def _videos_ok(db: DB) -> None:
+    if not chat_settings(db)["videos"]:
+        raise HTTPException(403, "Videos are switched off in chat.")
+
+
+@router.post("/api/device/chat/video", status_code=201)
+async def device_chat_video(request: Request, conv: str = FAMILY, text: str = "", kid: Kid = Depends(current_device),
+                            db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Body: the clip's bytes. Words with it go in ?text=."""
+    kid_conv(db, settings, kid, conv)
+    _videos_ok(db)
+    _limit(f"kid-{kid.id}", "video")
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, conv, kid.name, kid.id, False, text[:MAX_TEXT], picture=pic, video=vid, st=store(request))}
+
+
+@router.get("/api/device/chat/video/{mid}")
+def device_chat_video_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
+                           settings: Settings = Depends(get_settings)):
+    mine = {c["id"] for c in kid_convs(db, settings, kid)}
+    return _video_file(request, db, mid, lambda m: m["conv"] in mine and m["id"] > _floor(db, m["conv"], "kid", kid.id) and not m["removed_by"] and not m["held"])
 
 
 # --------------------------------------------------------------------------- friend's browser (invite link)
@@ -279,48 +470,79 @@ def _friend_ok(db: DB) -> None:
 
 
 @router.get("/join/{code}/chat")
-def friend_chat(code: str, after: int = 0, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+def friend_chat(code: str, after: int = 0, conv: str = "", db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     cs = chat_settings(db)
     kid = next((k for k in settings.kids if k.id == inv["kid_id"]), None)
     if not cs["friends"] or not kid:
-        return {"on": False, "kid_name": kid.name if kid else "", "friend_name": inv["friend_name"], "messages": []}
-    conv = friend_conv(code)
-    msgs = [{**_shown(m, False), "mine": bool(m["friend"])} for m in _rows(db, conv, after)]
+        return {"on": False, "kid_name": kid.name if kid else "", "friend_name": inv["friend_name"], "messages": [], "convs": []}
+    convs = friend_convs(db, settings, code)
+    c = _friend_conv_ok(db, settings, code, conv)
+    msgs = [{**_shown(m, False), "mine": bool(m["friend"]) and m["sender"] == inv["friend_name"]}
+            for m in _rows(db, c["id"], after, floor=c["floor"])]
     for m in msgs:
         m.pop("kid_id")
-    return {"on": True, "kid_name": kid.name, "friend_name": inv["friend_name"], "pictures": cs["pictures"],
-            "links": cs["links"], "messages": msgs}
+    for x in convs:
+        x["last_id"] = db.one("SELECT MAX(id) n FROM chat WHERE conv=?", (x["id"],))["n"] or 0
+        x.pop("floor")
+    return {"on": True, "kid_name": kid.name, "friend_name": inv["friend_name"], "pictures": cs["pictures"], "videos": cs["videos"],
+            "links": cs["links"], "messages": msgs, "conv": c["id"], "title": c["title"], "convs": convs}
 
 
 class FriendIn(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT)
+    conv: str = Field(default="", max_length=40)
 
 
 @router.post("/join/{code}/chat", status_code=201)
 def friend_chat_send(code: str, m: FriendIn, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     _friend_ok(db)
+    c = _friend_conv_ok(db, settings, code, m.conv)
     _limit(f"friend-{code}", "text")
-    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, m.text)}
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, m.text)}
 
 
 @router.post("/join/{code}/chat/picture", status_code=201)
 def friend_chat_picture(code: str, p: PictureIn, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     _friend_ok(db)
+    c = _friend_conv_ok(db, settings, code, "" if p.conv == FAMILY else p.conv)
     if not chat_settings(db)["pictures"]:
         raise HTTPException(403, "Pictures are switched off in chat.")
     _limit(f"friend-{code}", "picture")
-    name = save_picture(pictures_dir(request), p.data)
-    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, p.text, picture=name)}
+    name = save_picture(store(request), p.data)
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, p.text, picture=name, st=store(request))}
+
+
+def _friend_media_ok(db: DB, settings: Settings, code: str):
+    floors = {c["id"]: c["floor"] for c in friend_convs(db, settings, code)}
+    return lambda m: m["conv"] in floors and m["id"] > floors[m["conv"]] and not m["removed_by"] and not m["held"]
 
 
 @router.get("/join/{code}/chat/picture/{mid}")
-def friend_chat_picture_file(code: str, mid: int, request: Request, db: DB = Depends(get_db)):
+def friend_chat_picture_file(code: str, mid: int, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     live_friend(db, code)
-    conv = friend_conv(code)
-    return _picture_file(db, pictures_dir(request), mid, lambda m: m["conv"] == conv and not m["removed_by"])
+    return _picture_file(request, db, mid, _friend_media_ok(db, settings, code))
+
+
+@router.post("/join/{code}/chat/video", status_code=201)
+async def friend_chat_video(code: str, request: Request, text: str = "", conv: str = "", db: DB = Depends(get_db),
+                            settings: Settings = Depends(get_settings)):
+    inv = live_friend(db, code)
+    _friend_ok(db)
+    _videos_ok(db)
+    c = _friend_conv_ok(db, settings, code, conv)
+    _limit(f"friend-{code}", "video")
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, text[:MAX_TEXT], picture=pic, video=vid, st=store(request))}
+
+
+@router.get("/join/{code}/chat/video/{mid}")
+def friend_chat_video_file(code: str, mid: int, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    live_friend(db, code)
+    return _video_file(request, db, mid, _friend_media_ok(db, settings, code))
 
 
 # --------------------------------------------------------------------------- parents' dashboard
@@ -344,7 +566,7 @@ def parent_chat_picture(p: PictureIn, request: Request, parent: str = Depends(cu
                         settings: Settings = Depends(get_settings)):
     if p.conv != FAMILY:
         raise HTTPException(403, "Parents write in the family chat. The other chats are for reading.")
-    name = save_picture(pictures_dir(request), p.data)
+    name = save_picture(store(request), p.data)
     return {"id": _post(db, settings, FAMILY, parent, None, False, p.text, picture=name, from_parent=True)}
 
 
@@ -362,17 +584,22 @@ def parent_chats(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     """Every conversation the kids have, for reading: the family chat, the brothers' chat, and each friend's
     (revoked friends too while their messages are kept)."""
     names = {k.id: k.name for k in settings.kids}
-    out = [{"id": FAMILY, "title": "Family chat", "kind": "family", "who": "Everyone", "can_send": True, "active": True}]
+    out = [{"id": FAMILY, "title": "Family chat", "kind": "family", "who": "Everyone", "can_send": True, "active": True, "kid_ids": list(names)}]
     if len(settings.kids) > 1:
-        out.append({"id": KIDS, "title": " & ".join(names.values()), "kind": "kids", "who": "Just the kids",
+        out.append({"id": KIDS, "title": chat_name(db, KIDS) or " & ".join(names.values()), "kind": "kids", "who": "Just the kids",
+                    "named": bool(chat_name(db, KIDS)), "kid_ids": list(names),
                     "can_send": False, "active": chat_settings(db)["kids"]})
     seen = set()
     for inv in db.q("SELECT code, kid_id, friend_name, revoked FROM invites ORDER BY created_at"):
         conv = friend_conv(inv["code"])
         seen.add(conv)
-        out.append({"id": conv, "title": f"{names.get(inv['kid_id'], inv['kid_id'])} & {inv['friend_name']}", "kind": "friend",
-                    "who": "Friend" + (" (link revoked)" if inv["revoked"] else ""), "can_send": False, "active": not inv["revoked"],
-                    "kid_id": inv["kid_id"]})
+        extra = extra_members(db, conv)
+        people = [names.get(inv["kid_id"], inv["kid_id"]), inv["friend_name"]] + [m.get("name") or names.get(m["who"], m["who"]) for m in extra]
+        out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "kind": "group" if extra else "friend",
+                    "who": ("Group" if extra else "Friend") + (" (link revoked)" if inv["revoked"] else ""), "can_send": False,
+                    "active": not inv["revoked"], "kid_id": inv["kid_id"], "people": people, "named": bool(chat_name(db, conv)),
+                    "kid_ids": [inv["kid_id"]] + [m["who"] for m in extra if m["kind"] == "kid"],
+                    "members": [{"kind": m["kind"], "who": m["who"], "name": m.get("name") or names.get(m["who"], m["who"])} for m in extra]})
     # Messages from a friend whose revoked link has since been cleaned up are still the parents' to read.
     for r in db.q(f"SELECT DISTINCT conv FROM chat WHERE conv LIKE '{FRIEND}%'"):
         if r["conv"] not in seen:
@@ -382,6 +609,58 @@ def parent_chats(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     for c in out:
         c.update(_stats(db, c["id"]))
     return {"convs": out, "settings": chat_settings(db)}
+
+
+class Member(BaseModel):
+    kind: str = Field(pattern="^(kid|friend)$")
+    who: str = Field(min_length=1, max_length=64)     # kid id, or the friend's invite code
+
+
+def _group_base(db: DB, conv: str) -> dict:
+    """Only a friend's chat can take more people (the family and kids' chats already have everyone at home)."""
+    inv = _invite_for(db, conv)
+    if not inv or inv["revoked"]:
+        raise HTTPException(404, "Only a live chat with a friend can take more people.")
+    return inv
+
+
+@router.post("/api/parent/chats/{conv}/members", status_code=201)
+def add_member(conv: str, m: Member, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+               settings: Settings = Depends(get_settings)):
+    """Add a kid or another approved friend to a friend's chat, making it a group. They see what is said from now on,
+    not what was said before. Everyone in it still needs their own approved link (friends) or is a kid at home."""
+    inv = _group_base(db, conv)
+    if m.kind == "kid":
+        if not any(k.id == m.who for k in settings.kids) or m.who == inv["kid_id"]:
+            raise HTTPException(422, "That kid is already in this chat.")
+    else:
+        if m.who == inv["code"] or not db.one("SELECT 1 FROM invites WHERE code=? AND revoked=0", (m.who,)):
+            raise HTTPException(422, "Pick an approved friend who isn't in this chat yet.")
+    last = db.one("SELECT MAX(id) n FROM chat WHERE conv=?", (conv,))["n"] or 0
+    db.x("INSERT OR IGNORE INTO chat_members(conv,kind,who,from_id,added_by) VALUES(?,?,?,?,?)", (conv, m.kind, m.who, last, parent))
+    return {"ok": True}
+
+
+@router.delete("/api/parent/chats/{conv}/members/{kind}/{who}")
+def remove_member(conv: str, kind: str, who: str, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    db.x("DELETE FROM chat_members WHERE conv=? AND kind=? AND who=?", (conv, kind, who))
+    return {"ok": True}
+
+
+class ChatName(BaseModel):
+    name: str = Field(default="", max_length=40)
+
+
+@router.put("/api/parent/chats/{conv}/name")
+def name_chat(conv: str, body: ChatName, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """A name for a chat, shown to everyone in it. Empty goes back to the list of names."""
+    if conv == FAMILY or (conv != KIDS and not _invite_for(db, conv)):
+        raise HTTPException(404, "That chat can't be renamed.")
+    if body.name.strip():
+        db.x("INSERT INTO chat_names(conv,name) VALUES(?,?) ON CONFLICT(conv) DO UPDATE SET name=excluded.name", (conv, body.name.strip()))
+    else:
+        db.x("DELETE FROM chat_names WHERE conv=?", (conv,))
+    return {"ok": True}
 
 
 @router.get("/api/parent/chats/{conv}")
@@ -401,7 +680,20 @@ def parent_shared(days: int = 0, parent: str = Depends(current_parent), db: DB =
 
 @router.get("/api/parent/chat/picture/{mid}")
 def parent_chat_picture_file(mid: int, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
-    return _picture_file(db, pictures_dir(request), mid, lambda m: True)
+    return _picture_file(request, db, mid, lambda m: True)
+
+
+@router.post("/api/parent/chat/video", status_code=201)
+async def parent_chat_video(request: Request, text: str = "", parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                            settings: Settings = Depends(get_settings)):
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, FAMILY, parent, None, False, text[:MAX_TEXT], picture=pic, video=vid, from_parent=True)}
+
+
+@router.get("/api/parent/chat/video/{mid}")
+def parent_chat_video_file(mid: int, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    return _video_file(request, db, mid, lambda m: True)
 
 
 @router.delete("/api/parent/chat/{mid}")
@@ -417,6 +709,7 @@ class ChatSettings(BaseModel):
     kids: bool | None = None       # the brothers' own chat
     friends: bool | None = None    # chat with invited friends
     pictures: bool | None = None   # photos and screenshots
+    videos: bool | None = None     # clips up to 30 seconds
     links: bool | None = None      # web links in messages
 
 
@@ -425,3 +718,19 @@ def parent_chat_settings(c: ChatSettings, parent: str = Depends(current_parent),
     new = {**chat_settings(db), **{k: v for k, v in c.model_dump().items() if v is not None}}
     db.x("INSERT INTO kv(key,value) VALUES('chat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(new),))
     return new
+
+
+@router.get("/api/parent/chat-held")
+def parent_chat_held(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """Pictures and videos the picture check held, waiting for a parent (shown in Requests)."""
+    return {"check": screening.status(),
+            "held": [_shown(m, True) for m in db.q(f"SELECT {COLS} FROM chat WHERE held!='' AND removed_by='' ORDER BY id DESC LIMIT 100")]}
+
+
+@router.post("/api/parent/chat/{mid}/release")
+def parent_chat_release(mid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """The picture check was wrong: let the kids (and the friend) see it."""
+    if not db.one("SELECT 1 FROM chat WHERE id=? AND held!=''", (mid,)):
+        raise HTTPException(404, "Nothing is held with that number.")
+    db.x("UPDATE chat SET held='' WHERE id=?", (mid,))
+    return {"ok": True}

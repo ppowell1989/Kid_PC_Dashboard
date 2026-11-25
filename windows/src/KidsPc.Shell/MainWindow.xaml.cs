@@ -85,7 +85,8 @@ public partial class MainWindow : Window
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
         ShowFuel(t);
         SetTicker(rules.Kid.Name);
-        StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
+        if (!_state.HubReachable) StatusLine.Text = "Can't reach the home server. Your time is still counting down.";
+        else if (DateTimeOffset.Now > _statusHold) StatusLine.Text = "";
 
         if (t.Warn)
         {
@@ -133,6 +134,7 @@ public partial class MainWindow : Window
             Topmost = false;
         }
 
+        ShowPoints(rules);
         BuildHomeTiles(rules);
         BuildFamily(rules);
         BuildCatalogue(rules);
@@ -176,20 +178,22 @@ public partial class MainWindow : Window
 
     private void BuildHomeTiles(Rules rules)
     {
-        var installed = rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id)).ToList();
+        // What he played most recently first, then games that are new to him, then the rest by name.
+        var installed = rules.Games.Where(g => _state!.InstalledGameIds.Contains(g.Id))
+            .OrderByDescending(g => g.LastPlayed ?? "", StringComparer.Ordinal).ThenByDescending(g => g.New).ThenBy(g => g.Title).ToList();
         // Games a parent approved that are still being put on the PC show here too, with what is happening and a bar,
         // so he can see it coming (and so can a parent standing behind him).
         var coming = _state!.Installing ?? [];
         var percent = _state.InstallPercent ?? [];
         var onTheWay = rules.Games.Where(g => coming.ContainsKey(g.Id) && !_state.InstalledGameIds.Contains(g.Id)).ToList();
         // Only rebuild when something changed, so a tile doesn't lose its hover glow every time the shell polls.
-        var sig = string.Join("|", installed.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}")) + $"|friends:{rules.Friends.Count}|"
+        var sig = string.Join("|", installed.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}:{PlayedCaption(g)}")) + $"|friends:{rules.Friends.Count}|"
             + string.Join("|", onTheWay.Select(g => $"{g.Id}:{coming[g.Id]}:{percent.GetValueOrDefault(g.Id, -1)}"));
         if (sig == _homeSig && HomeTiles.Children.Count > 0) return;
         _homeSig = sig;
         HomeTiles.Children.Clear();
         foreach (var g in installed)
-            HomeTiles.Children.Add(Tile($"{g.Title}\nPlay", () => Launcher.LaunchGame(g), image: g.ImageUrl));
+            HomeTiles.Children.Add(Tile($"{g.Title}\n{PlayedCaption(g)}", () => Launcher.LaunchGame(g), image: g.ImageUrl, accentCaption: g.New && string.IsNullOrEmpty(g.LastPlayed)));
         foreach (var g in onTheWay)
         {
             var words = coming[g.Id];
@@ -203,14 +207,24 @@ public partial class MainWindow : Window
         Recolour(HomeTiles);
     }
 
+    /// <summary>The small line under a game on his home screen: "New!", "Played today", "Played Tuesday", or "Play".</summary>
+    private static string PlayedCaption(Game g)
+    {
+        if (string.IsNullOrEmpty(g.LastPlayed) || !DateTimeOffset.TryParse(g.LastPlayed, out var at))
+            return g.New ? "New!" : "Play";
+        var days = (DateTime.Today - at.LocalDateTime.Date).Days;   // the hub and the PC share the family's time zone
+        return days <= 0 ? "Played today" : days == 1 ? "Played yesterday" : days < 7 ? $"Played {at.LocalDateTime:dddd}" : "Play";
+    }
+
     private void BuildCatalogue(Rules rules)
     {
+        BuildAsked(rules);
         var notInstalled = rules.Games.Where(g => !_state!.InstalledGameIds.Contains(g.Id)).ToList();
         // A game a parent approved installs by itself: its tile says how far along it is instead of "Install".
         var coming = _state!.Installing ?? [];
         string Caption(Game g) => coming.TryGetValue(g.Id, out var c) ? c : "Install";
         var sig = string.Join("|", notInstalled.Select(g => $"{g.Id}:{g.Title}:{g.ImageUrl}:{Caption(g)}"));
-        if (sig == _catalogueSig && CatalogueTiles.Children.Count > 0) return;
+        if (sig == _catalogueSig && (CatalogueTiles.Children.Count > 0 || notInstalled.Count == 0)) return;
         _catalogueSig = sig;
         CatalogueTiles.Children.Clear();
         foreach (var g in notInstalled)
@@ -218,13 +232,8 @@ public partial class MainWindow : Window
             {
                 if (coming.TryGetValue(g.Id, out var words)) { StatusLine.Text = ComingText(g, words); return; }
                 await InstallAsync(g);
-            }, image: g.ImageUrl));
-        if (notInstalled.Count == 0)
-        {
-            var none = new TextBlock { Text = "Everything approved is already installed.", FontSize = 18 };
-            none.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
-            CatalogueTiles.Children.Add(none);
-        }
+            }, image: g.ImageUrl, small: true));
+        ReadyPanel.Visibility = notInstalled.Count > 0 ? Visibility.Visible : Visibility.Collapsed;   // everything approved is on his PC already
         Recolour(CatalogueTiles);
     }
 
@@ -259,14 +268,17 @@ public partial class MainWindow : Window
 
     /// <summary>A tile: art (or an icon on a poster colour) on top, the name on a plate below.
     /// A second line in <paramref name="text"/> becomes the small coloured caption, e.g. "Portal 2\nInstall".</summary>
-    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null, int? percent = null)
+    /// <param name="small">The smaller tile used on "Get more games", so more fit on a row.</param>
+    /// <param name="accentCaption">Draw the caption in the accent colour ("New!").</param>
+    private static Button Tile(string text, Action onClick, bool enabled = true, string? image = null, string? glyph = null, int? percent = null,
+        bool small = false, bool accentCaption = false)
     {
         var art = LoadArt(image);
         var lines = text.Split('\n', 2);
         var plate = new StackPanel();
         plate.Children.Add(new TextBlock
         {
-            Text = lines[0], FontSize = 20,
+            Text = lines[0], FontSize = small ? 18 : 20,
             TextTrimming = TextTrimming.CharacterEllipsis, TextWrapping = TextWrapping.Wrap, MaxHeight = 50, LineHeight = 24,
         });
         ((TextBlock)plate.Children[0]).SetResourceReference(TextBlock.FontFamilyProperty, "TileTitleFont");
@@ -274,10 +286,10 @@ public partial class MainWindow : Window
         {
             plate.Children.Add(new TextBlock
             {
-                Text = lines[1].Replace("\n", "  \u2022  "), FontSize = 15, Margin = new Thickness(0, 1, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis,
+                Text = lines[1].Replace("\n", "  \u2022  "), FontSize = small ? 14 : 15, Margin = new Thickness(0, 1, 0, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis, Tag = accentCaption ? "accent" : null,
             });
-            ((TextBlock)plate.Children[1]).SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+            ((TextBlock)plate.Children[1]).SetResourceReference(TextBlock.ForegroundProperty, accentCaption ? "Accent" : "Muted");
         }
         if (percent is { } pct)
         {
@@ -292,6 +304,7 @@ public partial class MainWindow : Window
             IsEnabled = enabled,
         };
         b.SetResourceReference(StyleProperty, "Tile");
+        if (small) { b.Width = 262; b.Height = 200; b.Margin = new Thickness(0, 0, 18, 18); }
         if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
         else b.Tag = glyph ?? "\uE7FC";   // no art: a game controller
         b.Click += (_, _) => onClick();
@@ -312,12 +325,12 @@ public partial class MainWindow : Window
             {
                 var frame = new SolidColorBrush(frames[i++ % frames.Length]);
                 b.BorderBrush = frame;
-                if (frames.Length > 1 && caption is not null) caption.Foreground = frame;
+                if (frames.Length > 1 && caption is not null && caption.Tag is not "accent") caption.Foreground = frame;
             }
             else
             {
                 b.ClearValue(BorderBrushProperty);
-                caption?.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+                caption?.SetResourceReference(TextBlock.ForegroundProperty, caption.Tag is "accent" ? "Accent" : "Muted");
             }
             if (b.Background is not ImageBrush)
             {
@@ -333,7 +346,7 @@ public partial class MainWindow : Window
     private void OnThemeChanged()
     {
         DrawBackdrop();
-        Recolour(HomeTiles); Recolour(CatalogueTiles); Recolour(SearchResults);
+        Recolour(HomeTiles); Recolour(CatalogueTiles); Recolour(SearchResults); RecolourShelves();
         RedrawFamily();   // family cards set a few colours in code: rebuild them in the new look
         if (_state?.Rules is { } rules) { SetTicker(rules.Kid.Name); ShowFuel(rules.Time); }
         if (ThemeOverlay.Visibility == Visibility.Visible) BuildThemeChoices();
@@ -366,7 +379,11 @@ public partial class MainWindow : Window
     }
 
     private void ShowHome(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Visible; CataloguePanel.Visibility = Visibility.Collapsed; NavHome.Tag = "on"; NavMore.Tag = null; ShowFamilyPanel(); }
-    private void ShowCatalogue(object s, RoutedEventArgs e) { HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; NavHome.Tag = null; NavMore.Tag = "on"; FamilyPanel.Visibility = Visibility.Collapsed; }
+    private void ShowCatalogue(object s, RoutedEventArgs e)
+    {
+        HomeTiles.Visibility = Visibility.Collapsed; CataloguePanel.Visibility = Visibility.Visible; NavHome.Tag = null; NavMore.Tag = "on"; FamilyPanel.Visibility = Visibility.Collapsed;
+        _ = LoadDiscoverAsync();
+    }
 
     private async Task InstallAsync(Game g)
     {
@@ -405,7 +422,9 @@ public partial class MainWindow : Window
     {
         var title = AskGameBox.Text.Trim();
         if (title.Length == 0) return;
+        SearchHead.Visibility = Visibility.Visible;
         await SendRequest("game", title, $"Sent! Mom or Dad will look at \"{title}\".", SearchStatus);
+        if (SearchStatus.Text.StartsWith("Sent")) { _askedThisSession.Add(title); _justAsked[title] = DateTimeOffset.Now; if (_state?.Rules is { } rules) BuildAsked(rules); }
         AskGameBox.Clear();
     }
 
@@ -427,17 +446,17 @@ public partial class MainWindow : Window
         var q = AskGameBox.Text.Trim();
         if (q.Length < 2) return;
         SearchStatus.Text = "Searching…";
+        SearchHead.Visibility = Visibility.Visible;
         SearchResults.Children.Clear();
         try
         {
             var hits = await _helper.GetAsync<List<GameHit>>(new PipeRequest("game_search", Detail: q)) ?? [];
-            SearchStatus.Text = hits.Count == 0 ? "Nothing found. You can still ask for it by name." : "Tap a game to ask Mom or Dad for it.";
+            SearchStatus.Text = hits.Count == 0 ? $"Nothing found for \"{q}\". You can still ask for it by name." : $"Games called \"{q}\". Tap one to ask Mom or Dad for it.";
             foreach (var g in hits)
             {
                 var asked = AlreadyAsked(g.Name);
-                var facts = string.Join(" · ", new[] { g.Store, string.IsNullOrEmpty(g.Esrb) ? null : $"Rated {g.Esrb}" }.Where(x => !string.IsNullOrEmpty(x)));
-                var label = (facts.Length == 0 ? g.Name : $"{g.Name}\n{facts}") + (asked ? "\nAsked, waiting" : "");
-                SearchResults.Children.Add(Tile(label, () => ShowAsk(g), enabled: !asked, image: g.ImageUrl));
+                var facts = asked ? "Asked, waiting" : HitFacts(g);
+                SearchResults.Children.Add(Tile(facts.Length == 0 ? g.Name : $"{g.Name}\n{facts}", () => ShowAsk(g), enabled: !asked, image: g.ImageUrl, small: true));
             }
             Recolour(SearchResults);
         }
@@ -475,9 +494,14 @@ public partial class MainWindow : Window
         {
             await _helper.GetAsync<object>(new PipeRequest("request", Kind: "game", Detail: g.Name, Note: AskNote.Text.Trim(), Ref: g.Ref));
             _askedThisSession.Add(g.Name);
+            _justAsked[g.Name] = DateTimeOffset.Now;
             AskOverlay.Visibility = Visibility.Collapsed;
-            await SearchGamesAsync();   // redraw so the tile shows "Asked, waiting"
-            SearchStatus.Text = $"Sent! Mom or Dad will look at \"{g.Name}\". If they say yes, it shows up in the approved games above.";
+            BuildShelves();   // redraw so the tile shows "Asked, waiting"
+            if (_state?.Rules is { } rules) BuildAsked(rules);
+            if (AskGameBox.Text.Trim().Length >= 2) await SearchGamesAsync();
+            SearchHead.Visibility = Visibility.Visible;
+            SearchStatus.Text = $"Sent! Mom or Dad will look at \"{g.Name}\". If they say yes, it shows up under Ready for you.";
+            _ = LoadDiscoverAsync(force: true);
         }
         catch (Exception ex)
         {

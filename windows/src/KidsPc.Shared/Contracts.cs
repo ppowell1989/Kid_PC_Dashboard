@@ -21,7 +21,9 @@ public sealed record Game(
     int Id, string Title, string Launcher,
     [property: JsonPropertyName("launch_ref")] string LaunchRef,
     string Rating,
-    [property: JsonPropertyName("image_url")] string ImageUrl);
+    [property: JsonPropertyName("image_url")] string ImageUrl,
+    [property: JsonPropertyName("last_played")] string? LastPlayed = null,   // ISO time he last played it, "" = never
+    bool New = false);                                                     // approved lately and not played yet
 
 public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites, DnsRules? Dns = null, SearchRules? Search = null);
 
@@ -63,7 +65,19 @@ public sealed record Rules(
     List<InstallItem>? Installs = null,
     // The family's time zone (IANA, e.g. "America/New_York"). The hub decides "today" and bedtime in it, and the
     // helper sets the PC's clock to match so the time on his screen agrees with when the PC locks.
-    string? Timezone = null);
+    string? Timezone = null,
+    // Skylight chore points he can spend on extra time; null when a parent hasn't linked Skylight for him.
+    PointsOffer? Points = null);
+
+/// <summary>His Skylight points and the price of extra time. CanBuy false comes with Why, in his words.</summary>
+public sealed record PointsOffer(int Balance,
+    [property: JsonPropertyName("price_points")] int PricePoints,
+    [property: JsonPropertyName("price_minutes")] int PriceMinutes,
+    [property: JsonPropertyName("can_buy")] bool CanBuy,
+    string Why = "",
+    [property: JsonPropertyName("left_today")] int LeftToday = 0);
+
+public sealed record BoughtTime(int Minutes, int Points, int Balance);
 
 /// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.</summary>
 public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0);
@@ -106,7 +120,8 @@ public static class Json
 /// the "chat_picture_get" pipe op. Removed = a parent hid it (Text is then the hub's note saying so).</summary>
 public sealed record ChatMessage(long Id, string Sender,
     [property: JsonPropertyName("kid_id")] string? KidId, string Text, string At, bool Mine,
-    string Conv = "family", bool Friend = false, bool Picture = false, List<string>? Links = null, bool Removed = false);
+    string Conv = "family", bool Friend = false, bool Picture = false, List<string>? Links = null, bool Removed = false,
+    bool Video = false);   // a clip up to 30 s: Picture is its first frame; fetch the MP4 with "chat_video_get"
 
 /// <summary>A conversation the kid can open: the family chat, his brothers, or one invited friend.</summary>
 public sealed record ChatConv(string Id, string Title, string Kind,
@@ -114,11 +129,16 @@ public sealed record ChatConv(string Id, string Title, string Kind,
     [property: JsonPropertyName("last_other_id")] long LastOtherId,
     [property: JsonPropertyName("can_send")] bool CanSend, string Note = "");
 
-public sealed record ChatList(List<ChatConv> Convs, bool Pictures, bool Links);
+public sealed record ChatList(List<ChatConv> Convs, bool Pictures, bool Links, bool Videos = false);
 
 public sealed record ChatPicture(string Data);
 
 /// <summary>A match from the hub's kid-safe game search (Steam, Battle.net, PC Game Pass). Ref names the game and
 /// the store it would come from, "steam:620" or "battlenet:WoWC", and goes with his request to Mom or Dad.</summary>
 public sealed record GameHit(string Ref, string Name,
-    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null, string? Store = null);
+    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null, string? Store = null,
+    bool Asked = false);   // he already asked for it and a parent hasn't answered yet
+
+/// <summary>"Get more games" shelves: games his brother has, then hand-picked ideas up to the rating a parent set.</summary>
+public sealed record GameShelf(string Title, List<GameHit> Games);
+public sealed record Discover(string Cap, List<GameShelf> Shelves);

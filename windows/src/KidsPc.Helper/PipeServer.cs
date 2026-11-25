@@ -105,6 +105,21 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var found = await http.GetFromJsonAsync<List<GameHit>>($"/api/device/games/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
                 return Ok(found ?? []);
 
+            case "buy_time":   // spend Skylight points on extra minutes; the hub checks the price, the cap and bedtime
+            {
+                var res = await HubJson<BoughtTime>(await http.PostAsync("/api/device/points/buy", null, ct), ct);
+                if (res.Ok)
+                {
+                    // Pick up the new minutes now rather than at the next sync, so a locked screen opens straight away.
+                    try { if (await http.GetFromJsonAsync<Rules>("/api/device/rules", Json.Options, ct) is { } fresh) cache.Set(fresh); }
+                    catch (Exception) { /* the next regular sync gets it */ }
+                }
+                return res;
+            }
+
+            case "game_discover":   // "Get more games" shelves to browse; the hub applies the parent's rating cap
+                return Ok(await http.GetFromJsonAsync<Discover>("/api/device/games/discover", Json.Options, ct) ?? new Discover("", []));
+
             // Chat: the family chat (works while locked, so he can always reach Mom and Dad), his brothers' chat and one
             // per invited friend. The hub decides who may talk to whom and when; its "no" comes back as a plain sentence.
             case "chat_convs":
@@ -120,9 +135,25 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail, conv = req.Ref ?? "family" }, ct), ct);
 
             case "chat_picture":   // Detail = the picture as base64 (the shell has already made it small), Note = words with it
-                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 12_000_000) return new(false, "That picture is too big. Try a smaller one.");
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 21_000_000) return new(false, "That picture is too big. Try a smaller one.");
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat/picture",
                     new { data = req.Detail, text = req.Note ?? "", conv = req.Ref ?? "family" }, ct), ct);
+
+            case "chat_video":   // Detail = the clip as base64 (at most 100 MB); the hub converts it, which can take a minute
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 140_000_000) return new(false, "That video is too big. Try a shorter one.");
+                byte[] clip;
+                try { clip = Convert.FromBase64String(req.Detail); } catch (FormatException) { return new(false, NotNow); }
+                using (var body = new ByteArrayContent(clip))
+                {
+                    body.Headers.ContentType = new("application/octet-stream");
+                    var url = $"/api/device/chat/video?conv={Uri.EscapeDataString(req.Ref ?? "family")}&text={Uri.EscapeDataString(req.Note ?? "")}";
+                    return await HubJson<object>(await Slow.PostAsync(url, body, ct), ct);
+                }
+
+            case "chat_video_get":   // Detail = message id; the hub answers with a signed link to the clip, which this follows
+                var vr = await Slow.GetAsync($"/api/device/chat/video/{(long.TryParse(req.Detail, out var vid) ? vid : 0)}", ct);
+                if (!vr.IsSuccessStatusCode) return new(false, "That video isn't there any more.");
+                return Ok(new ChatPicture(Convert.ToBase64String(await vr.Content.ReadAsByteArrayAsync(ct))));
 
             case "chat_picture_get":   // Detail = message id
                 var pr = await http.GetAsync($"/api/device/chat/picture/{(long.TryParse(req.Detail, out var pid) ? pid : 0)}", ct);
@@ -141,6 +172,11 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         }
     }
 
+    private HttpClient? _slow;
+    /// <summary>The hub, for chat videos: same address and device token, but minutes instead of 10 seconds.</summary>
+    private HttpClient Slow => _slow ??= new HttpClient { BaseAddress = http.BaseAddress, Timeout = TimeSpan.FromMinutes(5),
+        DefaultRequestHeaders = { Authorization = http.DefaultRequestHeaders.Authorization } };
+
     /// <summary>The hub's answer as data, or its "no" as the sentence it wrote for the kid
     /// ("This chat is off while the PC is locked."). A server error is not for his eyes.</summary>
     private static async Task<PipeResponse> HubJson<T>(HttpResponseMessage r, CancellationToken ct)
@@ -148,7 +184,7 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         using var _ = r;
         if (r.IsSuccessStatusCode)
             return Ok((await r.Content.ReadFromJsonAsync<T>(Json.Options, ct))!);
-        if ((int)r.StatusCode is 403 or 404 or 413 or 422 or 429)
+        if ((int)r.StatusCode is 400 or 403 or 404 or 413 or 422 or 429)
         {
             try
             {

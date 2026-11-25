@@ -142,3 +142,110 @@ def test_old_pictures_are_deleted_with_their_messages(parent):
     db.x("UPDATE chat SET at='2026-01-01T10:00:00'")
     retention.prune(db, __import__("datetime").datetime(2026, 11, 24, tzinfo=__import__("datetime").timezone.utc))
     assert not (app.state.chat_dir / name).exists()
+
+
+def test_iphone_photos_and_other_formats_are_taken(parent):
+    from pillow_heif import register_heif_opener
+    from app.main import app
+    register_heif_opener()
+    code = invite(parent)
+    for fmt in ("HEIF", "MPO", "BMP", "TIFF", "WEBP"):
+        im = Image.new("RGB", (2000, 1500), "blue")
+        buf = io.BytesIO()
+        im.save(buf, fmt, **({"quality": 60} if fmt == "HEIF" else {}))
+        r = parent.post(f"/join/{code}/chat/picture", json={"data": base64.b64encode(buf.getvalue()).decode()})
+        assert r.status_code == 201, (fmt, r.text)
+        name = app.state.db.one("SELECT picture FROM chat WHERE id=?", (r.json()["id"],))["picture"]
+        assert name.endswith(".jpg") and Image.open(app.state.chat_dir / name).size == (1600, 1200)
+
+
+def test_a_video_gets_a_plain_answer(parent):
+    code = invite(parent)
+    mov = b"\x00\x00\x00\x14ftypqt  \x00\x00\x02\x00qt  " + b"\x00" * 200
+    r = parent.post(f"/join/{code}/chat/picture", json={"data": base64.b64encode(mov).decode()})
+    assert r.status_code == 422 and "video" in r.json()["detail"]
+
+
+def clip(seconds: float, size="640x360") -> bytes:
+    import subprocess
+    import tempfile
+    out = tempfile.mktemp(suffix=".mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size={size}:rate=15:duration={seconds}",
+                    "-f", "lavfi", "-i", f"sine=duration={seconds}", "-metadata", "location=+40.7128-074.0060/",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", out], check=True)
+    return open(out, "rb").read()
+
+
+def test_short_videos_are_converted_and_linked(parent):
+    import subprocess
+    from app.main import app
+    code = invite(parent)
+    conv = next(c["id"] for c in parent.get("/api/device/chats", headers=ADAM).json()["convs"] if c["kind"] == "friend")
+    r = parent.post(f"/join/{code}/chat/video?text=watch this", content=clip(3, "1920x1080"))
+    assert r.status_code == 201, r.text
+    mid = r.json()["id"]
+    row = app.state.db.one("SELECT picture, video FROM chat WHERE id=?", (mid,))
+    path = app.state.chat_dir / row["video"]
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height:format_tags", "-of", "json", str(path)],
+                           capture_output=True, text=True).stdout
+    assert '"width": 1280' in probe and "location" not in probe   # 720p copy, no location
+    assert row["picture"].endswith(".jpg")
+
+    kid = parent.get(f"/api/device/chat?conv={conv}", headers=ADAM).json()[0]
+    assert kid["video"] and kid["picture"] and kid["text"] == "watch this"
+    # The file is reached through a signed link; the link alone works (from outside too), a made-up one doesn't.
+    link = parent.get(f"/api/device/chat/video/{mid}", headers=ADAM, follow_redirects=False)
+    assert link.status_code == 307 and link.headers["location"].startswith(f"/media/{row['video']}?exp=")
+    assert parent.get(link.headers["location"]).content[4:8] == b"ftyp"
+    assert parent.get(f"/media/{row['video']}?exp=9999999999&sig=0000").status_code == 404
+    assert parent.get(f"/api/device/chat/video/{mid}", headers=BARRETT).status_code == 404
+    assert parent.get(f"/api/parent/chat/video/{mid}").status_code == 200
+    assert parent.get(f"/join/{code}/chat/video/{mid}").status_code == 200
+    # Removed: the kid can't fetch it any more; parents still can.
+    parent.delete(f"/api/parent/chat/{mid}")
+    assert parent.get(f"/api/device/chat/video/{mid}", headers=ADAM).status_code == 404
+    assert parent.get(f"/api/parent/chat/video/{mid}").status_code == 200
+
+
+def test_long_or_fake_videos_are_refused(parent):
+    code = invite(parent)
+    r = parent.post(f"/join/{code}/chat/video", content=clip(32))
+    assert r.status_code == 422 and "up to 30 seconds" in r.json()["detail"]
+    assert parent.post(f"/join/{code}/chat/video", content=b"not a video at all").status_code == 422
+    parent.put("/api/parent/chat-settings", json={"videos": False})
+    assert parent.post(f"/join/{code}/chat/video", content=clip(1)).status_code == 403
+
+
+def test_picture_check_holds_a_flagged_picture_until_a_parent_lets_it_through(parent, monkeypatch):
+    """Patrick's choice: everything arrives straight away except what the local picture check flags."""
+    from app import screening
+    monkeypatch.setattr(screening, "check_file", lambda path: "The picture check found what looks like nudity")
+    code = invite(parent)
+    conv = next(c["id"] for c in parent.get("/api/device/chats", headers=ADAM).json()["convs"] if c["kind"] == "friend")
+    mid = parent.post(f"/join/{code}/chat/picture", json={"data": picture("JPEG"), "text": "lol"}).json()["id"]
+    mine = parent.get(f"/api/device/chat?conv={conv}", headers=ADAM).json()
+    m = next(x for x in (mine if isinstance(mine, list) else mine["messages"]) if x["id"] == mid)
+    assert m["text"] == screening_text() and not m["picture"]
+    assert parent.get(f"/api/device/chat/picture/{mid}", headers=ADAM).status_code == 404
+    held = parent.get("/api/parent/chat-held").json()["held"]
+    assert [h["id"] for h in held] == [mid] and held[0]["held"]
+    assert parent.get(f"/api/parent/chat/picture/{mid}").status_code == 200       # parents can look
+    # A parent's own picture is never checked.
+    assert not parent.get("/api/parent/chat-held").json()["held"][1:]
+    assert parent.post(f"/api/parent/chat/{mid}/release").status_code == 200
+    assert parent.get(f"/api/device/chat/picture/{mid}", headers=ADAM).status_code == 200
+    assert parent.get("/api/parent/chat-held").json()["held"] == []
+
+
+def screening_text():
+    from app.chat import HELD
+    return HELD
+
+
+def test_picture_check_lets_an_ordinary_picture_through(tmp_path):
+    import pytest
+    from app import screening
+    if not screening.available():
+        pytest.skip("nudenet not installed")
+    Image.new("RGB", (640, 480), (90, 140, 200)).save(tmp_path / "sky.jpg")
+    assert screening.check_file(tmp_path / "sky.jpg") == ""

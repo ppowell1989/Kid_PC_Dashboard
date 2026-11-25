@@ -16,8 +16,24 @@
           <TextBlock x:Name="Clock" FontSize="19" Foreground="{DynamicResource Muted}" Margin="2,2,0,0"/>
         </StackPanel>
 
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+        <!-- Skylight chore points, and spending them on extra time (MainWindow.Points.cs). Hidden when Skylight isn't linked. -->
+        <Grid x:Name="PointsCard" VerticalAlignment="Stretch" Margin="0,0,18,0" Visibility="Collapsed">
+          <Border Style="{DynamicResource Shadow}"/>
+          <Border Style="{DynamicResource CardBox}" Padding="22,12,22,14">
+            <StackPanel VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="24" Foreground="#F5B400" VerticalAlignment="Center" Margin="0,2,10,0"/>
+                <TextBlock x:Name="PointsBalance" FontSize="34" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="0"/>
+                <TextBlock Text="points" FontSize="16" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="8,0,0,8"/>
+              </StackPanel>
+              <Button x:Name="BuyTimeButton" Style="{DynamicResource Pill}" Margin="0,6,0,0" FontSize="15" Padding="16,7,16,8" HorizontalAlignment="Left" Click="BuyTime"/>
+              <TextBlock x:Name="PointsWhy" FontSize="14" Foreground="{DynamicResource Muted}" Margin="0,8,0,0" MaxWidth="260" TextWrapping="Wrap" Visibility="Collapsed"/>
+            </StackPanel>
+          </Border>
+        </Grid>
         <!-- Time left today -->
-        <Grid HorizontalAlignment="Right" VerticalAlignment="Center" Width="390">
+        <Grid VerticalAlignment="Center" Width="390">
           <Border Style="{DynamicResource Shadow}"/>
           <Border Style="{DynamicResource CardBox}" Padding="24,14,24,20">
             <StackPanel>
@@ -34,6 +50,7 @@
             </StackPanel>
           </Border>
         </Grid>
+        </StackPanel>
       </Grid>
 
       <!-- A message from Mom or Dad -->
@@ -95,17 +112,36 @@
             <WrapPanel x:Name="FamilyCards"/>
           </StackPanel>
           <WrapPanel x:Name="HomeTiles"/>
+          <!-- Get more games: search first, then what's ready for him, what he asked for, and shelves to browse.
+               Shelves are built in MainWindow.Discover.cs. -->
           <StackPanel x:Name="CataloguePanel" Visibility="Collapsed">
-            <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,16" Text="Games Mom and Dad have approved"/>
-            <WrapPanel x:Name="CatalogueTiles"/>
-            <TextBlock Style="{DynamicResource Heading}" Margin="0,18,0,16" Text="Want something else? Search for it"/>
-            <StackPanel Orientation="Horizontal">
-              <TextBox x:Name="AskGameBox" Width="460" Height="52" FontSize="20" Padding="14,0" KeyDown="SearchKeyDown"/>
-              <Button Style="{DynamicResource Pill}" Margin="14,0,0,0" Content="Search" Click="SearchGames"/>
-              <Button Style="{DynamicResource Pill}" Margin="12,0,0,0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for it by name" Click="AskForGame"/>
+            <DockPanel Margin="0,0,0,6">
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="12,0,0,0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for it by name" Click="AskForGame"/>
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="14,0,0,0" Content="Search" Click="SearchGames"/>
+              <Grid>
+                <TextBox x:Name="AskGameBox" Height="52" FontSize="20" Padding="48,0,14,0" KeyDown="SearchKeyDown" TextChanged="SearchTextChanged" VerticalContentAlignment="Center"/>
+                <TextBlock Text="&#xE721;" FontFamily="{DynamicResource Icons}" FontSize="19" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="18,1,0,0" IsHitTestVisible="False"/>
+                <TextBlock x:Name="SearchHint" Text="Search for any game" FontSize="19" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="50,0,0,1" IsHitTestVisible="False"/>
+              </Grid>
+            </DockPanel>
+            <DockPanel x:Name="SearchHead" Visibility="Collapsed" Margin="2,12,0,0">
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="16,7,16,8" Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Clear" Click="ClearSearch"/>
+              <TextBlock x:Name="SearchStatus" FontSize="18" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </DockPanel>
+            <WrapPanel x:Name="SearchResults" Margin="0,14,0,0"/>
+
+            <StackPanel x:Name="ReadyPanel" Margin="0,18,0,0">
+              <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,4" Text="Ready for you"/>
+              <TextBlock FontSize="16" Foreground="{DynamicResource Muted}" Margin="0,0,0,14" Text="Mom and Dad said yes to these."/>
+              <WrapPanel x:Name="CatalogueTiles"/>
             </StackPanel>
-            <TextBlock x:Name="SearchStatus" FontSize="18" Foreground="{DynamicResource Muted}" Margin="2,14,0,0" TextWrapping="Wrap"/>
-            <WrapPanel x:Name="SearchResults" Margin="0,16,0,0"/>
+
+            <StackPanel x:Name="AskedPanel" Visibility="Collapsed" Margin="0,10,0,10">
+              <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,12" Text="Waiting for Mom or Dad"/>
+              <WrapPanel x:Name="AskedChips"/>
+            </StackPanel>
+
+            <StackPanel x:Name="Shelves" Margin="0,10,0,0"/>
           </StackPanel>
         </StackPanel>
       </ScrollViewer>
@@ -136,6 +172,13 @@
           <Button Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Content="Ask for 15 more minutes" Tag="15" Click="AskForTime"/>
           <Button Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Margin="0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for 30" Tag="30" Click="AskForTime"/>
         </StackPanel>
+        <Button x:Name="LockBuy" Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Margin="0,16,0,0" HorizontalAlignment="Center"
+                Background="{DynamicResource WarnSoft}" Foreground="{DynamicResource WarnText}" BorderBrush="{DynamicResource WarnLine}" Visibility="Collapsed" Click="BuyTime">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="20" VerticalAlignment="Center" Margin="0,1,12,0"/>
+            <TextBlock x:Name="LockBuyText" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
         <TextBlock x:Name="LockStatus" FontSize="18" Foreground="{DynamicResource Good}" TextAlignment="Center" Margin="0,20,0,0"/>
         <Button Style="{DynamicResource Pill}" Margin="0,40,0,0" HorizontalAlignment="Center" Background="{DynamicResource Well}" Foreground="{DynamicResource Muted}" BorderBrush="{DynamicResource Line}" Content="Shut down" Click="ShutDown"/>
       </StackPanel>
@@ -285,7 +328,12 @@
 
             <!-- A picture from the chat, big. Click anywhere to close. -->
             <Border x:Name="PictureBig" Visibility="Collapsed" Background="{DynamicResource Scrim}" CornerRadius="{DynamicResource RButton}" MouseLeftButtonUp="ClosePictureBig" Cursor="Hand">
-              <Image x:Name="PictureBigImage" Margin="12" Stretch="Uniform"/>
+              <Grid>
+                <Image x:Name="PictureBigImage" Margin="12" Stretch="Uniform"/>
+                <!-- A chat clip plays here; clicking closes it like a picture -->
+                <MediaElement x:Name="VideoBig" Margin="12" Stretch="Uniform" LoadedBehavior="Manual" UnloadedBehavior="Stop" Visibility="Collapsed"
+                              MediaEnded="VideoEnded"/>
+              </Grid>
             </Border>
           </Grid>
         </Border>

@@ -142,6 +142,13 @@ CREATE TABLE IF NOT EXISTS game_installs (  -- where each approved game stands o
     at          TEXT NOT NULL DEFAULT '',         -- last report from the PC
     PRIMARY KEY (kid_id, game_id)
 );
+CREATE TABLE IF NOT EXISTS game_play (      -- per kid, per catalogue game: minutes played and when last played
+    kid_id  TEXT NOT NULL,
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    last_at TEXT NOT NULL,
+    PRIMARY KEY (kid_id, game_id)
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a new PC to make it a kid's PC
     code       TEXT PRIMARY KEY,
@@ -191,6 +198,54 @@ CREATE TABLE IF NOT EXISTS console_usage (    -- a player's minutes on a console
     games     TEXT DEFAULT '[]',
     PRIMARY KEY (provider, device_id, player_id, day)
 );
+CREATE TABLE IF NOT EXISTS playtime_dates (  -- a parent's change for one date (holiday, vacation): wins over the weekday rule
+    kid_id        TEXT NOT NULL,
+    day           TEXT NOT NULL,              -- YYYY-MM-DD, local
+    daily_minutes INTEGER NOT NULL,
+    bedtime       TEXT NOT NULL DEFAULT '',
+    windows       TEXT NOT NULL DEFAULT '[]',
+    label         TEXT NOT NULL DEFAULT '',   -- "Thanksgiving", "Beach week"
+    updated_by    TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (kid_id, day)
+);
+CREATE TABLE IF NOT EXISTS sessions (        -- stretches of play and of voice calls, built from the PC's check-ins
+    id         INTEGER PRIMARY KEY,
+    kid_id     TEXT NOT NULL,
+    kind       TEXT NOT NULL,                 -- play / voice
+    what       TEXT NOT NULL,                 -- the game's name, or the voice room (family / friends)
+    started_at TEXT NOT NULL,
+    ended_at   TEXT NOT NULL                  -- last check-in seen in it; moves forward while it lasts
+);
+CREATE INDEX IF NOT EXISTS sessions_kid ON sessions(kid_id, kind, ended_at);
+CREATE TABLE IF NOT EXISTS kids_added (      -- kids a parent added from the dashboard (config.yaml kids still work)
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    device_token    TEXT NOT NULL,
+    extension_token TEXT NOT NULL,
+    added_by        TEXT NOT NULL DEFAULT '',
+    added_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS devices (         -- each computer a kid's PC software runs on, from its check-ins
+    kid_id     TEXT NOT NULL,
+    computer   TEXT NOT NULL,                 -- Windows' computer name
+    name       TEXT NOT NULL DEFAULT '',      -- a parent's name for it: "Adam's PC", "Adam's laptop"
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (kid_id, computer)
+);
+CREATE TABLE IF NOT EXISTS chat_members (    -- people a parent added to a chat beyond its own kid and friend
+    conv     TEXT NOT NULL,
+    kind     TEXT NOT NULL,                   -- kid / friend
+    who      TEXT NOT NULL,                   -- kid id, or the friend's invite code
+    from_id  INTEGER NOT NULL DEFAULT 0,      -- they see messages after this one, not what was said before
+    added_by TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (conv, kind, who)
+);
+CREATE TABLE IF NOT EXISTS chat_names (      -- a parent's name for a chat ("Minecraft crew")
+    conv TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
 """
 
 
@@ -203,6 +258,8 @@ MIGRATIONS = [
     # 1 = the hub puts this game on the kid's PC by itself. Approvals made before automatic installs existed
     # stay 0 (the kid installs them from Get more games), so an upgrade never starts a pile of big downloads.
     ("approvals", "auto_install", "INTEGER NOT NULL DEFAULT 0"),
+    ("approvals", "approved_at", "TEXT DEFAULT ''"),   # when a parent approved it, so his home screen can say "New"
+
     # Clearer install status: what the store is doing in a few words, when the state, stage or progress last moved
     # (not just when the PC last reported), and the download speed worked out from progress between reports.
     ("game_installs", "stage", "TEXT DEFAULT ''"),
@@ -211,10 +268,12 @@ MIGRATIONS = [
     # Chat beyond the one family room: the kids' own chat and one chat per invited friend, with pictures and links.
     ("chat", "conv", "TEXT NOT NULL DEFAULT 'family'"),   # family / kids / friend-<hash of invite code>
     ("chat", "friend", "INTEGER NOT NULL DEFAULT 0"),     # 1 = an invited friend sent it from the invite page
-    ("chat", "picture", "TEXT DEFAULT ''"),               # file name in chat-pictures/ next to the database
+    ("chat", "picture", "TEXT DEFAULT ''"),               # media key of the picture (a clip's still frame for a video); see media.py
+    ("chat", "video", "TEXT DEFAULT ''"),                 # media key of a video clip
     ("chat", "links", "TEXT DEFAULT '[]'"),               # JSON list of the links in the text
     ("chat", "flagged", "INTEGER NOT NULL DEFAULT 0"),    # a word from the flag list (same list as searches)
     ("chat", "removed_by", "TEXT DEFAULT ''"),            # parent who hid it from the kids
+    ("chat", "held", "TEXT DEFAULT ''"),                  # why the picture check held it ('' = shown); a parent releases it
     # Xbox (Microsoft Family Safety) members are console players too; these only matter for provider 'xbox'.
     ("console_players", "role", "TEXT DEFAULT ''"),              # Family Safety role: User (child) or Admin (organizer)
     ("console_players", "enforce", "INTEGER NOT NULL DEFAULT 0"),  # 1 = block his Xbox when he is locked on the hub

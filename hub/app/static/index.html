@@ -34,45 +34,74 @@
       </div>
     </div>
     <nav>
-      <button data-tab="now" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Now</span></button>
-      <button data-tab="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Chat</span><span id="chatDot"></span></button>
+      <button data-tab="home" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Home</span></button>
       <button data-tab="requests"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0112 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 004 0"/></svg><span>Requests</span><span id="reqCount"></span></button>
-      <button data-tab="playtimes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg><span>Playtimes</span></button>
-      <button data-tab="web"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Web</span></button>
-      <button data-tab="pcs"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>PCs</span><span id="pcDot"></span></button>
-      <button data-tab="games"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M16 11.5h.01M18 13.5h.01"/></svg><span>Games</span></button>
-      <button data-tab="voice"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><span>Friends</span></button>
+      <button data-tab="activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span></button>
+      <button data-tab="screentime" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Screen time</span></button>
+      <button data-tab="games" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M16 11.5h.01M18 13.5h.01"/></svg><span>Games</span></button>
+      <button data-tab="web" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Web</span></button>
+      <button data-tab="messages"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span><span id="chatDot"></span></button>
+      <button data-tab="connections" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/></svg><span>Connections</span></button>
+      <button data-tab="family" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14a6 6 0 013.5 6"/></svg><span>Family &amp; Devices</span><span id="pcDot"></span></button>
+      <button id="moreBtn" type="button" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>More</span><span id="moreDot"></span></button>
     </nav>
   </header>
 
-  <section data-panel="now">
+  <section data-panel="home">
+    <h2 class="title">Home</h2>
+    <div id="needs"></div>
     <div id="kids"></div>
     <div id="family"></div>
-    <details class="card" id="historyCard">
-      <summary><b>History and clean-up</b> <span class="muted">How long the hub keeps things</span></summary>
-      <p class="muted">Older entries are deleted automatically. Clear removes everything of that kind now, for both kids.</p>
-      <ul id="retention" class="list"></ul>
-    </details>
   </section>
 
   <section data-panel="requests" hidden>
     <h2 class="title">Requests</h2>
+    <p class="hint">Everything waiting for a parent is here, and only here.</p>
+    <h2 class="sub">Asked by the kids</h2>
     <div id="requests"></div>
+    <div id="heldBox"></div>
+    <h2 class="sub">Stuck installs</h2>
+    <div id="stuck"></div>
   </section>
 
-  <section data-panel="playtimes" hidden>
-    <h2 class="title">Playtimes</h2>
-    <div class="seg" id="ptKids" role="tablist"></div>
-    <p class="hint">Each day has a time limit, a bedtime and the times he may play. With no play times set, he can play any time before bedtime.</p>
-    <div id="ptDays"></div>
-    <div id="consoles"></div>
+  <section data-panel="activity" hidden>
+    <h2 class="title">Activity</h2>
+    <div class="gamebar">
+      <div id="feedWho" class="seg" role="tablist" aria-label="Whose activity"></div>
+      <select id="feedDays" aria-label="How far back"><option value="1">Today</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select>
+    </div>
+    <div id="feedGroups" class="chips" role="tablist" aria-label="What kind"></div>
+    <div id="feed"></div>
+  </section>
+
+  <section data-panel="screentime" hidden>
+    <h2 class="title">Screen time</h2>
+    <div class="sttop">
+      <div class="seg" id="ptKids" role="tablist"></div>
+      <button id="stAdd">+ Time off or a special day</button>
+    </div>
+    <div class="weeknav">
+      <button class="ghost small" id="stPrev" aria-label="Week before">&lsaquo;</button>
+      <b id="stWeekName"></b>
+      <button class="ghost small" id="stNext" aria-label="Week after">&rsaquo;</button>
+      <button class="ghost small" id="stToday">This week</button>
+      <button class="ghost small" id="stCopy">Copy this week to next week</button>
+    </div>
+    <div id="stWeek" class="week"></div>
+    <p class="hint">Days with a coloured edge are changes for that date only (a holiday, a sick day, a vacation). They end by themselves, and the usual week takes over again. Tap a day to change it.</p>
+    <div id="stUpcoming"></div>
+    <details class="card" id="usualCard">
+      <summary><b>The usual week</b> <span class="muted">Repeats every week unless a date is changed</span></summary>
+      <p class="hint">Each day has a time limit, a bedtime and the times they may play. With no play times set, they can play any time before bedtime.</p>
+      <div id="ptDays"></div>
+    </details>
   </section>
 
   <section data-panel="web" hidden>
     <h2 class="title">Web</h2>
     <div class="row">
       <select id="webKid"></select>
-      <select id="webSource"><option value="">All</option><option value="chrome">Pages (Chrome)</option><option value="dns">Sites (network)</option></select>
+      <select id="webSource" aria-label="Where from"><option value="">Chrome and network</option><option value="chrome">Chrome pages only</option><option value="dns">Network only (all apps, site names)</option></select>
       <select id="webDays"><option value="1">Today</option><option value="7" selected>7 days</option><option value="0">All kept</option></select>
     </div>
     <h2 class="split">Searches <button class="ghost small" data-clearweb="searches">Clear</button></h2>
@@ -84,26 +113,40 @@
     <ul id="sites" class="list"></ul>
   </section>
 
-  <section data-panel="pcs" hidden>
-    <h2 class="title">PCs</h2>
+  <section data-panel="family" hidden>
+    <h2 class="title">Family &amp; Devices</h2>
     <p class="lead" id="pcSummary"></p>
-    <p class="hint">Approve a game and it installs on that PC by itself. Nobody has to be at the PC. Each game shows how far along it is, and what to do if it gets stuck.</p>
     <div id="pcs"></div>
+    <form id="kidForm" class="card">
+      <h2>Add a kid</h2>
+      <p class="muted">Give his or her name. Next you set up a device for them; each kid can have more than one (a desktop and a laptop), sharing one set of rules and one daily time.</p>
+      <label>Name <input name="name" maxlength="30" autocomplete="off" required></label>
+      <button class="wide">Add</button>
+    </form>
+    <div id="hubCard"></div>
+    <details class="card" id="historyCard">
+      <summary><b>History and clean-up</b> <span class="muted">How long the hub keeps things</span></summary>
+      <p class="muted">Older entries are deleted automatically. Clear removes everything of that kind now, for every kid.</p>
+      <ul id="retention" class="list"></ul>
+    </details>
   </section>
 
   <section data-panel="games" hidden>
     <h2 class="title">Games</h2>
-    <ul id="games" class="list"></ul>
-    <div class="card">
+    <div class="card addgame">
       <h2>Add a game</h2>
       <form id="gameSearch" class="row" role="search">
         <input name="q" type="search" placeholder="Type a game's name, like Minecraft" autocomplete="off" required>
+        <select name="max" id="gameMax" aria-label="Rated up to">
+          <option value="">Any rating</option><option value="E">Rated E only</option><option value="E10+">Up to E10+</option>
+          <option value="T" selected>Up to T</option><option value="M">Up to M</option>
+        </select>
         <button>Search</button>
       </form>
       <p class="muted" id="gameSearchNote">Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.</p>
       <ul id="gameResults" class="list results"></ul>
       <details>
-        <summary>Add one by hand (launcher and id)</summary>
+        <summary>Advanced: add a game the search can't find (launcher and id)</summary>
         <form id="gameForm">
           <label>Launcher
             <select name="launcher">
@@ -115,23 +158,36 @@
           </label>
           <label>Steam store link or app id <input name="launch_ref" placeholder="store.steampowered.com/app/291550 or 291550" required></label>
           <label>Title <input name="title" placeholder="Leave blank for Steam: filled in from the store"></label>
-          <label>Rating <input name="rating" placeholder="E10+"></label>
+          <label>Rating label <input name="rating" placeholder="E10+"><small class="muted">Shown with the game. To filter search results, use the menu next to Search.</small></label>
           <fieldset id="gameKids"><legend>Approved for</legend></fieldset>
           <button class="wide">Add game</button>
         </form>
       </details>
     </div>
+    <!-- Whose games: everyone, or one kid (his games, most played lately first); and a quick filter by name -->
+    <div class="gamebar">
+      <div id="gameWho" class="seg" role="tablist" aria-label="Whose games"></div>
+      <input id="gameFilter" type="search" placeholder="Find a game" autocomplete="off" aria-label="Find a game in the catalogue">
+    </div>
+    <ul id="games" class="gamegrid"></ul>
+    <!-- Ideas: the same shelves the kids browse on "Get more games", with a rating limit per kid -->
+    <div class="card ideas">
+      <h2>Ideas for the kids</h2>
+      <p class="muted lead">Well-liked games for kids, grouped by type. The kids can browse these on their PC and ask for one. Approve here and it installs by itself.</p>
+      <div id="ideaCaps" class="caps"></div>
+      <div id="ideas"></div>
+    </div>
   </section>
 
   <section data-panel="chat" hidden>
-    <h2 class="title">Chat</h2>
+    <h2 class="title">Chats</h2>
     <div class="card chat">
-      <!-- Family (you write here), the brothers' own chat, each friend's chat, and every picture and link -->
+      <!-- Family (you write here), the kids' own chat, each friend's chat, and every picture and link -->
       <div id="chatConvs" class="convs" role="tablist" aria-label="Conversations"></div>
       <p id="chatNote" class="muted chatnote" hidden></p>
       <div id="chatLog" class="chatlog"></div>
       <form id="chatForm" class="row">
-        <label class="ghost picbtn" title="Send a picture"><input type="file" id="chatPic" accept="image/*" hidden>
+        <label class="ghost picbtn" title="Send a picture or a video"><input type="file" id="chatPic" accept="image/*,video/*" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg></label>
         <input name="text" maxlength="500" autocomplete="off" placeholder="Message the family">
         <button>Send</button>
@@ -139,17 +195,33 @@
     </div>
   </section>
 
-  <section data-panel="voice" hidden>
-    <h2 class="title">Friends: voice and text chat</h2>
-    <p class="muted">Each link lets one friend talk and type with one of the kids from any browser. You can read every message on the Chat tab, and revoking a link ends both.</p>
-    <ul id="invites" class="list"></ul>
-    <div id="chatSettings"></div>
+  <section data-panel="messages" hidden>
+    <h2 class="title">Messages and calls</h2>
+    <div id="msgWho" class="seg" role="tablist" aria-label="Whose messages and calls"></div>
+    <h2 class="sub">Chats</h2>
+    <p class="hint">Every chat, picture and link is yours to read. Add someone to a friend's chat to make it a group, so the kids have fewer chats to keep up with.</p>
+    <ul id="chatList" class="list chats"></ul>
+    <h2 class="sub">Voice calls</h2>
+    <ul id="calls" class="list"></ul>
+    <h2 class="sub">Approved friends</h2>
+    <p class="hint">Each friend has a standing link: it opens voice and text chat with that kid in any browser, and works again whenever they come back. Revoke ends both at once.</p>
+    <ul id="invites" class="list friends"></ul>
     <form id="inviteForm" class="card">
-      <h2>New invite link</h2>
-      <label>For <select name="kid_id" id="inviteKid"></select></label>
-      <label>Friend's name <input name="friend_name" required></label>
-      <button class="wide">Create link</button>
+      <h2>Invite friends</h2>
+      <label>To talk with <select name="kid_id" id="inviteKid"></select></label>
+      <label>Friends' names <input name="friend_name" required placeholder="Sam, or Sam, Alex, Jo for a group"></label>
+      <p class="muted">Several names make one link each. Everyone with a link to the same kid joins the same voice call. To text as a group, add them to one chat with Add someone.</p>
+      <button class="wide">Make the links</button>
     </form>
+  </section>
+
+  <section data-panel="connections" hidden>
+    <h2 class="title">Connections and permissions</h2>
+    <p class="hint">Accounts the hub is linked to, and what the kids may do with each other and with friends.</p>
+    <div id="consoles"></div>
+    <div id="skylight"></div>
+    <div id="chatSettings"></div>
+    <div id="familySwitches"></div>
   </section>
 </main>
 
@@ -159,6 +231,7 @@
     <h2 id="sheetTitle"></h2>
     <p id="sheetText" class="muted"></p>
     <input id="sheetInput" maxlength="300" autocomplete="off">
+    <div id="addPick" class="addpick" hidden></div>
     <div class="actions rev">
       <button value="ok" id="sheetOk">OK</button>
       <button value="cancel" id="sheetCancel" class="ghost" formnovalidate>Cancel</button>
@@ -179,12 +252,20 @@
     <h3>Play times</h3>
     <div id="ptWindows"></div>
     <button type="button" class="ghost small" id="ptAdd">+ Add a play time</button>
+    <div id="ptDateBox">
+      <h3>Which dates</h3>
+      <div class="inrow"><label>From <input type="date" name="from"></label><label>To <input type="date" name="to"></label></div>
+      <label>Name it (optional) <input name="label" maxlength="40" placeholder="Thanksgiving, Beach week, Sick day"></label>
+      <button type="button" class="ghost small" id="ptUsual" hidden>Back to the usual for these dates</button>
+    </div>
+    <div id="ptWeekBox">
     <h3>Also use this for</h3>
     <div class="daypick" id="ptDaysPick"></div>
     <div class="quick" id="ptDayQuick">
       <button type="button" class="ghost small" data-pick="0,1,2,3,4">Weekdays</button>
       <button type="button" class="ghost small" data-pick="5,6">Weekend</button>
       <button type="button" class="ghost small" data-pick="0,1,2,3,4,5,6">Every day</button>
+    </div>
     </div>
     <div class="daypick" id="ptKidsPick"></div>
     <p class="err" id="ptErr"></p>

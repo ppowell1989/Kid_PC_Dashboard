@@ -22,7 +22,8 @@ function sheet({ title, text = "", input = null, ok = "OK", cancel = "Cancel", k
     const d = $("#sheet"), box = $("#sheetInput");
     $("#sheetTitle").textContent = title;
     $("#sheetText").textContent = text;
-    box.hidden = input === null; box.value = ""; box.placeholder = input || "";
+    const inp = typeof input === "object" && input ? input : { placeholder: input || "", value: "" };
+    box.hidden = input === null; box.value = inp.value || ""; box.placeholder = inp.placeholder || "";
     $("#sheetOk").textContent = ok; $("#sheetOk").className = kind;
     $("#sheetCancel").hidden = !cancel; $("#sheetCancel").textContent = cancel || "";
     d.returnValue = "cancel";
@@ -45,49 +46,43 @@ $("#loginForm").onsubmit = async (e) => {
   } catch (err) { $("#loginErr").textContent = err.message; }
 };
 
-document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
-  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
-  document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.tab));
-  if (b.dataset.tab === "chat") { chatSeen(); loadChat(); loadConvs().catch(() => {}); }
-  ({ playtimes: loadPlaytimes, requests: loadRequests, web: loadWeb, games: loadGames, voice: () => { loadInvites(); loadChatSettings().catch(oops); }, pcs: loadPcs }[b.dataset.tab] || (() => {}))();
-}));
+// Pages. On a phone the bottom bar has room for Home, Requests, Activity and Messages; "More" opens the rest.
+// On a phone, Messages shows the chats too (on a laptop they are the bar docked bottom right).
+const LOADERS = {
+  home: () => refresh().catch(() => {}), requests: () => loadRequests().catch(oops), activity: () => loadFeed().catch(oops),
+  screentime: () => loadScreenTime().catch(oops), web: () => loadWeb(), games: () => loadGames(),
+  messages: () => { loadInvites(); if (!wide.matches) { chatSeen(); loadChat().catch(() => {}); loadConvs().catch(() => {}); } },
+  connections: () => loadConnections(), family: () => loadPcs(),
+};
+function go(tab) {
+  document.querySelectorAll("nav button[data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === tab));
+  document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = !(p.dataset.panel === tab || (tab === "messages" && p.dataset.panel === "chat" && !wide.matches))));
+  document.body.classList.remove("more-open"); $("#moreBtn").setAttribute("aria-expanded", "false");
+  $("#moreBtn").classList.toggle("on", !!document.querySelector(`nav button.extra.on`));
+  window.scrollTo(0, 0);
+  (LOADERS[tab] || (() => {}))();
+}
+document.querySelectorAll("nav button[data-tab]").forEach((b) => (b.onclick = () => go(b.dataset.tab)));
+$("#moreBtn").onclick = () => $("#moreBtn").setAttribute("aria-expanded", document.body.classList.toggle("more-open"));
 
 function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}` : `${m}m`; }
 
 async function refresh() {
   const o = await api("/api/parent/overview");
   showApp();
-  state.kids = o.kids;
-  const pending = o.kids.reduce((n, k) => n + k.pending, 0);
-  $("#reqCount").textContent = pending || "";
-  $("#kids").innerHTML = o.kids.map((k) => {
+  state.kids = o.kids; state.overview = o;
+  const pending = o.kids.reduce((n, k) => n + k.pending, 0), stuck = o.kids.reduce((x, k) => x + ((k.installs || {}).needs || 0), 0);
+  const held = o.held_pictures || 0;
+  $("#reqCount").textContent = pending + stuck + held || "";
+  // One strip for everything waiting on a parent. The details live in Requests only.
+  $("#needs").innerHTML = pending + stuck + held ? `<button class="card needs" data-go="requests"><b>Needs you</b><span>${[
+      pending ? `${pending} request${pending > 1 ? "s" : ""} from the kids` : "", held ? `${held} held picture${held > 1 ? "s" : ""}` : "", stuck ? `${stuck} stuck install${stuck > 1 ? "s" : ""}` : ""]
+      .filter(Boolean).join(" · ")}</span><span class="go">Open Requests</span></button>` : "";
+  const html = o.kids.map((k) => {
     const t = k.time, total = t.allowance + t.granted, left = total ? Math.max(0, Math.min(100, (t.minutes_left / total) * 100)) : 0;
     const status = k.online ? (k.running ? `Playing <b>${esc(k.running)}</b>` : "On the home screen") : "Offline";
     const reason = { time: "out of time", bedtime: "bedtime", paused: "paused", outside_hours: "not play time" }[t.lock_reason] || t.lock_reason;
     const lock = t.locked ? `<span class="tagline bad">Locked: ${esc(reason)}</span>` : (t.warn ? `<span class="warn">Under 10 minutes left.</span>` : "");
-    const apps = (k.apps || []).map((a) => {
-      const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
-      const retry = !sys && a.state === "failed" ? `<button class="ghost small" data-installapp="${esc(a.app)}" data-kid="${k.id}">Retry</button>` : "";
-      // A downloaded build waits for a restart or sign-in unless a parent sends it in now.
-      const install = a.app === "kidspc" && k.online && / ready/.test(a.detail) ? `<button class="ghost small" data-update="${k.id}">Install now</button>` : "";
-      const cls = a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending";
-      return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || a.app)} ${esc(sys ? a.detail : a.state)}${retry}${install}</span>`;
-    }).join("");
-    const hasPc = (k.apps || []).some((a) => a.app === "kidspc");
-    const how = hasPc ? `<span class="chip">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${k.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
-    // "On build X" is only half the story: say when something newer is still being built or on its way.
-    const pc = (k.apps || []).find((a) => a.app === "kidspc"), B = o.builds || {}, b = B.building;
-    const late = b && b.waiting_minutes >= 15;
-    let newer = "";
-    if (pc && b) newer = `${late ? "A newer build should have arrived by now" : "A newer build is being made"}${b.title ? `: ${esc(b.title)}` : ""}. ${late
-      ? `It has been ${b.waiting_minutes} minutes, so its build may have failed on GitHub.`
-      : "It reaches this PC about 5 minutes after a merge."}`;
-    else if (pc && k.online && B.published && !pc.detail.includes(B.published.slice(0, 8)))
-      newer = `A newer build${B.published_title ? ` (${esc(B.published_title)})` : ""} is on its way to this PC.`;
-    if (newer) newer = `<div class="muted">${newer}</div>`;
-    const n = k.installs || {};
-    const gamesLine = n.needs || n.busy ? `<button class="ghost small ${n.needs ? "attn" : ""}" data-gopcs="1">${[
-      n.busy ? `${n.busy} game${n.busy > 1 ? "s" : ""} installing` : "", n.needs ? `${n.needs} need${n.needs > 1 ? "" : "s"} you` : ""].filter(Boolean).join(", ")}</button>` : "";
     return `<div class="card kid ${k.online ? "online" : ""}">
       <div class="kidhead">
         <div class="avatar">${esc(k.name.slice(0, 1))}</div>
@@ -104,18 +99,19 @@ async function refresh() {
       <div class="actions even">
         ${t.lock_reason === "paused"
           ? `<button class="good" data-resume="${k.id}">Resume</button>`
-          : `<button class="hot" data-pause="${k.id}">Pause now</button>`}
+          : `<button class="hot" data-pause="${k.id}" title="Locks the PC now, until you press Resume or midnight">Pause now</button>`}
         <button data-msg="${k.id}">Message</button>
       </div>
-      <div class="actions even">
-        <button class="ghost small" data-cmd="restart" data-kid="${k.id}">Restart PC</button>
-        <button class="ghost small" data-cmd="shutdown" data-kid="${k.id}">Shut down</button>
-        <button class="ghost small" data-setup="${k.id}">Set up a new PC</button>
-      </div>
-      ${apps ? `<div class="chips">${apps}${how}${gamesLine}</div>${newer}` : gamesLine ? `<div class="chips">${gamesLine}</div>` : ""}
-      <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
+      <button class="ghost small linkish" data-feedkid="${k.id}">See ${esc(k.name)}'s activity</button>
     </div>`;
-  }).join("");
+  }).join("") || `<div class="card"><h2>No kids yet</h2><p class="muted">Add one on Family &amp; Devices.</p></div>`;
+  fillKidSelects();
+  loadFamily().catch(() => {});
+  // This runs every 10 seconds: leave the cards alone when nothing changed, so nothing jumps or closes.
+  if (html === refresh.last) return;
+  refresh.last = html;
+  $("#kids").innerHTML = html;
+  document.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => go(b.dataset.go)));
   document.querySelectorAll("[data-grant]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.grant}/grant`, { method: "POST", body: { minutes: +b.dataset.min } });
     refresh();
@@ -127,87 +123,55 @@ async function refresh() {
     await api(`/api/parent/kids/${b.dataset.resume}/pause`, { method: "DELETE" }); refresh();
   }));
   document.querySelectorAll("[data-msg]").forEach((b) => (b.onclick = async () => {
-    const text = await sheet({ title: `Message for ${kidName(b.dataset.msg)}`, text: "It pops up on his screen, even over a game.", input: "Dinner in 5!", ok: "Send" });
+    const text = await sheet({ title: `Message for ${kidName(b.dataset.msg)}`, text: "It pops up on the screen, even over a game.", input: "Dinner in 5!", ok: "Send" });
     if (text) { await api(`/api/parent/kids/${b.dataset.msg}/commands`, { method: "POST", body: { kind: "message", arg: text } }); b.textContent = "Sent"; }
   }));
-  document.querySelectorAll("[data-cmd]").forEach((b) => (b.onclick = async () => {
-    const verb = b.dataset.cmd === "restart" ? "Restart" : "Shut down";
-    if (!await sheet({ title: `${verb} ${kidName(b.dataset.kid)}'s PC?`, text: "He gets a 1-minute warning.", ok: verb, kind: "bad" })) return;
-    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
-  }));
-  document.querySelectorAll("[data-gopcs]").forEach((b) => (b.onclick = () => document.querySelector('nav button[data-tab="pcs"]').click()));
-  const needs = o.kids.reduce((x, k) => x + ((k.installs || {}).needs || 0), 0);
-  $("#pcDot").textContent = needs || "";
-  document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => {
-    $("#webKid").value = b.dataset.seesearch; document.querySelector('nav button[data-tab="web"]').click();
-  }));
-  document.querySelectorAll("[data-update]").forEach((b) => (b.onclick = async () => {
-    const name = kidName(b.dataset.update);
-    if (!await sheet({ title: `Install the update on ${name}'s PC now?`, text: "He is signed out for about a minute, even in the middle of a game, and the PC restarts.", ok: "Install now", kind: "bad" })) return;
-    await api(`/api/parent/kids/${b.dataset.update}/commands`, { method: "POST", body: { kind: "install_app", arg: "kidspc" } }); b.textContent = "Sent";
-  }));
-  document.querySelectorAll("[data-autoupdate]").forEach((b) => (b.onclick = async () => {
-    const on = b.dataset.on !== "1", name = kidName(b.dataset.autoupdate);
-    const text = on
-      ? "A new build goes in the moment it arrives. He is signed out for about a minute unless a game is running. Good for a test PC."
-      : "A new build waits for the next restart or sign-in, so it never interrupts him.";
-    if (!await sheet({ title: on ? `Install updates on ${name}'s PC right away?` : `Wait for a restart on ${name}'s PC?`, text, ok: on ? "Right away" : "At the next restart" })) return;
-    await api(`/api/parent/kids/${b.dataset.autoupdate}/auto-update`, { method: "PUT", body: { on } }); refresh();
-  }));
-  document.querySelectorAll("[data-setup]").forEach((b) => (b.onclick = async () => {
-    const name = kidName(b.dataset.setup);
-    const c = await api(`/api/parent/kids/${b.dataset.setup}/setup-code`, { method: "POST" });
-    const when = new Date(c.expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const text = `On the new PC, signed in as the parent account: right-click Start, choose Terminal (Admin), paste or type this line and press Enter. ` +
-      `It sets everything up and restarts into ${name}'s screen.\n\n${c.command}\n\nWorks until ${when}.`;
-    if (await sheet({ title: `Make a new PC ${name}'s`, text, ok: "Copy the line", cancel: "Close" })) await copyText(c.command);
-  }));
-  document.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
-    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
-  }));
-  document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
-    if (!d.open) return;
-    const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
-    const label = { battlenet_products: "Battle.net knows these WoW versions", game_installed: "Game installed", game_install_started: "Started installing", game_install_failed: "Game didn't install", game_install_no_space: "PC is full", game_install_not_owned: "Not in his library", game_install_needs_signin: "Store needs a sign-in", stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", launcher_missing: "Needs a launcher", launch_failed: "Couldn't start", browser_blocked: "Closed other browser", web_filter: "Web filter set", offline_play: "Played offline", tool_blocked: "Closed a Windows tool he shouldn't have", shell_restarted: "His screen was closed and was started again", lockdown_restored: "A Windows setting was changed on his PC and was put back" };
-    const rows = [
-      ...a.events.map((e) => ({ at: e.at, text: `${label[e.kind] || e.kind}: ${e.detail}` })),
-      ...a.commands.map((c) => ({ at: c.created_at.replace(" ", "T") + "Z", text: `${c.created_by} sent ${c.kind}${c.arg ? ` "${c.arg}"` : ""} (${c.state}${c.result ? ": " + c.result : ""})` })),
-    ].sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, 30);
-    d.querySelector("ul").innerHTML = rows.map((r) => `<li>${esc(r.text)}<div class="muted">${new Date(r.at).toLocaleString()}</div></li>`).join("") || `<li class="muted">Nothing yet.</li>`;
-  }));
-  fillKidSelects();
-  loadFamily().catch(() => {});
+  document.querySelectorAll("[data-seesearch]").forEach((b) => (b.onclick = () => { $("#webKid").value = b.dataset.seesearch; go("web"); }));
+  document.querySelectorAll("[data-feedkid]").forEach((b) => (b.onclick = () => { feedState.kid = b.dataset.feedkid; go("activity"); }));
 }
 
-// Family: what the brothers are doing together, and the parents' switches for it.
+// Home: what the kids are doing together. The switches for it are on Connections.
 async function loadFamily() {
   const f = await api("/api/parent/family");
+  if (f.kids.length < 2) { $("#family").innerHTML = ""; return; }
   const on = f.kids.filter((k) => k.online);
   const names = (ks) => ks.map((k) => esc(k.name)).join(" and ");
   const voice = f.kids.filter((k) => k.in_family_voice);
   const together = f.playing_together ? `${names(on.filter((k) => k.running))} are playing <b>${esc(on.find((k) => k.running).running)}</b> together.`
     : on.length ? on.map((k) => `${esc(k.name)}: ${k.locked ? "done for today" : k.running ? `playing <b>${esc(k.running)}</b>` : "home screen"}`).join(" · ")
     : "Nobody's PC is on.";
+  const html = `<div class="card family"><h2>Together</h2><p>${together}</p>
+    <div class="muted">${voice.length ? `In family voice: <b>${names(voice)}</b>` : "Nobody is in family voice."}</div></div>`;
+  if ($("#family").innerHTML !== html) $("#family").innerHTML = html;
+}
+async function loadFamilySwitches() {
+  const f = await api("/api/parent/family");
   const sw = (key, label, hint) => `<label class="switch"><input type="checkbox" data-family="${key}" ${f.settings[key] ? "checked" : ""}>
       <span><b>${label}</b><small class="muted">${hint}</small></span></label>`;
-  $("#family").innerHTML = `<div class="card family">
-    <h2>Family</h2>
-    <p>${together}</p>
-    <div class="muted">${voice.length ? `In family voice: <b>${names(voice)}</b>` : "Nobody is in family voice."}</div>
-    ${sw("see", "See each other", "Each PC shows what his brother is playing.")}
+  $("#familySwitches").innerHTML = `<div class="card family">
+    <h2>Between the kids at home</h2>
+    ${sw("see", "See each other", "Each PC shows what the others are playing.")}
     ${sw("join", "Join each other's games", "One tap starts the same game, only if it's approved for both.")}
-    ${sw("voice", "Family voice", "A voice room just for the brothers, no invite link. Turning it off ends a call.")}
+    ${sw("voice", "Family voice", "A voice room just for the kids at home, no invite link. Turning it off ends a call.")}
   </div>`;
   document.querySelectorAll("[data-family]").forEach((c) => (c.onchange = async () => {
     try { await api("/api/parent/family", { method: "PUT", body: { [c.dataset.family]: c.checked } }); } catch (err) { c.checked = !c.checked; oops(err); }
   }));
 }
+function loadConnections() {
+  loadConsoles();
+  if (typeof loadSkylight === "function") loadSkylight();
+  loadChatSettings().catch(oops);
+  loadFamilySwitches().catch(oops);
+}
 
 function fillKidSelects() {
   const opts = state.kids.map((k) => `<option value="${k.id}">${esc(k.name)}</option>`).join("");
-  for (const sel of ["#webKid", "#inviteKid"]) if (!$(sel).options.length) $(sel).innerHTML = opts;
-  if (!$("#gameKids").querySelector("input"))
+  for (const sel of ["#webKid", "#inviteKid"]) if ($(sel).options.length !== state.kids.length) { const v = $(sel).value; $(sel).innerHTML = opts; if (v) $(sel).value = v; }
+  if ($("#gameKids").querySelectorAll("input").length !== state.kids.length) {
+    $("#gameKids").querySelectorAll("label").forEach((l) => l.remove());
     $("#gameKids").insertAdjacentHTML("beforeend", state.kids.map((k) => `<label><input type="checkbox" name="kid" value="${k.id}" checked>${esc(k.name)}</label>`).join(""));
+  }
 }
 
 const kidName = (id) => (state.kids.find((k) => k.id === id) || {}).name || id;
@@ -217,7 +181,33 @@ const when = (at) => { const d = new Date(at); return isNaN(d) ? at : d.toLocale
 const localTime = (utc) => new Date(utc.replace(" ", "T") + (utc.endsWith("Z") || utc.includes("+") ? "" : "Z"))
   .toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
 
+async function loadStuck() {
+  const d = await api("/api/parent/installs");
+  const rows = d.pcs.flatMap((p) => p.games.filter((g) => ["needs", "bad"].includes(g.plain.tone)).map((g) =>
+    `<div class="card"><div class="who">${esc(p.name)}'s PC</div><ul class="list">${installRow(g, p)}</ul></div>`));
+  $("#stuck").innerHTML = rows.join("") || `<p class="muted">Nothing stuck. Approved games are installing by themselves.</p>`;
+  wireInstalls($("#stuck"), () => { loadStuck(); refresh().catch(() => {}); });
+}
+// Pictures and videos the picture check held (screening.py): look, then let through or remove.
+async function loadHeld() {
+  const d = await api("/api/parent/chat-held");
+  state.held = d.held.length;
+  $("#heldBox").innerHTML = d.held.length ? `<h2 class="sub">Held pictures</h2>
+    <p class="hint">The picture check on your server thought these might show nudity, so the kids haven't seen them. Look, then let through or remove.</p>
+    <div class="heldgrid">${d.held.map((m) => `<div class="card held"><div class="who">${esc(m.sender)}${m.friend ? " (friend)" : ""} in ${esc(convTitle(m.conv))}</div>
+      <details><summary>Show it</summary>${m.video ? clipHtml(m, picUrl(m.id), vidUrl(m.id)) : `<img src="${picUrl(m.id)}" alt="Held picture" loading="lazy">`}</details>
+      ${m.text ? `<div>${esc(m.text)}</div>` : ""}<div class="muted">${esc(new Date(m.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div>
+      <div class="actions even"><button class="good" data-release="${m.id}">Let it through</button><button class="bad" data-remove="${m.id}">Remove</button></div></div>`).join("")}</div>` : "";
+  $("#heldBox").querySelectorAll("[data-release]").forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/parent/chat/${b.dataset.release}/release`, { method: "POST" }); } catch (err) { return oops(err); }
+    loadHeld(); refresh().catch(() => {});
+  }));
+  wireRemove($("#heldBox"), () => { loadHeld(); refresh().catch(() => {}); });
+}
+const convTitle = (id) => id === "family" ? "the family chat" : id === "kids" ? "Kids at home" : ((chat.convs.find((c) => c.id === id) || {}).title || "a friend's chat");
 async function loadRequests() {
+  loadStuck().catch(() => { $("#stuck").innerHTML = ""; });
+  loadHeld().catch(() => { $("#heldBox").innerHTML = ""; });
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
   $("#requests").innerHTML = reqs.length ? reqs.map((r) => {
     const what = r.kind === "time" ? `${esc(r.detail)} more minutes` : r.kind === "game" ? `Game: ${esc(r.detail)}` : `Site: ${esc(r.detail)}`;
@@ -230,7 +220,7 @@ async function loadRequests() {
       ${r.note ? `<div class="note">"${esc(r.note)}"</div>` : ""}
       <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
       <div class="actions even"><button class="good" data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
-  }).join("") : `<p class="muted">No requests waiting.</p>`;
+  }).join("") : `<p class="muted">No requests waiting. When a kid asks for more time, a game or a site, it shows here.</p>`;
   // Fill each game request with matches from every store and preselect the best one.
   reqs.filter((r) => r.kind === "game").forEach(async (r) => {
     const group = $(`[data-steamfor="${r.id}"]`), sel = $(`[data-gamefor="${r.id}"]`), img = $(`[data-artfor="${r.id}"]`);
@@ -283,6 +273,37 @@ async function loadRequests() {
   }));
 }
 
+// Activity: one feed of what the kids did, in plain words (portal.py builds the lines) --------------
+const feedState = { kid: "", group: "", days: 7 };
+const GROUP_WORDS = { "": "Everything", played: "Played", blocked: "Blocked", installs: "Installs", chats: "Chats and calls", requests: "Requests", time: "Time", parents: "Parents" };
+async function loadFeed() {
+  const q = new URLSearchParams({ kid: feedState.kid, days: feedState.days, group: feedState.group });
+  const [f, all] = await Promise.all([api(`/api/parent/feed?${q}`), feedState.group ? api(`/api/parent/feed?${new URLSearchParams({ kid: feedState.kid, days: feedState.days })}`) : null]);
+  const counts = (all || f).counts, total = Object.values(counts).reduce((a, b) => a + b, 0);
+  $("#feedWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
+    .map(([id, name]) => `<button type="button" class="${feedState.kid === id ? "on" : ""}" data-fwho="${esc(id)}">${esc(name)}</button>`).join("");
+  $("#feedGroups").innerHTML = Object.entries(GROUP_WORDS).map(([g, w]) => {
+    const n = g ? counts[g] : total;
+    return `<button type="button" class="chip ${feedState.group === g ? "on" : ""} g-${g || "all"}" data-fgroup="${g}" ${n || g === "" ? "" : "disabled"}>${w}${n ? ` ${n}` : ""}</button>`;
+  }).join("");
+  const byDay = [];
+  for (const i of f.items) {
+    const d = new Date(i.at), key = d.toDateString();
+    let day = byDay.find((x) => x.key === key);
+    if (!day) byDay.push(day = { key, label: ago(i.at).replace(/^./, (c) => c.toUpperCase()) + (ago(i.at).match(/ago$|day$/) ? "" : `, ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`), items: [] });
+    day.items.push(i);
+  }
+  const t = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  $("#feed").innerHTML = byDay.map((d) => `<h3 class="feedday">${esc(d.label)}</h3><ul class="list feed">${d.items.map((i) => `<li class="g-${i.group}">
+      <span class="gdot" aria-hidden="true"></span>
+      <div><div>${esc(i.text)}${i.minutes ? ` <span class="pill">${fmtMin(i.minutes)}</span>` : ""}</div>
+      <div class="muted">${esc(t(i.at))}${i.until && i.minutes > 1 ? ` to ${esc(t(i.until))}` : ""}${!feedState.kid && state.kids.length > 1 && !i.text.includes(kidName(i.kid_id)) ? ` · ${esc(kidName(i.kid_id))}` : ""}</div></div></li>`).join("")}</ul>`).join("")
+    || `<div class="card"><p class="muted">Nothing ${feedState.days == 1 ? "today" : `in the last ${feedState.days} days`}${feedState.group ? " of this kind" : ""} yet.</p></div>`;
+  document.querySelectorAll("[data-fwho]").forEach((b) => (b.onclick = () => { feedState.kid = b.dataset.fwho; loadFeed().catch(oops); }));
+  document.querySelectorAll("[data-fgroup]").forEach((b) => (b.onclick = () => { feedState.group = b.dataset.fgroup; loadFeed().catch(oops); }));
+}
+$("#feedDays").onchange = (e) => { feedState.days = +e.target.value; loadFeed().catch(oops); };
+
 async function loadWeb() {
   const kid = $("#webKid").value, src = $("#webSource").value, days = $("#webDays").value;
   const [visits, sites, searches] = await Promise.all([
@@ -321,8 +342,19 @@ function gameFacts(h, p) {
 }
 
 let gameHits = [];
+// ESRB order for the "Rated up to" menu. RP (rating pending) and unrated games count as unknown: shown, marked.
+const ESRB_RANK = { EC: 0, E: 1, "E10+": 2, T: 3, M: 4, AO: 5 };
+const overCap = (h) => { const max = $("#gameMax").value; return !!max && (h.adult || (h.esrb in ESRB_RANK && ESRB_RANK[h.esrb] > ESRB_RANK[max])); };
+function gameNote() {
+  const note = $("#gameSearchNote"), hidden = gameHits.filter(overCap).length, shown = gameHits.length - hidden;
+  if (!gameHits.length) return;
+  note.textContent = (shown ? "Tap a store to choose where he gets it." : "Every match is rated above your limit.")
+    + (hidden ? ` ${hidden} game${hidden > 1 ? "s" : ""} rated above ${$("#gameMax").selectedOptions[0].textContent.replace(/^Up to |^Rated | only$/g, "")} hidden.` : "");
+}
+const SEARCH_NOTE = "Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.";
 function renderGameHits() {
   $("#gameResults").innerHTML = gameHits.map((h, i) => {
+    if (overCap(h)) return "";
     const p = h.platforms[h.pick ?? h.default ?? 0];
     const kids = state.kids.map((k) => `<label><input type="checkbox" data-hitkid="${i}" value="${k.id}" checked> ${esc(k.name)}</label>`).join("");
     return `<li>${h.image_url ? `<img class="art" src="${esc(h.image_url)}" alt="" loading="lazy">` : ""}
@@ -346,10 +378,15 @@ $("#gameSearch").onsubmit = async (e) => {
   try {
     const r = await api(`/api/parent/games/search?q=${encodeURIComponent(q)}`);
     gameHits = r.results;
-    note.textContent = !gameHits.length ? "No games found. Try a shorter name." : r.xbox === "unavailable" ? "Couldn't reach the Xbox catalogue just now, so Game Pass isn't shown." : "Tap a store to choose where he gets it.";
+    if (!gameHits.length) note.textContent = "No games found. Try a shorter name.";
+    else { gameNote(); if (r.xbox === "unavailable") note.textContent += " Couldn't reach the Xbox catalogue just now, so Game Pass isn't shown."; }
   } catch (err) { note.textContent = err.message; }
   renderGameHits();
 };
+// Clearing the box (the x, or deleting the words) clears the results too, ready for a new search.
+$("#gameSearch").q.oninput = (e) => { if (!e.target.value.trim()) { gameHits = []; renderGameHits(); $("#gameSearchNote").textContent = SEARCH_NOTE; } };
+// The rating menu filters what is already showing; no new search needed.
+$("#gameMax").onchange = () => { renderGameHits(); gameNote(); };
 
 // PCs: like an IT office's view of its computers, in plain words. Every approved game on every PC, how far
 // along it is, and the one thing to do when it's stuck. The hub writes the words (installs.py).
@@ -374,62 +411,218 @@ function hubCard(h) {
     <div><h2>The hub</h2><div class="status">${line}</div></div></div>${behind}</div>`;
 }
 function gb(n) { return n == null ? "" : n >= 100 ? `${Math.round(n)} GB free` : `${n.toFixed(1)} GB free`; }
-async function loadPcs() {
-  clearTimeout(pcTimer);
-  const panel = document.querySelector('[data-panel="pcs"]');
-  if (panel.hidden) return;
-  let d;
-  try { d = await api("/api/parent/installs"); } catch (err) { if (err.message !== "login") $("#pcs").innerHTML = `<p class="muted">${esc(err.message)}</p>`; return; }
-  $("#pcSummary").textContent = d.summary;
-  $("#pcs").innerHTML = d.pcs.map((p) => {
-    const seen = p.online ? "On now" : p.seen_at ? `Off. Last on ${new Date(p.seen_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "Not set up yet";
-    const launchers = p.launchers.map((a) => `<span class="chip ${a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending"}" title="${esc(a.detail)}">${esc(APP_NAME[a.app] || a.app)} ${a.state === "installed" ? "ready" : esc(a.state)}</span>`).join("");
-    const rows = p.games.map((g) => {
-      const t = g.plain, pct = t.percent ?? null;
-      const btn = t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
-        : t.fix === "install" ? `<button class="small" data-pcinstall="${g.game_id}" data-kid="${p.id}">Install</button>`
-        : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>` : "";
-      return `<li class="inst t-${t.tone}">
-        ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
-        <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
-          ${pct !== null ? `<div class="bar"><div style="width:${pct}%"></div></div>` : t.tone === "busy" ? `<div class="bar busy"><div></div></div>` : ""}
-          <div class="muted">${esc(t.text)}</div>${t.since ? `<div class="since">${esc(t.since)}</div>` : ""}</div>
-        <div class="do">${btn}</div></li>`;
-    }).join("") || `<li class="muted">No games approved for ${esc(p.name)} yet. Approve one in Games or Requests and it installs here by itself.</li>`;
-    return `<div class="card pc ${p.online ? "online" : ""}">
-      <div class="pchead"><div class="avatar">${esc(p.name.slice(0, 1))}</div>
-        <div><h2>${esc(p.name)}'s PC</h2><div class="status"><span class="dot ${p.online ? "on" : ""}"></span>${esc(seen)}${p.disk_free_gb != null ? ` · ${gb(p.disk_free_gb)}` : ""}</div></div></div>
-      ${launchers ? `<div class="chips">${launchers}</div>` : ""}
-      <ul class="list">${rows}</ul></div>`;
-  }).join("") + hubCard(d.hub);
-  document.querySelectorAll("[data-pcretry]").forEach((b) => (b.onclick = async () => {
+// One approved game on one PC: where it stands, and the one thing to do when it's stuck (installs.py writes the words).
+function installRow(g, p) {
+  const t = g.plain, pct = t.percent ?? null;
+  const btn = t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
+    : t.fix === "install" ? `<button class="small" data-pcinstall="${g.game_id}" data-kid="${p.id}">Install</button>`
+    : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>` : "";
+  return `<li class="inst t-${t.tone}">
+    ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
+    <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
+      ${pct !== null ? `<div class="bar"><div style="width:${pct}%"></div></div>` : t.tone === "busy" ? `<div class="bar busy"><div></div></div>` : ""}
+      <div class="muted">${esc(t.text)}</div>${t.since ? `<div class="since">${esc(t.since)}</div>` : ""}</div>
+    <div class="do">${btn}</div></li>`;
+}
+function wireInstalls(root, reload) {
+  root.querySelectorAll("[data-pcretry]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Starting…";
     try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcretry}/retry`, { method: "POST" }); } catch (err) { oops(err); }
-    loadPcs();
+    reload();
   }));
-  document.querySelectorAll("[data-pcinstall]").forEach((b) => (b.onclick = async () => {
+  root.querySelectorAll("[data-pcinstall]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Sending…";
     try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcinstall}`, { method: "PUT", body: { install: true } }); } catch (err) { oops(err); }
-    loadPcs();
+    reload();
   }));
-  document.querySelectorAll("[data-pchow]").forEach((b) => (b.onclick = () => {
+  root.querySelectorAll("[data-pchow]").forEach((b) => (b.onclick = () => {
     const store = APP_NAME[b.dataset.pchow] || "the store", name = kidName(b.dataset.kid);
     const text = b.dataset.pchow === "battlenet"
       ? `This is the one step that needs someone at ${name}'s PC, once. Sign in to the parent account on the PC, open Battle.net, sign in with a Blizzard account and tick "Keep me logged in". Then come back here and press Try again. Every game after that installs by itself.`
       : `This is the one step that needs someone at ${name}'s PC, once. On ${name}'s screen, Steam asks for a sign-in: use ${name}'s Steam account (a Steam Family child account is best) and tick "Remember me". Then press Try again here. Every game after that installs by itself.`;
     sheet({ title: `Sign in to ${store} once`, text, cancel: "" });
   }));
+}
+
+// Family & Devices: each kid, his devices and their software, the games installing, and the parents' remote controls.
+// Like an IT office's view of its computers, in plain words.
+async function loadPcs() {
+  clearTimeout(pcTimer);
+  if (document.querySelector('[data-panel="family"]').hidden) return;
+  let d, o, devs;
+  try { [d, o, devs] = await Promise.all([api("/api/parent/installs"), api("/api/parent/overview"), api("/api/parent/devices")]); }
+  catch (err) { if (err.message !== "login") $("#pcs").innerHTML = `<p class="muted">${esc(err.message)}</p>`; return; }
+  state.kids = o.kids; fillKidSelects();
+  const open = [...document.querySelectorAll("#pcs details[open]")].map((x) => x.dataset.k);
+  $("#pcSummary").textContent = d.summary;
+  $("#pcs").innerHTML = d.pcs.map((p) => {
+    const k = o.kids.find((x) => x.id === p.id) || { apps: [] }, dv = (devs[p.id] || {}).devices || [];
+    const seen = p.online ? "On now" : p.seen_at ? `Off. Last on ${new Date(p.seen_at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "No device set up yet";
+    const apps = (k.apps || []).map((a) => {
+      const sys = { kidspc: "Kids PC", webfilter: "Web filter" }[a.app];
+      const retry = !sys && a.state === "failed" ? `<button class="ghost small" data-installapp="${esc(a.app)}" data-kid="${p.id}">Retry</button>` : "";
+      const install = a.app === "kidspc" && k.online && / ready/.test(a.detail) ? `<button class="ghost small" data-update="${p.id}">Install now</button>` : "";
+      const cls = a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending";
+      return `<span class="chip ${cls}" title="${esc(a.detail)}"><b>${esc(sys || APP_NAME[a.app] || a.app)}</b>&nbsp;${esc(sys ? a.detail : a.state === "installed" ? "ready" : a.state)}${retry}${install}</span>`;
+    }).join("");
+    const hasPc = (k.apps || []).some((a) => a.app === "kidspc");
+    const how = hasPc ? `<span class="chip">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${p.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
+    const pc = (k.apps || []).find((a) => a.app === "kidspc"), B = o.builds || {}, b = B.building;
+    let newer = "";
+    if (pc && b) newer = `${b.waiting_minutes >= 15 ? "A newer build should have arrived by now" : "A newer build is being made"}${b.title ? `: ${esc(b.title)}` : ""}.`;
+    else if (pc && k.online && B.published && !pc.detail.includes(B.published.slice(0, 8))) newer = `A newer build${B.published_title ? ` (${esc(B.published_title)})` : ""} is on its way.`;
+    const busy = p.games.filter((g) => g.plain.tone !== "ok"), done = p.games.filter((g) => g.plain.tone === "ok");
+    const devices = dv.map((x) => `<li class="split"><span><b>${esc(x.name || x.computer)}</b>
+        <span class="muted">${x.name ? `${esc(x.computer)} · ` : ""}${x.last_seen ? `last on ${esc(ago(x.last_seen))}` : `set up ${esc(ago(x.set_up_at))}`}</span></span>
+        <button class="ghost small" data-namedev="${esc(x.computer)}" data-kid="${p.id}" data-name="${esc(x.name)}">${x.name ? "Rename" : "Name it"}</button></li>`).join("")
+      || (p.seen_at ? `<li class="muted">${esc(p.name)}'s PC will show here, with its name, next time it checks in.</li>` : "");
+    return `<div class="card pc ${p.online ? "online" : ""}">
+      <div class="pchead"><div class="avatar">${esc(p.name.slice(0, 1))}</div>
+        <div><h2>${esc(p.name)}</h2><div class="status"><span class="dot ${p.online ? "on" : ""}"></span>${esc(seen)}${p.disk_free_gb != null ? ` · ${gb(p.disk_free_gb)}` : ""}</div></div></div>
+      <h3>Devices</h3>${devices ? `<ul class="list devices">${devices}</ul>` : ""}
+      ${apps ? `<h3>Kept on ${dv.length > 1 ? "each" : "the"} PC by the hub</h3><p class="hint">Nothing to set up here: the hub installs these by itself and keeps them working. Retry shows if one fails.</p>` : ""}
+      ${apps || how ? `<div class="chips">${apps}${how}</div>` : ""}${newer ? `<div class="muted">${newer}</div>` : ""}
+      <div class="actions even">
+        <button class="ghost small" data-setup="${p.id}">+ Add a device</button>
+        ${k.online ? `<button class="ghost small" data-cmd="restart" data-kid="${p.id}">Restart</button><button class="ghost small" data-cmd="shutdown" data-kid="${p.id}">Shut down</button>` : ""}
+      </div>
+      ${busy.length ? `<h3>Games installing or stuck</h3><ul class="list">${busy.map((g) => installRow(g, p)).join("")}</ul>` : ""}
+      <details data-k="${p.id}" ${open.includes(p.id) ? "open" : ""}><summary class="muted">${done.length} game${done.length === 1 ? "" : "s"} installed</summary>
+        <ul class="list">${done.map((g) => installRow(g, p)).join("") || `<li class="muted">None yet. Approve one in Games or Requests and it installs by itself.</li>`}</ul></details>
+    </div>`;
+  }).join("");
+  $("#hubCard").innerHTML = hubCard(d.hub);
+  const root = $("#pcs");
+  wireInstalls(root, loadPcs);
+  root.querySelectorAll("[data-cmd]").forEach((b) => (b.onclick = async () => {
+    const verb = b.dataset.cmd === "restart" ? "Restart" : "Shut down";
+    if (!await sheet({ title: `${verb} ${kidName(b.dataset.kid)}'s PC?`, text: "A 1-minute warning shows on the screen first. The kids also have their own Power button for this.", ok: verb, kind: "bad" })) return;
+    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: b.dataset.cmd } }); b.textContent = "Sent";
+  }));
+  root.querySelectorAll("[data-update]").forEach((b) => (b.onclick = async () => {
+    const name = kidName(b.dataset.update);
+    if (!await sheet({ title: `Install the update on ${name}'s PC now?`, text: "The PC signs out for about a minute, even in the middle of a game, and restarts.", ok: "Install now", kind: "bad" })) return;
+    await api(`/api/parent/kids/${b.dataset.update}/commands`, { method: "POST", body: { kind: "install_app", arg: "kidspc" } }); b.textContent = "Sent";
+  }));
+  root.querySelectorAll("[data-autoupdate]").forEach((b) => (b.onclick = async () => {
+    const on = b.dataset.on !== "1", name = kidName(b.dataset.autoupdate);
+    const text = on ? "A new build goes in the moment it arrives, signing out for about a minute unless a game is running. Good for a test PC."
+      : "A new build waits for the next restart or sign-in, so it never interrupts.";
+    if (!await sheet({ title: on ? `Install updates on ${name}'s PC right away?` : `Wait for a restart on ${name}'s PC?`, text, ok: on ? "Right away" : "At the next restart" })) return;
+    await api(`/api/parent/kids/${b.dataset.autoupdate}/auto-update`, { method: "PUT", body: { on } }); loadPcs();
+  }));
+  root.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
+    await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
+  }));
+  root.querySelectorAll("[data-namedev]").forEach((b) => (b.onclick = async () => {
+    const name = await sheet({ title: `Name this device`, text: `Windows calls it ${b.dataset.namedev}. A name like "${kidName(b.dataset.kid)}'s laptop" is easier to spot.`,
+      input: { value: b.dataset.name, placeholder: `${kidName(b.dataset.kid)}'s PC` }, ok: "Save" });
+    if (name == null) return;
+    try { await api(`/api/parent/devices/${b.dataset.kid}/name`, { method: "PUT", body: { computer: b.dataset.namedev, name: String(name) } }); } catch (err) { return oops(err); }
+    loadPcs();
+  }));
+  root.querySelectorAll("[data-setup]").forEach((b) => (b.onclick = () => setupDevice(b.dataset.setup).catch(oops)));
   pcTimer = setTimeout(loadPcs, 10000);   // progress moves while the page is open
 }
 
+// Add a device: a one-time code, and the one line to paste on the new PC, with the steps spelled out.
+async function setupDevice(kid) {
+  const name = kidName(kid);
+  const c = await api(`/api/parent/kids/${kid}/setup-code`, { method: "POST" });
+  const when = new Date(c.expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const text = `This is done once per computer, on the new PC itself (a Windows desktop or laptop).\n\n` +
+    `1. Sign in to Windows on that PC with its administrator account: the account made when Windows was first set up. This is not your Kids PC Hub sign-in.\n` +
+    `2. Right-click the Start button and choose Terminal (Admin). Say Yes when Windows asks.\n` +
+    `3. Paste the whole line below, starting with "irm", and press Enter.\n\n${c.command}\n\n` +
+    `It installs everything, makes ${name}'s Windows account, and restarts into ${name}'s screen, in about 10 minutes. The line works until ${when}.`;
+  if (await sheet({ title: `Add a device for ${name}`, text, ok: "Copy the line", cancel: "Close" })) await copyText(c.command);
+}
+$("#kidForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const name = new FormData(e.target).get("name").trim();
+  let k;
+  try { k = await api("/api/parent/kids", { method: "POST", body: { name } }); } catch (err) { return oops(err); }
+  e.target.reset();
+  await refresh().catch(() => {});
+  await loadPcs();
+  if (await sheet({ title: `${k.name} is added`, text: `Next, set up ${k.name}'s computer. You can also do it later from this page with "Add a device".`, ok: "Set up a device now", cancel: "Later" }))
+    setupDevice(k.id).catch(oops);
+};
+
 const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
+// Where an approved game stands on one kid's PC, in a few words (the PCs tab has the detail and the fix).
+const INSTALL_WORDS = { installed: "On his PC", queued: "Installing soon", downloading: "Installing", installing: "Installing",
+  needs_signin: "Needs a sign-in", not_owned: "Not bought yet", no_space: "PC is full", failed: "Didn't install" };
+function ago(iso) {
+  if (!iso) return "";
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 864e5);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : days < 7 ? new Date(iso).toLocaleDateString([], { weekday: "long" }) : `${days} days ago`;
+}
+// No store art (Battle.net, by hand): the game's first letter on a colour picked from its name.
+function cover(g, cls = "cover") {
+  if (g.image_url) return `<img class="${cls}" src="${esc(g.image_url)}" alt="" loading="lazy" data-l="${esc((g.title || "?")[0])}"
+    onerror="this.replaceWith(Object.assign(document.createElement('div'), { className: this.className + ' noart', textContent: this.dataset.l }))">`;
+  const hue = [...(g.title || "")].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return `<div class="${cls} noart" style="--h:${hue}">${esc((g.title || "?")[0])}</div>`;
+}
+const games = { all: [], who: "", filter: "" };
 async function loadGames() {
-  const games = await api("/api/parent/games");
-  $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> ${g.rating ? `<span class="tagline rating">${esc(g.rating)}</span>` : ""} <span class="muted">${STORE[g.launcher] || g.launcher}</span>
-    <div class="actions">${state.kids.map((k) => `<label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${g.approved_for.includes(k.id) ? "checked" : ""}> ${esc(k.name)}</label>`).join("")}
-    <button class="ghost small" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
-  document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = () => api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } })));
-  document.querySelectorAll("[data-delgame]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/games/${b.dataset.delgame}`, { method: "DELETE" }); loadGames(); }));
+  games.all = await api("/api/parent/games");
+  renderGames();
+  loadIdeas().catch(() => {});
+}
+function renderGames() {
+  $("#gameWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
+    .map(([id, name]) => `<button type="button" class="${games.who === id ? "on" : ""}" data-who="${esc(id)}">${esc(name)}</button>`).join("");
+  document.querySelectorAll("[data-who]").forEach((b) => (b.onclick = () => { games.who = b.dataset.who; renderGames(); }));
+  const f = games.filter.toLowerCase();
+  let list = games.all.filter((g) => (!games.who || g.approved_for.includes(games.who)) && (!f || g.title.toLowerCase().includes(f)));
+  if (games.who) list = [...list].sort((a, b) => (b.kids[games.who].last_played || "").localeCompare(a.kids[games.who].last_played || "") || a.title.localeCompare(b.title));
+  const kidRow = (g, k) => {
+    const on = g.approved_for.includes(k.id), st = g.kids[k.id] || {};
+    const words = !on ? "Not approved" : [INSTALL_WORDS[st.install] || "", st.minutes ? `${fmtMin(st.minutes)} played` : "Not played yet",
+      st.last_played ? `last ${ago(st.last_played)}` : ""].filter(Boolean).join(" · ");
+    const tone = !on ? "off" : ["needs_signin", "not_owned", "no_space", "failed"].includes(st.install) ? "attn" : "";
+    return `<li class="${tone}"><label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${on ? "checked" : ""}> ${esc(k.name)}</label><span>${esc(words)}</span></li>`;
+  };
+  $("#games").innerHTML = list.map((g) => `<li class="game">${cover(g)}
+      <div class="gbody"><b class="gtitle">${esc(g.title)}</b>
+        <div class="meta">${g.rating ? `<span class="tagline rating">${esc(g.rating)}</span>` : ""} ${esc(STORE[g.launcher] || g.launcher)}</div>
+        <ul class="perkid">${state.kids.map((k) => kidRow(g, k)).join("")}</ul>
+        <button class="ghost small" data-delgame="${g.id}" data-title="${esc(g.title)}">Remove from catalogue</button></div></li>`).join("")
+    || `<li class="muted">${games.all.length ? "No games match." : "No games yet. Search for one, or pick from the ideas below."}</li>`;
+  document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = async () => {
+    try { await api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } }); } catch (err) { oops(err); }
+    loadGames();
+  }));
+  document.querySelectorAll("[data-delgame]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Remove ${b.dataset.title}?`, text: "It comes off the catalogue for every kid, and they can't start it from their home screen any more. It stays installed on their PCs.", ok: "Remove", kind: "bad" })) return;
+    try { await api(`/api/parent/games/${b.dataset.delgame}`, { method: "DELETE" }); } catch (err) { return oops(err); }
+    loadGames();
+  }));
+}
+$("#gameFilter").oninput = (e) => { games.filter = e.target.value.trim(); renderGames(); };
+
+const CAP_WORDS = { off: "Don't show ideas", E: "Rated E only", "E10+": "Up to E10+", T: "Up to T", M: "Up to M" };
+async function loadIdeas() {
+  const d = await api("/api/parent/games/ideas");
+  $("#ideaCaps").innerHTML = state.kids.map((k) => `<label>${esc(k.name)} sees
+    <select data-cap="${esc(k.id)}">${d.choices.map((c) => `<option value="${c}" ${d.caps[k.id] === c ? "selected" : ""}>${CAP_WORDS[c] || c}</option>`).join("")}</select></label>`).join("");
+  document.querySelectorAll("[data-cap]").forEach((s) => (s.onchange = async () => {
+    try { await api(`/api/parent/kids/${s.dataset.cap}/ideas`, { method: "PUT", body: { rating: s.value } }); } catch (err) { oops(err); }
+  }));
+  const shelves = [];
+  for (const i of d.ideas) { let sh = shelves.find((x) => x.title === i.shelf); if (!sh) shelves.push(sh = { title: i.shelf, ideas: [] }); sh.ideas.push(i); }
+  $("#ideas").innerHTML = shelves.map((sh) => `<h3>${esc(sh.title)}</h3><ul class="ideagrid">${sh.ideas.map((i) => `<li>${cover(i, "icover")}
+      <b>${esc(i.title)}</b><div class="meta">${i.esrb ? `<span class="tagline rating">${esc(i.esrb)}</span>` : ""} ${esc(i.store)}</div>
+      <div class="who">${state.kids.map((k) => i.approved_for.includes(k.id)
+        ? `<span class="yes">${esc(k.name)}</span>`
+        : `<button type="button" class="small ghost" data-idea="${esc(i.ref)}" data-kid="${esc(k.id)}">+ ${esc(k.name)}</button>`).join("")}</div></li>`).join("")}</ul>`).join("");
+  document.querySelectorAll("[data-idea]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = "Adding…";
+    try { await api("/api/parent/games/from-search", { method: "POST", body: { ref: b.dataset.idea, approved_for: [b.dataset.kid] } }); } catch (err) { b.disabled = false; return oops(err); }
+    loadGames();
+  }));
 }
 $("#gameForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -461,33 +654,111 @@ async function copyText(text) {
   return ok;
 }
 
+// Messages and calls: approved friends (standing links), what each has done lately, and invites -----------
+const msgState = { kid: "" };
 async function loadInvites() {
-  const [inv, keep] = await Promise.all([api("/api/parent/invites"), api("/api/parent/retention").catch(() => null)]);
-  const live = inv.filter((i) => !i.revoked), past = inv.filter((i) => i.revoked);
+  const [inv, fr, keep, calls, chats] = await Promise.all([api("/api/parent/invites"), api("/api/parent/friends"), api("/api/parent/retention").catch(() => null),
+    api(`/api/parent/calls?days=30${msgState.kid ? `&kid=${msgState.kid}` : ""}`).catch(() => []), api("/api/parent/chats")]);
+  const K = msgState.kid, mineK = (ids) => !K || (ids || []).includes(K);
+  $("#msgWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
+    .map(([id, name]) => `<button type="button" class="${K === id ? "on" : ""}" data-mwho="${esc(id)}">${esc(name)}</button>`).join("");
+  $("#msgWho").querySelectorAll("[data-mwho]").forEach((b) => (b.onclick = () => { msgState.kid = b.dataset.mwho; loadInvites().catch(oops); }));
+
+  // Chats: newest first, each with who is in it and what you can do.
+  const live = fr;   // approved friends, for "Add someone"
+  const convs = chats.convs.filter((c) => mineK(c.kid_ids || (c.kid_id ? [c.kid_id] : []))).filter((c) => c.count || c.active)
+    .sort((a, b) => (b.last_at || "").localeCompare(a.last_at || ""));
+  $("#chatList").innerHTML = convs.map((c) => {
+    const people = c.kind === "family" ? "Mom, Dad and the kids" : c.kind === "kids" ? "Just the kids" : (c.people || []).join(", ");
+    const lastLine = c.last ? `${esc(c.last.sender)}: ${esc((c.last.text || "").slice(0, 80))}` : "No messages yet";
+    const group = c.kind === "friend" || c.kind === "group";
+    return `<li><div class="split"><span><b>${esc(c.title)}</b> ${c.kind === "group" ? `<span class="tagline">Group</span>` : ""}${c.active ? "" : ` <span class="tagline bad">Ended</span>`}</span>
+        <span class="muted">${c.last_at ? esc(ago(c.last_at)) : ""}</span></div>
+      <div class="muted">${c.named || c.kind === "family" ? `${esc(people)} · ` : ""}${c.count} message${c.count === 1 ? "" : "s"}${c.pictures ? ` · ${c.pictures} picture${c.pictures > 1 ? "s" : ""}` : ""}</div>
+      <div class="muted lastmsg">${lastLine}</div>
+      <div class="actions"><button class="ghost small" data-readconv="${esc(c.id)}">Read chat</button>
+        ${group && c.active ? `<button class="ghost small" data-addto="${esc(c.id)}">Add someone</button>` : ""}
+        ${(group && c.active) || c.kind === "kids" ? `<button class="ghost small" data-rename="${esc(c.id)}" data-name="${esc(c.named ? c.title : "")}">Rename</button>` : ""}</div>
+      ${(c.members || []).length ? `<div class="chips">${c.members.map((m) => `<span class="chip">${esc(m.name)} <button class="ghost small" data-unmember="${esc(c.id)}|${m.kind}|${esc(m.who)}" title="Take ${esc(m.name)} out of this chat">×</button></span>`).join("")}</div>` : ""}</li>`;
+  }).join("") || `<li class="muted">No chats yet.</li>`;
+
+  // Voice calls: who was on, who joined, how long.
+  const t = (iso) => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  $("#calls").innerHTML = calls.slice(0, 20).map((c) => `<li><div class="split"><span><b>${esc(kidName(c.kid_id))}</b> <span class="muted">${esc(c.room)}</span></span><span class="pill">${fmtMin(c.minutes)}</span></div>
+      <div>${c.with.length ? `With ${esc(c.with.join(", "))}` : `<span class="muted">Nobody else joined</span>`}</div><div class="muted">${esc(t(c.started_at))}</div></li>`).join("")
+    || `<li class="muted">No calls in the last 30 days${K ? ` for ${esc(kidName(K))}` : ""}.</li>`;
+
+  // Approved friends
+  const past = inv.filter((i) => i.revoked && mineK([i.kid_id])), links = Object.fromEntries(inv.map((i) => [i.code, i.link]));
   const days = keep ? keep.days.invites : 7;
-  $("#invites").innerHTML = live.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))}
-    <div class="muted">${esc(i.link)}</div>
-    <div class="actions"><button data-copy="${esc(i.link)}">Copy link</button><button class="ghost" data-revoke="${esc(i.code)}" data-name="${esc(i.friend_name)}">Revoke</button></div></li>`).join("")
-    || `<li class="muted">No active links. Make one for a friend on the right.</li>`;
+  const last = (f) => [f.last_call ? `last call ${ago(f.last_call)}` : "no calls yet", f.messages ? `${f.messages} message${f.messages > 1 ? "s" : ""}, last ${ago(f.last_message)}` : "no messages yet"].join(" · ");
+  $("#invites").innerHTML = fr.filter((f) => mineK([f.kid_id])).map((f) => `<li><div class="split"><span><b>${esc(f.friend_name)}</b> <span class="muted">with ${esc(kidName(f.kid_id))}</span></span>
+      <span class="muted">since ${esc(ago(f.added))}</span></div>
+    <div class="muted">${esc(last(f))}</div>
+    <div class="actions"><button class="ghost small" data-readconv="${esc(f.conv)}">Read chat</button><button class="small" data-copy="${esc(links[f.code] || "")}">Copy link</button>
+      <button class="ghost small" data-revoke="${esc(f.code)}" data-name="${esc(f.friend_name)}">Revoke</button></div></li>`).join("")
+    || `<li class="muted">No approved friends${K ? ` for ${esc(kidName(K))}` : ""} yet. Invite one below.</li>`;
   if (past.length) $("#invites").insertAdjacentHTML("beforeend", `<li class="past"><details>
-      <summary>Revoked links (${past.length})</summary>
-      <p class="muted">These no longer work. ${days ? `They are deleted ${days === 1 ? "a day" : `${days} days`} after you revoke them.` : "They are kept until you clear them."}</p>
+      <summary>Revoked (${past.length})</summary>
+      <p class="muted">These links no longer work. ${days ? `They are deleted ${days === 1 ? "a day" : `${days} days`} after you revoke them.` : "They are kept until you clear them."}</p>
       <ul class="list">${past.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} <span class="tagline bad">Revoked</span>
-        <div class="muted">${i.revoked_at ? `Revoked ${esc(localTime(i.revoked_at))}` : esc(i.link)}</div></li>`).join("")}</ul>
+        <div class="muted">${i.revoked_at ? `Revoked ${esc(localTime(i.revoked_at))}` : ""}</div></li>`).join("")}</ul>
       <button class="ghost small" id="clearInvites">Clear revoked links</button></details></li>`);
-  document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
-  document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
-    if (!await sheet({ title: `Revoke ${b.dataset.name}'s link?`, text: "The link stops working straight away, and they are dropped from a call they are in.", ok: "Revoke", kind: "bad" })) return;
+  if (K) $("#inviteKid").value = K;
+
+  const panel = document.querySelector('[data-panel="messages"]');
+  panel.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
+  panel.querySelectorAll("[data-readconv]").forEach((b) => (b.onclick = () => {
+    if (wide.matches) { if (!document.body.classList.contains("chat-open")) $('[data-panel="chat"] > .title').click(); }
+    else window.scrollTo(0, 0);
+    switchConv(b.dataset.readconv);
+  }));
+  panel.querySelectorAll("[data-addto]").forEach((b) => (b.onclick = () => addToChat(chats.convs.find((c) => c.id === b.dataset.addto), live).catch(oops)));
+  panel.querySelectorAll("[data-rename]").forEach((b) => (b.onclick = async () => {
+    const name = await sheet({ title: "Name this chat", text: "Everyone in it sees the new name. Leave it empty to go back to the list of names.",
+      input: { value: b.dataset.name, placeholder: "Minecraft crew" }, ok: "Save" });
+    if (name == null) return;
+    try { await api(`/api/parent/chats/${encodeURIComponent(b.dataset.rename)}/name`, { method: "PUT", body: { name } }); } catch (err) { return oops(err); }
+    loadInvites(); loadConvs().catch(() => {});
+  }));
+  panel.querySelectorAll("[data-unmember]").forEach((b) => (b.onclick = async () => {
+    const [conv, kind, who] = b.dataset.unmember.split("|");
+    if (!await sheet({ title: "Take them out of this chat?", text: "They stop seeing it straight away. Their own chats aren't touched.", ok: "Take out", kind: "bad" })) return;
+    await api(`/api/parent/chats/${encodeURIComponent(conv)}/members/${kind}/${encodeURIComponent(who)}`, { method: "DELETE" }); loadInvites();
+  }));
+  panel.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Revoke ${b.dataset.name}'s link?`, text: "The link stops working straight away, they are dropped from a call they are in, and their chat ends. You can still read it.", ok: "Revoke", kind: "bad" })) return;
     await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites();
   }));
   const clr = $("#clearInvites");
   if (clr) clr.onclick = async () => { await api("/api/parent/history/invites", { method: "DELETE" }); loadInvites(); };
 }
+
+// Add a kid at home or another approved friend to a friend's chat.
+async function addToChat(c, friends) {
+  if (!c) return;
+  const inIt = new Set([...(c.kid_ids || []), ...(c.members || []).map((m) => m.who)]);
+  const own = friends.find((f) => f.conv === c.id);
+  const choices = [...state.kids.filter((k) => !inIt.has(k.id)).map((k) => ({ kind: "kid", who: k.id, label: k.name })),
+    ...friends.filter((f) => f.conv !== c.id && !inIt.has(f.code) && (!own || f.code !== own.code)).map((f) => ({ kind: "friend", who: f.code, label: `${f.friend_name} (${kidName(f.kid_id)}'s friend)` }))];
+  if (!choices.length) return sheet({ title: "Nobody else to add", text: "Everyone at home and every approved friend is already in this chat. Invite a friend first to add them.", cancel: "" });
+  const box = $("#addPick");
+  box.innerHTML = choices.map((x, i) => `<label class="pick"><input type="radio" name="addwho" value="${i}" ${i ? "" : "checked"}><span>${esc(x.label)}</span></label>`).join("");
+  box.hidden = false;
+  const ok = await sheet({ title: `Add someone to ${c.title}`, text: "They see what is said from now on, not what was said before. You can take them out again.", ok: "Add" });
+  box.hidden = true;
+  if (!ok) return;
+  const x = choices[+box.querySelector("input:checked").value];
+  try { await api(`/api/parent/chats/${encodeURIComponent(c.id)}/members`, { method: "POST", body: { kind: x.kind, who: x.who } }); } catch (err) { return oops(err); }
+  loadInvites(); loadConvs().catch(() => {});
+}
 $("#inviteForm").onsubmit = async (e) => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  await api("/api/parent/invites", { method: "POST", body: { kid_id: f.get("kid_id"), friend_name: f.get("friend_name") } });
+  const f = new FormData(e.target), names = [...new Set(f.get("friend_name").split(/[,\n]/).map((n) => n.trim()).filter(Boolean))].slice(0, 10);
+  const made = [];
+  try { for (const n of names) made.push(await api("/api/parent/invites", { method: "POST", body: { kid_id: f.get("kid_id"), friend_name: n } })); } catch (err) { oops(err); }
   e.target.reset(); fillKidSelects(); loadInvites();
+  if (made.length > 1) sheet({ title: `${made.length} links made`, text: "Send each friend's parent their own link (Copy link on each). They all join the same call with " + kidName(f.get("kid_id")) + ".", cancel: "" });
 };
 
 // History and clean-up (Now tab) ---------------------------------------------
@@ -508,8 +779,9 @@ async function loadRetention() {
 }
 $("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention().catch(oops); };
 
+$("#needs").onclick = (e) => { if (e.target.closest("[data-go]")) go("requests"); };
 refresh().catch(() => {});
-setInterval(() => { if (!$("#app").hidden && !$('[data-panel="now"]').hidden) refresh().catch(() => {}); }, 10000);
+setInterval(() => { if (!$("#app").hidden && !$('[data-panel="home"]').hidden) refresh().catch(() => {}); }, 10000);
 
 // Playtimes -----------------------------------------------------------------
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -527,12 +799,110 @@ function nextPlay(iso) {
   return days <= 0 ? `at ${t}` : days === 1 ? `tomorrow at ${t}` : `${at.toLocaleDateString([], { weekday: "long" })} at ${t}`;
 }
 
-async function loadPlaytimes() {
-  pt.data = await api("/api/parent/playtimes");
-  if (!pt.kid || !pt.data.kids.some((k) => k.id === pt.kid)) pt.kid = pt.data.kids[0]?.id;
-  renderPlaytimes();
-  loadConsoles();
+// Screen time: the usual week, and changes for single dates shown on a calendar week ---------------
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const parseDay = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const shortDate = (s) => parseDay(s).toLocaleDateString([], { month: "short", day: "numeric" });
+function daysBetween(a, b) {
+  const out = [], end = parseDay(b);
+  for (let d = parseDay(a); d <= end && out.length < 62; d.setDate(d.getDate() + 1)) out.push(iso(d));
+  return out;
 }
+
+// Skylight: chore points from the family calendar, spent by the kids on extra time --------------
+async function loadSkylight(pending = null) {
+  let d;
+  try { d = await api("/api/parent/skylight"); } catch { $("#skylight").innerHTML = ""; return; }
+  const box = $("#skylight");
+  if (!d.linked) {
+    box.innerHTML = `<div class="card"><h2>Skylight chore points</h2>
+      <p class="muted">Link your Skylight calendar and the kids see their chore points on their PC, and can spend them on extra time. Your password goes to Skylight only; the hub keeps a sign-in token, not the password.</p>
+      ${pending ? `<form id="skyCode"><label>Skylight emailed you a 6-digit code <input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+        <button class="wide">Finish linking</button></form>`
+      : `<form id="skySignIn"><label>Skylight email <input name="email" type="email" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="wide">Link Skylight</button></form>`}</div>`;
+    const done = (r) => (r.code_needed ? loadSkylight(r.code_needed) : loadSkylight());
+    if ($("#skySignIn")) $("#skySignIn").onsubmit = async (e) => {
+      e.preventDefault(); const f = new FormData(e.target), b = e.target.querySelector("button");
+      b.disabled = true; b.textContent = "Linking…";
+      try { done(await api("/api/parent/skylight/signin", { method: "POST", body: { email: f.get("email"), password: f.get("password") } })); }
+      catch (err) { b.disabled = false; b.textContent = "Link Skylight"; oops(err); }
+    };
+    if ($("#skyCode")) $("#skyCode").onsubmit = async (e) => {
+      e.preventDefault();
+      try { done(await api("/api/parent/skylight/code", { method: "POST", body: { id: pending, code: new FormData(e.target).get("code") } })); } catch (err) { oops(err); }
+    };
+    return;
+  }
+  const opts = (sel) => `<option value="">Not linked</option>` + d.people.map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  box.innerHTML = `<div class="card skylight"><h2 class="split">Skylight chore points <button class="ghost small" data-skyunlink="1">Unlink</button></h2>
+    <p class="muted">Each kid sees his points next to his time, and can buy extra time with them straight away, up to the daily limit.</p>
+    ${d.error ? `<div class="alert"><span>${esc(d.error)}</span></div>` : ""}
+    ${d.frames.length > 1 ? `<label>Household <select id="skyFrame">${d.frames.map((f) => `<option value="${esc(f.id)}" ${f.id === d.frame_id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
+    <ul class="list">${state.kids.map((k) => { const m = d.members[k.id], bal = m ? d.balances[m] : null;
+      return `<li class="split"><span><b>${esc(k.name)}</b> <span class="muted">${bal != null ? `${bal} points` : m ? "points not read yet" : ""}${d.bought_today?.[k.id] ? ` · bought ${fmtMin(d.bought_today[k.id])} today` : ""}</span></span>
+        <select data-skykid="${esc(k.id)}" aria-label="${esc(k.name)} in Skylight">${opts(m)}</select></li>`; }).join("")}</ul>
+    <div class="row prices">
+      <label><input id="skyPts" type="number" min="1" value="${d.price_points}"> points buy</label>
+      <label><input id="skyMin" type="number" min="5" max="120" step="5" value="${d.price_minutes}"> minutes</label>
+      <label>Up to <input id="skyCap" type="number" min="0" max="240" step="5" value="${d.daily_cap}"> min a day</label>
+    </div></div>`;
+  const save = async (body) => { try { await api("/api/parent/skylight", { method: "PUT", body }); } catch (err) { oops(err); } loadSkylight(); };
+  box.querySelectorAll("[data-skykid]").forEach((s) => (s.onchange = () => save({ members: Object.fromEntries([...box.querySelectorAll("[data-skykid]")].map((x) => [x.dataset.skykid, x.value])) })));
+  if ($("#skyFrame")) $("#skyFrame").onchange = (e) => save({ frame_id: e.target.value, members: {} });
+  ["#skyPts", "#skyMin", "#skyCap"].forEach((id) => ($(id).onchange = () => save({ price_points: +$("#skyPts").value, price_minutes: +$("#skyMin").value, daily_cap: +$("#skyCap").value })));
+  box.querySelector("[data-skyunlink]").onclick = async () => {
+    if (!await sheet({ title: "Unlink Skylight?", text: "The kids stop seeing their points. Nothing changes in Skylight.", ok: "Unlink", kind: "bad" })) return;
+    await api("/api/parent/skylight", { method: "DELETE" }); loadSkylight();
+  };
+}
+async function loadPlaytimes() { return loadScreenTime(); }
+async function loadScreenTime() {
+  const [w, p] = await Promise.all([api(`/api/parent/screentime${pt.start ? `?start=${pt.start}` : ""}`), api("/api/parent/playtimes")]);
+  pt.st = w; pt.data = p; pt.start = w.start;
+  if (!pt.kid || !p.kids.some((k) => k.id === pt.kid)) pt.kid = p.kids[0]?.id;
+  renderPlaytimes();
+  renderWeek();
+}
+function dayFacts(d) {
+  const wins = d.windows.length ? d.windows.map((x) => `${clock(x.start)}–${clock(x.end)}`).join(", ") : d.bedtime ? "Any time before bed" : "Any time";
+  return d.daily_minutes ? `<span class="lim">${fmtMin(d.daily_minutes)}</span><span>${esc(wins)}</span><span>${d.bedtime ? `Bed ${esc(clock(d.bedtime))}` : "No bedtime"}</span>`
+    : `<span class="lim">No play</span>`;
+}
+function renderWeek() {
+  const k = pt.st.kids.find((x) => x.id === pt.kid);
+  if (!k) { $("#stWeek").innerHTML = ""; return; }
+  const mon = parseDay(pt.st.start), sun = parseDay(pt.st.start); sun.setDate(sun.getDate() + 6);
+  $("#stWeekName").textContent = `${mon.toLocaleDateString([], { month: "short", day: "numeric" })} – ${sun.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  $("#stToday").hidden = pt.st.start <= pt.st.today && pt.st.today <= iso(sun);
+  $("#stWeek").innerHTML = k.week.map((d) => `<button class="card day ${d.changed ? "changed" : ""} ${d.date === pt.st.today ? "today" : ""} ${d.date < pt.st.today ? "past" : ""}" data-stday="${d.date}">
+      <div class="dayhead"><b>${DAY_NAMES[d.weekday].slice(0, 3)} ${parseDay(d.date).getDate()}</b>${d.date === pt.st.today ? `<span class="tagline">Today</span>` : ""}</div>
+      ${d.changed ? `<div class="tag">${esc(d.label || "Changed")}</div>` : ""}
+      <div class="facts">${dayFacts(d)}</div></button>`).join("");
+  document.querySelectorAll("[data-stday]").forEach((b) => (b.onclick = () => editDate(b.dataset.stday)));
+  $("#stUpcoming").innerHTML = k.upcoming.length ? `<div class="card"><h2>Coming up</h2><ul class="list">${k.upcoming.map((u) =>
+      `<li class="split"><span><b>${esc(u.label || "Changed")}</b> <span class="muted">${u.days > 1 ? `${shortDate(u.from)} to ${shortDate(u.to)}` : shortDate(u.from)} · ${u.daily_minutes ? `${fmtMin(u.daily_minutes)} a day` : "no play"}</span></span>
+       <span class="inrow"><button class="ghost small" data-upedit="${u.from}">Change</button><button class="ghost small" data-upclear="${u.from}|${u.to}">Remove</button></span></li>`).join("")}</ul></div>` : "";
+  document.querySelectorAll("[data-upedit]").forEach((b) => (b.onclick = () => { const u = k.upcoming.find((x) => x.from === b.dataset.upedit); editDate(u.from, u.to); }));
+  document.querySelectorAll("[data-upclear]").forEach((b) => (b.onclick = async () => {
+    const [a, z] = b.dataset.upclear.split("|");
+    if (!await sheet({ title: "Back to the usual week?", text: `${k.name}'s ${a === z ? shortDate(a) : `${shortDate(a)} to ${shortDate(z)}`} goes back to the usual rules.`, ok: "Remove" })) return;
+    try { await api(`/api/parent/screentime/${k.id}/dates/clear`, { method: "POST", body: { dates: daysBetween(a, z) } }); } catch (err) { return oops(err); }
+    loadScreenTime().catch(oops); refresh().catch(() => {});
+  }));
+}
+const moveWeek = (n) => { const d = parseDay(pt.st.start); d.setDate(d.getDate() + 7 * n); pt.start = iso(d); loadScreenTime().catch(oops); };
+$("#stPrev").onclick = () => moveWeek(-1);
+$("#stNext").onclick = () => moveWeek(1);
+$("#stToday").onclick = () => { pt.start = ""; loadScreenTime().catch(oops); };
+$("#stAdd").onclick = () => editDate(pt.st.today);
+$("#stCopy").onclick = async () => {
+  const name = kidName(pt.kid);
+  if (!await sheet({ title: `Copy this week to next week for ${name}?`, text: `Next week's days become the same as this week's, as changes for those dates. The usual week stays as it is, and takes over again after.`, ok: "Copy" })) return;
+  try { await api(`/api/parent/screentime/${pt.kid}/copy-week`, { method: "POST", body: { start: pt.st.start, weeks: 1 } }); } catch (err) { return oops(err); }
+  moveWeek(1);
+};
 
 // Consoles: a linked Nintendo Switch shares the same daily time ------------------
 async function loadConsoles() {
@@ -637,7 +1007,7 @@ function renderPlaytimes() {
   const kids = pt.data.kids, kid = kids.find((k) => k.id === pt.kid);
   $("#ptKids").hidden = kids.length < 2;
   $("#ptKids").innerHTML = kids.map((k) => `<button role="tab" aria-selected="${k.id === pt.kid}" class="${k.id === pt.kid ? "on" : ""}" data-ptkid="${k.id}">${esc(k.name)}</button>`).join("");
-  document.querySelectorAll("[data-ptkid]").forEach((b) => (b.onclick = () => { pt.kid = b.dataset.ptkid; renderPlaytimes(); }));
+  document.querySelectorAll("[data-ptkid]").forEach((b) => (b.onclick = () => { pt.kid = b.dataset.ptkid; renderPlaytimes(); renderWeek(); }));
   if (!kid) { $("#ptDays").innerHTML = `<p class="muted">No kids set up yet.</p>`; return; }
   $("#ptDays").innerHTML = kid.days.map((d) => {
     const wins = d.windows.length
@@ -660,14 +1030,34 @@ function windowRow(w = { start: "15:30", end: "17:30" }) {
 }
 function wireWindows() {
   const box = $("#ptWindows");
-  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: he can play any time from 6 AM until bedtime.</p>`;
+  if (!box.querySelector(".winrow")) box.innerHTML = `<p class="hint">None: they can play any time from 6 AM until bedtime.</p>`;
   box.querySelectorAll("[data-delwin]").forEach((b) => (b.onclick = () => { b.closest(".winrow").remove(); wireWindows(); }));
 }
 
+// One editor for both: a weekday of the usual week, or a run of dates (holiday, vacation).
+// Closing the editor (Save or Cancel) leaves no day looking picked.
+$("#ptSheet").addEventListener("close", () => { if (document.activeElement && document.activeElement.closest("#stWeek")) document.activeElement.blur(); });
+function editDate(from, to = from) {
+  const kid = pt.data.kids.find((k) => k.id === pt.kid), wk = pt.st.kids.find((k) => k.id === pt.kid);
+  const d = wk.week.find((x) => x.date === from) || kid.days[parseDay(from).getDay() === 0 ? 6 : parseDay(from).getDay() - 1];
+  fillEditor(kid, d, "date");
+  const f = $("#ptForm");
+  f.from.value = from; f.to.value = to; f.label.value = d.label || "";
+  $("#ptUsual").hidden = !d.changed;
+  $("#ptTitle").textContent = `${kid.name}: ${parseDay(from).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}`;
+  $("#ptSheet").showModal();
+}
 function editPlaytime(day) {
-  const kid = pt.data.kids.find((k) => k.id === pt.kid), d = kid.days[day], f = $("#ptForm");
-  pt.day = day;
-  $("#ptTitle").textContent = `${kid.name}'s ${DAY_NAMES[day]}`;
+  const kid = pt.data.kids.find((k) => k.id === pt.kid);
+  fillEditor(kid, kid.days[day], "week", day);
+  $("#ptTitle").textContent = `${kid.name}'s usual ${DAY_NAMES[day]}`;
+  $("#ptSheet").showModal();
+}
+function fillEditor(kid, d, mode, day = 0) {
+  const f = $("#ptForm");
+  pt.mode = mode; pt.day = day;
+  $("#ptDateBox").hidden = mode !== "date"; $("#ptWeekBox").hidden = mode !== "week";
+  f.from.required = f.to.required = mode === "date";
   f.daily_minutes.value = d.daily_minutes;
   $("#ptQuick").innerHTML = [0, 30, 60, 90, 120, 180].map((m) => `<button type="button" class="ghost small" data-quick="${m}">${m ? fmtMin(m) : "No play"}</button>`).join("");
   $("#ptQuick").querySelectorAll("[data-quick]").forEach((b) => (b.onclick = () => (f.daily_minutes.value = b.dataset.quick)));
@@ -677,8 +1067,13 @@ function editPlaytime(day) {
   $("#ptDaysPick").innerHTML = DAY_NAMES.map((n, i) => `<label class="pick"><input type="checkbox" name="day" value="${i}" ${i === day ? "checked" : ""}><span>${n.slice(0, 3)}</span></label>`).join("");
   $("#ptKidsPick").innerHTML = pt.data.kids.length < 2 ? "" : pt.data.kids.map((k) => `<label class="pick"><input type="checkbox" name="kid" value="${k.id}" ${k.id === kid.id ? "checked" : ""}><span>${esc(k.name)}</span></label>`).join("");
   $("#ptErr").textContent = "";
-  $("#ptSheet").showModal();
 }
+$("#ptUsual").onclick = async () => {
+  const f = $("#ptForm"), kids = [...f.querySelectorAll('[name=kid]:checked')].map((c) => c.value);
+  try { for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/screentime/${k}/dates/clear`, { method: "POST", body: { dates: daysBetween(f.from.value, f.to.value || f.from.value) } }); }
+  catch (err) { $("#ptErr").textContent = err.message; return; }
+  $("#ptSheet").close(); loadScreenTime().catch(oops); refresh().catch(() => {});
+};
 $("#ptAdd").onclick = () => {
   const box = $("#ptWindows"), last = [...box.querySelectorAll('[data-w="end"]')].pop();
   if (!box.querySelector(".winrow")) box.innerHTML = "";
@@ -711,32 +1106,21 @@ $("#ptSave").onclick = async (e) => {
   if (clash > 0) { $("#ptErr").textContent = `Two play times overlap: ${span(sorted[clash - 1])} and ${span(sorted[clash])}.`; return; }
   const kids = [...f.querySelectorAll('[name=kid]:checked')].map((c) => c.value);
   try {
-    for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/playtimes/${k}`, { method: "PUT", body });
+    if (pt.mode === "date") {
+      if (f.to.value < f.from.value) { $("#ptErr").textContent = "The last date is before the first."; return; }
+      const dates = daysBetween(f.from.value, f.to.value);
+      if (dates.length >= 62) { $("#ptErr").textContent = "Pick up to two months at a time."; return; }
+      for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/screentime/${k}/dates`, { method: "PUT", body: { ...body, dates, label: f.label.value.trim() } });
+    } else {
+      for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/playtimes/${k}`, { method: "PUT", body });
+    }
   } catch (err) { $("#ptErr").textContent = err.message; return; }
   $("#ptSheet").close();
-  loadPlaytimes().catch(oops); // History and clean-up (Now tab) ---------------------------------------------
-const keepLabel = (d) => (d === 0 ? "Forever" : d === 1 ? "1 day" : d === 365 ? "1 year" : `${d} days`);
-async function loadRetention() {
-  const r = await api("/api/parent/retention");
-  $("#retention").innerHTML = r.kinds.map((k) => `<li class="split keep"><span>${esc(k.label)}</span><span class="inrow">
-      <select data-keep="${k.kind}" aria-label="Keep ${esc(k.label)} for">${r.choices.map((d) => `<option value="${d}" ${d === k.days ? "selected" : ""}>${keepLabel(d)}</option>`).join("")}</select>
-      <button class="ghost small" data-clearkind="${k.kind}" data-label="${esc(k.label)}">Clear</button></span></li>`).join("");
-  document.querySelectorAll("[data-keep]").forEach((s) => (s.onchange = async () => {
-    try { await api("/api/parent/retention", { method: "PUT", body: { days: { [s.dataset.keep]: +s.value } } }); } catch (err) { oops(err); }
-    loadRetention();
-  }));
-  document.querySelectorAll("[data-clearkind]").forEach((b) => (b.onclick = async () => {
-    if (!await sheet({ title: `Clear ${b.dataset.label.toLowerCase()}?`, text: "This deletes all of it now, for both kids. It can't be undone.", ok: "Clear", kind: "bad" })) return;
-    try { const r = await api(`/api/parent/history/${b.dataset.clearkind}`, { method: "DELETE" }); b.textContent = `Cleared ${r.deleted}`; b.disabled = true; } catch (err) { oops(err); }
-  }));
-}
-$("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention().catch(oops); };
-
-refresh().catch(() => {});
+  loadScreenTime().catch(oops); refresh().catch(() => {});
 };
 
 // Chat ----------------------------------------------------------------------
-// Conversations: the family chat (parents write here), the brothers' own chat, each friend's chat (read only),
+// Conversations: the family chat (parents write here), the kids' own chat ("Kids at home"), each friend's chat (read only),
 // and "Pictures & links", every picture and link sent in any of them. Parents can remove a message: the kids
 // and the friend then see that a parent removed it, and the parents keep seeing what it was.
 const chat = { conv: "family", last: 0, seen: {}, convs: [], started: false };
@@ -795,7 +1179,7 @@ function updateChatDot() {
   bar.onclick = toggle;
   bar.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
   // Window dragged from phone width to laptop width while on the Chat tab: that tab is gone, so go to Now.
-  wide.addEventListener("change", () => { if (wide.matches && $('nav button[data-tab="chat"]').classList.contains("on")) $('nav button[data-tab="now"]').click(); });
+  wide.addEventListener("change", () => { if ($('nav button[data-tab="messages"]').classList.contains("on")) go("messages"); });
 }
 
 async function loadConvs() {
@@ -821,7 +1205,7 @@ function renderConvs() {
   $("#chatConvs").innerHTML = shown.map((c) => {
     const isNew = c.last_id > (chat.seen[c.id] || 0) && c.id !== chat.conv;
     return `<button type="button" role="tab" data-conv="${esc(c.id)}" class="${c.id === chat.conv ? "on" : ""} ${isNew ? "dot" : ""} ${c.active ? "" : "off"}"
-      aria-selected="${c.id === chat.conv}" title="${esc(c.who)}">${esc(c.kind === "family" ? "Family" : c.title)}${c.flagged ? `<span class="n" title="Flagged words">!${c.flagged}</span>` : ""}</button>`;
+      aria-selected="${c.id === chat.conv}" title="${esc(c.who)}">${esc(c.kind === "family" ? "Family" : c.kind === "kids" ? (c.named ? c.title : "Kids at home") : c.title)}${c.flagged ? `<span class="n" title="Flagged words">!${c.flagged}</span>` : ""}</button>`;
   }).join("") + (shared ? `<button type="button" role="tab" data-conv="shared" class="${chat.conv === "shared" ? "on" : ""}">Pictures &amp; links</button>` : "");
   document.querySelectorAll("[data-conv]").forEach((b) => (b.onclick = () => switchConv(b.dataset.conv)));
 }
@@ -834,7 +1218,7 @@ function switchConv(conv) {
   $("#chatForm").hidden = !family;
   $("#chatNote").hidden = family;
   $("#chatNote").textContent = conv === "shared" ? "Every picture and link sent in any chat, newest first. Tap a picture to see it full size."
-    : c ? `${c.who}. You can read this chat; ${c.kind === "kids" ? "only the kids write in it" : "only the kid and the friend write in it"}. Remove a message to hide it from them.` : "";
+    : c ? `${c.who}. You can read this chat; ${c.kind === "kids" ? "only the kids at home write in it" : c.kind === "group" ? `only ${(c.people || []).join(", ")} write in it` : "only the kid and the friend write in it"}. Remove a message to hide it from them.` : "";
   chatSeen();
   loadChat().catch(oops);
 }
@@ -852,20 +1236,24 @@ function linked(text, links) {
   return out + esc(text.slice(at));
 }
 const picUrl = (id) => `/api/parent/chat/picture/${id}`;
+const vidUrl = (id) => `/api/parent/chat/video/${id}`;
+// A clip plays in place; its first frame shows until it is played.
+const clipHtml = (m, pic, vid) => `<video controls playsinline preload="none" ${m.picture ? `poster="${pic}"` : ""} src="${vid}"></video>`;
 function msgHtml(m) {
-  const pic = m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="Picture from ${esc(m.sender)}" loading="lazy"></a>` : "";
+  const pic = m.video ? clipHtml(m, picUrl(m.id), vidUrl(m.id)) : m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="Picture from ${esc(m.sender)}" loading="lazy"></a>` : "";
   const words = m.text ? (m.removed ? `<s>${linked(m.text, m.links)}</s>` : linked(m.text, m.links)) : "";
   const tools = [m.flagged ? `<span class="flag">Flagged words</span>` : "",
+    m.held && !m.removed ? `<span class="flag">Held by the picture check: the kids can't see it</span><button type="button" data-release="${m.id}">Let it through</button>` : "",
     m.removed ? `<span>Removed by ${esc(m.removed_by)}. Hidden from the kids.</span>` : !m.mine ? `<button type="button" data-remove="${m.id}">Remove</button>` : ""].filter(Boolean).join("");
   return `<div class="msg ${m.mine ? "mine" : ""} ${m.kid_id ? "kid" : ""} ${m.friend ? "friend" : ""} ${m.removed ? "removed" : ""} ${m.flagged ? "flagged" : ""}" data-mid="${m.id}">
     ${m.mine ? "" : `<div class="who">${esc(m.sender)}${m.friend ? " (friend)" : ""}</div>`}<div class="bubble">${pic}${words}</div>
     <div class="when">${esc(new Date(m.at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }))}</div>${tools ? `<div class="tools">${tools}</div>` : ""}</div>`;
 }
-function wireRemove(root) {
+function wireRemove(root, after = reloadChat) {
   root.querySelectorAll("[data-remove]").forEach((b) => (b.onclick = async () => {
     if (!await sheet({ title: "Remove this message?", text: "The kids (and the friend) will see that a parent removed it. You will still see it here.", ok: "Remove", kind: "bad" })) return;
     try { await api(`/api/parent/chat/${b.dataset.remove}`, { method: "DELETE" }); } catch (err) { return oops(err); }
-    reloadChat();
+    after();
   }));
 }
 function reloadChat() { chat.last = 0; chat.started = false; $("#chatLog").innerHTML = ""; loadChat().catch(oops); }
@@ -876,7 +1264,7 @@ async function loadChat() {
     const items = await api("/api/parent/chat-shared");
     const title = (m) => (chat.convs.find((c) => c.id === m.conv) || {}).title || "";
     log.innerHTML = `<div class="shared">${items.map((m) => `<div class="item">
-      ${m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="" loading="lazy"></a>` : ""}
+      ${m.video ? clipHtml(m, picUrl(m.id), vidUrl(m.id)) : m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="" loading="lazy"></a>` : ""}
       <b>${esc(m.sender)}</b> <span class="muted">in ${esc(m.conv === "family" ? "Family" : title(m))}</span><br>
       ${m.removed ? "<s>" : ""}${linked(m.text, m.links)}${m.removed ? "</s> <span class='muted'>(removed)</span>" : ""}
       <div class="muted">${esc(new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</div></div>`).join("")
@@ -895,6 +1283,10 @@ async function loadChat() {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.insertAdjacentHTML("beforeend", msgs.map(msgHtml).join(""));
   wireRemove(log);
+  log.querySelectorAll("[data-release]").forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/parent/chat/${b.dataset.release}/release`, { method: "POST" }); } catch (err) { return oops(err); }
+    reloadChat();
+  }));
   if (atBottom || !chat.started) log.scrollTop = log.scrollHeight;
   chat.started = true;
   chat.last = msgs[msgs.length - 1].id;
@@ -915,24 +1307,36 @@ $("#chatPic").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  if (file.size > 8 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
-  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
   const text = $("#chatForm").text.value.trim();
+  if (file.type.startsWith("video/")) {
+    if (file.size > 100 * 1024 * 1024) return oops(new Error("That video is too big. Videos can be up to 30 seconds."));
+    try {
+      const r = await fetch(`/api/parent/chat/video?text=${encodeURIComponent(text)}`, { method: "POST", credentials: "same-origin", body: file });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      $("#chatForm").text.value = "";
+    } catch (err) { return oops(err); }
+    return loadChat().catch(() => {});
+  }
+  if (file.size > 15 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
+  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
   try { await api("/api/parent/chat/picture", { method: "POST", body: { data, text } }); $("#chatForm").text.value = ""; } catch (err) { return oops(err); }
   loadChat().catch(() => {});
 };
 
-// Chat switches (Friends tab).
+// Chat switches (Connections).
 async function loadChatSettings() {
-  const { settings: c } = await api("/api/parent/chats");
+  const [{ settings: c }, h] = await Promise.all([api("/api/parent/chats"), api("/api/parent/chat-held").catch(() => ({ check: "off: unknown" }))]);
+  const check = h.check;
   const sw = (key, label, hint) => `<label class="switch"><input type="checkbox" data-chatset="${key}" ${c[key] ? "checked" : ""}>
       <span><b>${label}</b><small class="muted">${hint}</small></span></label>`;
   $("#chatSettings").innerHTML = `<div class="card chatset">
-    <h2>Text chat</h2>
-    <p class="muted">The family chat is always on. You can read every chat on the Chat tab.</p>
-    ${sw("kids", "Brothers chat with each other", "A chat just for the kids. You can read it, but don't write in it.")}
+    <h2>Chat permissions</h2>
+    <p class="muted">The family chat is always on. You can read every chat under Messages.</p>
+    ${sw("kids", "Kids at home chat with each other", "A chat just for the kids in the family. You can read it, but don't write in it.")}
     ${sw("friends", "Chat with invited friends", "Each friend with a link can type with that kid, from the same page as voice.")}
     ${sw("pictures", "Pictures", "Photos and screenshots. The hub strips hidden data such as where a photo was taken.")}
+    <p class="muted check">Picture check: ${check === "on" ? "on. Pictures and videos from the kids and friends are checked for nudity on your own server; anything it flags waits in Requests." : `off (${esc(check.replace(/^off: /, ""))}). Pictures arrive without a check.`}</p>
+    ${sw("videos", "Videos", "Clips up to 30 seconds. The hub keeps a small copy without location data, on your own server.")}
     ${sw("links", "Links", "Web links in messages. On the kids' PCs a link opens in Chrome, under the same web rules.")}
   </div>`;
   document.querySelectorAll("[data-chatset]").forEach((x) => (x.onchange = async () => {

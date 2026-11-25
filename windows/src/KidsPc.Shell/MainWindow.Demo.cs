@@ -9,7 +9,11 @@ public partial class MainWindow
     {
         switch (scene)
         {
-            case "catalogue":
+            case "catalogue":   // shelves to browse, nothing typed
+                ShowCatalogue(this, new RoutedEventArgs());
+                await LoadDiscoverAsync(force: true);
+                break;
+            case "search":
             case "ask":
                 ShowCatalogue(this, new RoutedEventArgs());
                 AskGameBox.Text = "space";

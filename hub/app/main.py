@@ -13,7 +13,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, consoles, gamesearch, installs, retention, rules, updates, xbox
+from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, retention, rules, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -38,6 +38,14 @@ def get_db() -> DB:
     return app.state.db
 
 
+def load_added_kids(db: DB, settings: Settings) -> None:
+    """Kids added on the dashboard live in the database; config.yaml's kids keep working alongside them."""
+    have = {k.id for k in settings.kids}
+    for r in db.q("SELECT * FROM kids_added ORDER BY added_at"):
+        if r["id"] not in have:
+            settings.kids.append(Kid(id=r["id"], name=r["name"], device_token=r["device_token"], extension_token=r["extension_token"]))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -45,6 +53,8 @@ async def lifespan(app: FastAPI):
     app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
     # Chat pictures sit next to the database, so a backup of the data folder has them too.
     app.state.chat_dir = retention.PICTURES_DIR = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "chat-pictures"
+    app.state.media = media.LocalStore(app.state.chat_dir)   # photos and clips stay on this box; screens get signed links
+    load_added_kids(app.state.db, settings)
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
@@ -56,6 +66,8 @@ async def lifespan(app: FastAPI):
     if settings.consoles.enabled and pollers_on:
         tasks.append(asyncio.create_task(consoles.sync_forever(
             app.state.db, settings, lambda kid: today_state(app.state.db, settings, kid), settings.consoles.poll_seconds)))
+    if pollers_on:
+        tasks.append(asyncio.create_task(skylight.refresh_forever(app.state.db)))
     yield
     for t in tasks:
         t.cancel()
@@ -115,8 +127,21 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     late_until = datetime.fromisoformat(max(untils)) if untils else None
     p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
     paused_until = datetime.fromisoformat(p["until"]) if p else None
-    return rules.compute(rule_for(db, kid, now.weekday()), now, used, g["m"] if g else 0, late_until, paused_until,
-                         rule_for=lambda wd: rule_for(db, kid, wd))
+    return rules.compute(day_rule(db, kid, now.date()), now, used, g["m"] if g else 0, late_until, paused_until,
+                         rule_for=lambda d: day_rule(db, kid, d))
+
+
+def date_change(db: DB, kid: Kid, day) -> dict | None:
+    """A parent's change for this one date (holiday, vacation), if there is one."""
+    return db.one("SELECT * FROM playtime_dates WHERE kid_id=? AND day=?", (kid.id, str(day)))
+
+
+def day_rule(db: DB, kid: Kid, day) -> rules.DayRule:
+    """The rule for a calendar date: a change saved for that date, else the usual rule for its weekday."""
+    r = date_change(db, kid, day)
+    if r:
+        return rules.DayRule(daily_minutes=r["daily_minutes"], bedtime=r["bedtime"], windows=[tuple(w) for w in json.loads(r["windows"])])
+    return rule_for(db, kid, day.weekday())
 
 
 STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
@@ -199,11 +224,22 @@ async def steam_search(q: str, db: DB, kid_safe: bool) -> list[dict]:
     return out
 
 
+NEW_GAME_DAYS = 14   # an approved game he hasn't played yet says "New" on his home screen for this long
+
+
 def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
-    rows = db.q("""SELECT g.* FROM games g JOIN approvals a ON a.game_id = g.id
+    """His approved games, with when he last played each (last_played, ISO or "") and whether it is new to him."""
+    rows = db.q("""SELECT g.*, a.approved_at, p.last_at AS last_played, COALESCE(p.minutes, 0) AS minutes_played
+                   FROM games g JOIN approvals a ON a.game_id = g.id
+                   LEFT JOIN game_play p ON p.kid_id = a.kid_id AND p.game_id = g.id
                    WHERE a.kid_id=? ORDER BY g.title""", (kid_id,))
     if not settings.decisions.game_pass_enabled:
         rows = [r for r in rows if r["launcher"] != "gamepass"]
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NEW_GAME_DAYS)).isoformat()
+    for r in rows:
+        approved_at = r.pop("approved_at") or ""
+        r["last_played"] = r["last_played"] or ""
+        r["new"] = not r["last_played"] and approved_at >= cutoff
     return [with_art(r) for r in rows]
 
 
@@ -274,6 +310,7 @@ class Heartbeat(BaseModel):
     offline_minutes: int = Field(default=0, ge=0, le=24 * 60)
     games: dict[int, GameInstallState] = Field(default_factory=dict)   # approved games by catalogue id: where each stands on this PC
     disk_free_gb: float | None = Field(default=None, ge=0)              # free space on the drive games go to
+    computer: str = Field(default="", max_length=64)                    # Windows' computer name, for Family & Devices
 
 
 class KidRequest(BaseModel):
@@ -328,6 +365,8 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "family": family_for(db, settings, kid),
         "family_voice": family_settings(db)["voice"],
         "timezone": settings.timezone,   # the PC's clock follows the hub, which decides "today" and bedtime
+        # Skylight chore points he can spend on extra time (None when Skylight isn't linked for him)
+        "points": skylight.offer(db, kid.id, rules.day_key(rules.local_now(settings.timezone)), st.lock_reason, st.minutes_to_stop),
     }
 
 
@@ -356,11 +395,39 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
              (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
     st = today_state(db, settings, kid, now)
     game_id = hb.game_id if hb.game_id is not None and db.one("SELECT 1 FROM games WHERE id=?", (hb.game_id,)) else None
+    if game_id is not None:
+        # Per-game play: when he last played it (home screen order, "Played yesterday") and his minutes in it.
+        counted = int(hb.active and counted_at == now_ts)
+        db.x("""INSERT INTO game_play(kid_id,game_id,minutes,last_at) VALUES(?,?,?,?)
+                ON CONFLICT(kid_id,game_id) DO UPDATE SET minutes = minutes + excluded.minutes, last_at = excluded.last_at""",
+             (kid.id, game_id, counted, now.isoformat()))
+    if hb.computer.strip():
+        db.x("""INSERT INTO devices(kid_id,computer,first_seen,last_seen) VALUES(?,?,?,?)
+                ON CONFLICT(kid_id,computer) DO UPDATE SET last_seen=excluded.last_seen""",
+             (kid.id, hb.computer.strip(), now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds")))
+    if hb.running and hb.active:
+        track_session(db, kid.id, "play", hb.running[:80], now)
+    if hb.voice and not st.locked:
+        track_session(db, kid.id, "voice", hb.voice, now)
     db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked,game_id,voice) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(kid_id) DO UPDATE SET seen_at=excluded.seen_at, running=excluded.running,
             counted_at=excluded.counted_at, locked=excluded.locked, game_id=excluded.game_id, voice=excluded.voice""",
          (kid.id, now.isoformat(), hb.running, counted_at, int(st.locked), game_id, hb.voice if not st.locked else ""))
     return {"time": st.__dict__}
+
+
+SESSION_GAP = timedelta(minutes=3)   # check-ins come every minute or so; a longer gap starts a new stretch
+
+
+def track_session(db: DB, kid_id: str, kind: str, what: str, now: datetime) -> None:
+    """Grow the kid's current stretch of play (or of a voice call), or start a new one. Feeds Activity:
+    "Played Minecraft 3:10 to 3:55 PM", "Voice call with friends, 25 min"."""
+    last = db.one("SELECT id, what, ended_at FROM sessions WHERE kid_id=? AND kind=? ORDER BY id DESC LIMIT 1", (kid_id, kind))
+    if last and last["what"] == what and now - datetime.fromisoformat(last["ended_at"]) <= SESSION_GAP:
+        db.x("UPDATE sessions SET ended_at=? WHERE id=?", (now.isoformat(timespec="seconds"), last["id"]))
+    else:
+        at = now.isoformat(timespec="seconds")
+        db.x("INSERT INTO sessions(kid_id,kind,what,started_at,ended_at) VALUES(?,?,?,?,?)", (kid_id, kind, what, at, at))
 
 
 def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None:
@@ -498,8 +565,20 @@ class Event(BaseModel):
 @app.post("/api/device/events", status_code=204)
 def device_events(events: list[Event], kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
     for e in events[:100]:
+        if e.kind in SAME_AS_LAST_SKIPPED:
+            last = db.one("SELECT detail FROM events WHERE kid_id=? AND kind=? ORDER BY at DESC, id DESC LIMIT 1", (kid.id, e.kind))
+            if last and last["detail"] == e.detail:
+                continue   # the helper says this on every start; only a change is news
         db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
+
+
+WEB_FILTER_WORDS = {"cloudflare_family": "family filter (blocks adult and harmful sites)", "adguard": "home network filter (AdGuard)",
+                    "none": "no filter"}
+# Events the PC repeats on every start (the web filter it set, the time zone it follows): kept once per change.
+SAME_AS_LAST_SKIPPED = {"web_filter", "timezone_set"}
+# Housekeeping no parent needs to read. Still stored (support and tests use them), never shown in Activity.
+HIDDEN_EVENTS = {"battlenet_products", "timezone_set"}
 
 
 @app.get("/api/device/update")
@@ -686,7 +765,8 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "flagged_today": db.one("SELECT COUNT(*) n FROM searches WHERE kid_id=? AND flagged=1 AND at >= ?",
                                     (kid.id, rules.day_key(rules.local_now(settings.timezone))))["n"],
         })
-    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline()}
+    held = db.one("SELECT COUNT(*) n FROM chat WHERE held!='' AND removed_by=''")["n"]
+    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline(), "held_pictures": held}
 
 
 def install_counts(pc: dict) -> dict:
@@ -1085,7 +1165,18 @@ def parent_auto_update(kid_id: str, body: AutoUpdateIn, parent: str = Depends(cu
 @app.get("/api/parent/kids/{kid_id}/activity")
 def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    events = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 500)))
+    rows = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC, id DESC LIMIT ?", (kid_id, min(limit, 500) * 4))
+    events, prev_filter = [], {}
+    for e in reversed(rows):            # oldest first, so a repeated web filter line is dropped after its first
+        if e["kind"] in HIDDEN_EVENTS:
+            continue
+        if e["kind"] == "web_filter":
+            if prev_filter.get("v") == e["detail"]:
+                continue
+            prev_filter["v"] = e["detail"]
+            e = {**e, "detail": WEB_FILTER_WORDS.get(e["detail"], e["detail"])}
+        events.append(e)
+    events = events[::-1][:min(limit, 500)]
     cmds = db.q("SELECT kind, arg, state, result, created_by, created_at, done_at FROM commands WHERE kid_id=? ORDER BY id DESC LIMIT 20", (kid_id,))
     return {"events": events, "commands": cmds}
 
@@ -1195,12 +1286,126 @@ class Game(BaseModel):
 
 @app.get("/api/parent/games")
 def parent_games(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """The catalogue, with who each game is approved for and, per kid, where it stands on his PC and how much he plays it."""
     games = db.q("SELECT * FROM games ORDER BY title")
     appr = db.q("SELECT * FROM approvals")
+    inst = {(r["kid_id"], r["game_id"]): r["state"] for r in db.q("SELECT kid_id, game_id, state FROM game_installs")}
+    play = {(r["kid_id"], r["game_id"]): r for r in db.q("SELECT kid_id, game_id, minutes, last_at FROM game_play")}
     for g in games:
         g["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == g["id"]]
+        g["kids"] = {k: {"install": inst.get((k, g["id"]), ""),
+                         "minutes": (play.get((k, g["id"])) or {}).get("minutes", 0),
+                         "last_played": (play.get((k, g["id"])) or {}).get("last_at", "")} for k in g["approved_for"]}
         with_art(g)
     return games
+
+
+# Ideas ----------------------------------------------------------------------
+
+def ideas_cap(db: DB, kid_id: str) -> str:
+    v = (db.one("SELECT value FROM kv WHERE key=?", (f"ideas_rating:{kid_id}",)) or {}).get("value")
+    return v if v in discover.CAPS else discover.DEFAULT_CAP
+
+
+_steam_quiet_until = 0.0
+
+
+async def ideas_with_details(db: DB) -> list[dict]:
+    """The idea list with Steam's own name, art, rating and blurb where the hub can get them (cached a day).
+    A slow or unreachable Steam only means the written-in title and rating are used."""
+    global _steam_quiet_until
+    ideas = discover.all_ideas()
+    quiet = time.time() < _steam_quiet_until   # Steam didn't answer lately: use what's cached, don't wait on it again
+
+    async def details(i: dict) -> dict:
+        if i["launcher"] != "steam":
+            return {}
+        if quiet:
+            row = db.one("SELECT value FROM kv WHERE key=?", (f"steam:{i['launch_ref']}",))
+            return json.loads(row["value"])["app"] if row else {}
+        try:
+            return await asyncio.wait_for(steam_app(i["launch_ref"], db), 5)
+        except Exception:
+            return {}
+    found = await asyncio.gather(*(details(i) for i in ideas))
+    if not quiet and not any(found):
+        _steam_quiet_until = time.time() + 600
+    for i, d in zip(ideas, found):
+        i["image_url"] = (d or {}).get("image_url") or (STEAM_ART.format(i["launch_ref"]) if i["launcher"] == "steam" else "")
+        i["title"] = (d or {}).get("name") or i["title"]
+        i["esrb"] = (d or {}).get("esrb") or i["esrb"]
+        i["description"] = (d or {}).get("description", "")
+        i["adult"] = bool((d or {}).get("adult"))
+        i["ref"] = f"{i['launcher']}:{i['launch_ref']}"
+    return [i for i in ideas if not i["adult"]]
+
+
+STORE_LABEL = {"steam": "Steam", "battlenet": "Battle.net", "gamepass": "PC Game Pass"}
+
+
+@app.get("/api/device/games/discover")
+async def device_game_discover(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Shelves for "Get more games": what his brothers have that he doesn't, then the ideas list, up to his
+    rating cap. Games already approved for him are left out; ones he already asked for say so (asked)."""
+    mine = {(g["launcher"], g["launch_ref"].lower()) for g in games_for(db, settings, kid.id)}
+    pending = db.q("SELECT detail, ref FROM requests WHERE kid_id=? AND kind='game' AND state='pending'", (kid.id,))
+    asked_refs = {r["ref"].lower() for r in pending if r["ref"]}
+    asked_titles = {r["detail"].lower() for r in pending}
+    gp = settings.decisions.game_pass_enabled
+
+    def hit(launcher: str, ref: str, title: str, image: str, esrb: str, description: str = "") -> dict:
+        r = f"{launcher}:{ref}"
+        return {"ref": r, "name": title, "image_url": image, "esrb": esrb, "description": description,
+                "store": STORE_LABEL.get(launcher, ""), "asked": r.lower() in asked_refs or title.lower() in asked_titles}
+
+    shelves = []
+    # The family's own catalogue first: approved for a brother, not for him. A parent already said yes once.
+    sibs = [k for k in settings.kids if k.id != kid.id]
+    if sibs and family_settings(db)["see"]:
+        rows = db.q(f"""SELECT DISTINCT g.* FROM games g JOIN approvals a ON a.game_id=g.id
+                        WHERE a.kid_id IN ({",".join("?" * len(sibs))}) ORDER BY g.title""", tuple(k.id for k in sibs))
+        fam = [hit(g["launcher"], g["launch_ref"], g["title"], with_art(g)["image_url"], g["rating"]) for g in rows
+               if (g["launcher"], g["launch_ref"].lower()) not in mine and g["launcher"] in STORE_LABEL
+               and (gp or g["launcher"] != "gamepass")]
+        if fam:
+            shelves.append({"title": f"{sibs[0].name} has these" if len(sibs) == 1 else "Your family has these", "games": fam[:12]})
+    cap = ideas_cap(db, kid.id)
+    if cap != "off":
+        seen = {(s["ref"].lower()) for sh in shelves for s in sh["games"]}
+        by_shelf: dict[str, list[dict]] = {}
+        for i in await ideas_with_details(db):
+            if (i["launcher"], i["launch_ref"].lower()) in mine or i["ref"].lower() in seen or not discover.rating_ok(i["esrb"], cap):
+                continue
+            by_shelf.setdefault(i["shelf"], []).append(hit(i["launcher"], i["launch_ref"], i["title"], i["image_url"], i["esrb"], i["description"]))
+        shelves += [{"title": t, "games": g} for t, g in by_shelf.items() if g]
+    return {"cap": cap, "shelves": shelves}
+
+
+@app.get("/api/parent/games/ideas")
+async def parent_game_ideas(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The ideas list for the dashboard: each game with whether it's in the catalogue and who it's approved for,
+    plus each kid's rating cap (which ideas his screen shows)."""
+    cat = {(g["launcher"], g["launch_ref"].lower()): g["id"] for g in db.q("SELECT id, launcher, launch_ref FROM games")}
+    appr = db.q("SELECT kid_id, game_id FROM approvals")
+    out = []
+    for i in await ideas_with_details(db):
+        gid = cat.get((i["launcher"], i["launch_ref"].lower()))
+        i["game_id"] = gid
+        i["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == gid] if gid else []
+        i["store"] = STORE_LABEL.get(i["launcher"], "")
+        out.append(i)
+    return {"caps": {k.id: ideas_cap(db, k.id) for k in settings.kids}, "choices": discover.CAPS, "ideas": out}
+
+
+class IdeasCap(BaseModel):
+    rating: Literal["off", "E", "E10+", "T", "M"]
+
+
+@app.put("/api/parent/kids/{kid_id}/ideas")
+def parent_set_ideas_cap(kid_id: str, body: IdeasCap, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid_or_404(settings, kid_id)
+    db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (f"ideas_rating:{kid_id}", body.rating))
+    return {"rating": body.rating}
 
 
 @app.post("/api/parent/games", status_code=201)
@@ -1316,8 +1521,10 @@ def approve(db: DB, kid_id: str, gid: int) -> None:
     """Approve a game for a kid and put it on his PC's install list: it installs there by itself."""
     if not db.one("SELECT 1 FROM games WHERE id=?", (gid,)):
         raise HTTPException(404, "no such game")
-    db.x("""INSERT INTO approvals(kid_id,game_id,auto_install) VALUES(?,?,1)
-            ON CONFLICT(kid_id,game_id) DO UPDATE SET auto_install=1""", (kid_id, gid))
+    db.x("""INSERT INTO approvals(kid_id,game_id,auto_install,approved_at) VALUES(?,?,1,?)
+            ON CONFLICT(kid_id,game_id) DO UPDATE SET auto_install=1,
+            approved_at=CASE WHEN COALESCE(approved_at,'')='' THEN excluded.approved_at ELSE approved_at END""",
+         (kid_id, gid, datetime.now(timezone.utc).isoformat()))
     db.x("""INSERT INTO game_installs(kid_id,game_id,state) VALUES(?,?,'queued') ON CONFLICT(kid_id,game_id)
             DO UPDATE SET state=CASE WHEN state='installed' THEN state ELSE 'queued' END""", (kid_id, gid))
 
@@ -1447,6 +1654,8 @@ def voice_join(code: str, db: DB = Depends(get_db), settings: Settings = Depends
         raise HTTPException(403, "A parent needs to confirm this invite first.")
     kid = kid_or_404(settings, inv["kid_id"])
     room = f"room-{kid.id}"
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+         (kid.id, "friend_joined_voice", inv["friend_name"], rules.local_now(settings.timezone).isoformat(timespec="seconds")))
     # Identity is tied to the invite, so revoking it lets the hub kick that friend (see voice/README).
     return {"url": settings.livekit.url, "room": room, "kid_name": kid.name, "friend_name": inv["friend_name"],
             "token": livekit_token(settings, f"friend-{code[:8]}", inv["friend_name"], room, ttl=3 * 3600)}
@@ -1532,3 +1741,143 @@ def healthz(db: DB = Depends(get_db)):
     """The self-updater's health check (deploy/hub-autoupdate.sh): up, database readable, which version."""
     db.one("SELECT COUNT(*) AS n FROM sqlite_master")
     return {"ok": True, "version": hub_version()}
+
+
+# Skylight points ------------------------------------------------------------
+
+def _skylight_error(e: skylight.SkylightError):
+    raise HTTPException(400, str(e))
+
+
+@app.post("/api/device/points/buy")
+async def device_buy_time(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """He spends Skylight points on extra minutes: the points come off in Skylight first, then the minutes go on.
+    Straight away, no parent needed (Patrick's choice), up to the daily cap a parent set."""
+    cfg = skylight.load(db)
+    member = cfg["members"].get(kid.id)
+    if not skylight.linked(cfg) or not member:
+        raise HTTPException(400, "Points aren't set up. Ask Mom or Dad.")
+    try:
+        await skylight.balances(db, fresh=True)
+    except skylight.SkylightError:
+        pass
+    now = rules.local_now(settings.timezone)
+    st = today_state(db, settings, kid, now)
+    o = skylight.offer(db, kid.id, rules.day_key(now), st.lock_reason, st.minutes_to_stop)
+    if o is None:
+        raise HTTPException(400, "Can't reach Skylight right now. Try again in a minute.")
+    if not o["can_buy"]:
+        raise HTTPException(400, o["why"])
+    try:
+        await skylight.add_points(db, member, -o["price_points"])
+    except skylight.SkylightError:
+        raise HTTPException(400, "Can't reach Skylight right now. Your points weren't used.")
+    db.x("INSERT INTO grants(kid_id,day,minutes,by,until) VALUES(?,?,?,?,'')", (kid.id, rules.day_key(now), o["price_minutes"], skylight.BY))
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+         (kid.id, "points_spent", f"Bought {o['price_minutes']} min with {o['price_points']} Skylight points", now.isoformat()))
+    return {"minutes": o["price_minutes"], "points": o["price_points"], "balance": o["balance"] - o["price_points"]}
+
+
+@app.get("/api/parent/skylight")
+async def parent_skylight(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Skylight link status, the household's people (to match to the kids), balances, price and cap."""
+    cfg = skylight.load(db)
+    out = {k: cfg[k] for k in ("price_points", "price_minutes", "daily_cap", "members")}
+    out.update(linked=skylight.linked(cfg), frame_id=cfg.get("frame_id", ""), frames=[], people=[], balances={}, error="")
+    if not out["linked"]:
+        return out
+    try:
+        out["frames"] = await skylight.frames(db)
+        if not out["frame_id"] and out["frames"]:
+            cfg["frame_id"] = out["frame_id"] = out["frames"][0]["id"]
+            skylight.save(db, cfg)
+        if out["frame_id"]:
+            out["people"] = await skylight.people(db, out["frame_id"])
+            if not cfg["members"]:   # first time: match by name
+                for k in settings.kids:
+                    hit = next((p for p in out["people"] if p["name"].strip().lower().startswith(k.name.lower())), None)
+                    if hit:
+                        cfg["members"][k.id] = hit["id"]
+                skylight.save(db, cfg)
+                out["members"] = cfg["members"]
+            out["balances"] = await skylight.balances(db, fresh=True)
+            out["error"] = skylight._balances["error"]
+    except skylight.SkylightError as e:
+        out["error"] = str(e)
+    now = rules.local_now(settings.timezone)
+    out["bought_today"] = {k.id: skylight.bought_today(db, k.id, rules.day_key(now)) for k in settings.kids}
+    return out
+
+
+class SkylightSignIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+def _store_tokens(db: DB, tokens: dict) -> None:
+    cfg = skylight.load(db)
+    cfg.update(tokens)
+    skylight.save(db, cfg)
+
+
+@app.post("/api/parent/skylight/signin")
+async def parent_skylight_signin(body: SkylightSignIn, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """The email and password go to Skylight and nowhere else; the hub keeps only Skylight's tokens."""
+    try:
+        r = await skylight.sign_in(body.email.strip(), body.password)
+    except skylight.SkylightError as e:
+        _skylight_error(e)
+    if "tokens" in r:
+        _store_tokens(db, r["tokens"])
+        return {"linked": True}
+    return {"code_needed": r["code_needed"]}
+
+
+class SkylightCode(BaseModel):
+    id: str = Field(max_length=64)
+    code: str = Field(max_length=20)
+
+
+@app.post("/api/parent/skylight/code")
+async def parent_skylight_code(body: SkylightCode, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    try:
+        r = await skylight.submit_code(body.id, body.code)
+    except skylight.SkylightError as e:
+        _skylight_error(e)
+    _store_tokens(db, r["tokens"])
+    return {"linked": True}
+
+
+class SkylightSettings(BaseModel):
+    frame_id: str | None = Field(default=None, max_length=40)
+    members: dict[str, str] | None = None
+    price_points: int | None = Field(default=None, ge=1, le=100000)
+    price_minutes: int | None = Field(default=None, ge=5, le=120)
+    daily_cap: int | None = Field(default=None, ge=0, le=240)
+
+
+@app.put("/api/parent/skylight")
+def parent_skylight_settings(body: SkylightSettings, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    cfg = skylight.load(db)
+    if body.members is not None:
+        for k in body.members:
+            kid_or_404(settings, k)
+        cfg["members"] = {k: v for k, v in body.members.items() if v}
+    for f in ("frame_id", "price_points", "price_minutes", "daily_cap"):
+        if getattr(body, f) is not None:
+            cfg[f] = getattr(body, f)
+    skylight.save(db, cfg)
+    return {k: cfg[k] for k in ("price_points", "price_minutes", "daily_cap", "members")}
+
+
+@app.delete("/api/parent/skylight")
+def parent_skylight_unlink(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    cfg = skylight.load(db)
+    for k in ("access_token", "refresh_token", "expires_at"):
+        cfg.pop(k, None)
+    skylight.save(db, cfg)
+    return {}
+
+
+from . import portal  # noqa: E402  (the new dashboard pages' endpoints; imports this module)
+app.include_router(portal.router)

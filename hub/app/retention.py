@@ -76,10 +76,10 @@ def clear(db: DB, kind: str, before: str = "9999", kid_id: str | None = None) ->
 
 
 def sweep_pictures(db: DB) -> int:
-    """Delete picture files no message points at any more."""
+    """Delete photo and clip files no message points at any more."""
     if not PICTURES_DIR or not PICTURES_DIR.exists():
         return 0
-    keep = {r["picture"] for r in db.q("SELECT picture FROM chat WHERE picture!=''")}
+    keep = {k for r in db.q("SELECT picture, video FROM chat WHERE picture!='' OR video!=''") for k in (r["picture"], r["video"]) if k}
     gone = 0
     for f in PICTURES_DIR.iterdir():
         if f.is_file() and f.name not in keep:
