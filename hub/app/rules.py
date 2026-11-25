@@ -71,15 +71,16 @@ def _end_of_day(now: datetime) -> datetime:
 
 
 def next_window_start(rule_for, now: datetime) -> datetime | None:
-    """First play-window start after now, looking up to a week ahead. rule_for(weekday) -> DayRule."""
+    """First play-window start after now, looking up to a week ahead. rule_for(date) -> DayRule (a date, so a
+    parent's change for one day, like a holiday, counts)."""
     for offset in range(8):
         day = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-        rule = rule_for(day.weekday())
+        rule = rule_for(day.date())
         if rule.daily_minutes <= 0:
             continue
         if not rule.windows:
             # An "any time" day opens when last night's bedtime ends, or at midnight if there was none.
-            prev = rule_for((day.weekday() - 1) % 7)
+            prev = rule_for((day - timedelta(days=1)).date())
             start = _at(day, DAY_START) if prev.bedtime else day
             if start > now:
                 return start
@@ -107,7 +108,7 @@ def compute(rule: DayRule, now: datetime, used: int, granted: int, late_until: d
     else:
         # No windows: any time before bedtime. But the small hours belong to the night before: if that
         # day had a bedtime, it holds until DAY_START. Without this, midnight unlocked the PC with a fresh day.
-        prev = rule_for((now.weekday() - 1) % 7) if rule_for else rule
+        prev = rule_for((now - timedelta(days=1)).date()) if rule_for else rule
         asleep = bool(prev.bedtime) and now < _at(now, DAY_START)
         stop = None if asleep else midnight
     if stop is not None:

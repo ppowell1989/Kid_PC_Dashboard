@@ -214,3 +214,38 @@ def test_long_or_fake_videos_are_refused(parent):
     assert parent.post(f"/join/{code}/chat/video", content=b"not a video at all").status_code == 422
     parent.put("/api/parent/chat-settings", json={"videos": False})
     assert parent.post(f"/join/{code}/chat/video", content=clip(1)).status_code == 403
+
+
+def test_picture_check_holds_a_flagged_picture_until_a_parent_lets_it_through(parent, monkeypatch):
+    """Patrick's choice: everything arrives straight away except what the local picture check flags."""
+    from app import screening
+    monkeypatch.setattr(screening, "check_file", lambda path: "The picture check found what looks like nudity")
+    code = invite(parent)
+    conv = next(c["id"] for c in parent.get("/api/device/chats", headers=ADAM).json()["convs"] if c["kind"] == "friend")
+    mid = parent.post(f"/join/{code}/chat/picture", json={"data": picture("JPEG"), "text": "lol"}).json()["id"]
+    mine = parent.get(f"/api/device/chat?conv={conv}", headers=ADAM).json()
+    m = next(x for x in (mine if isinstance(mine, list) else mine["messages"]) if x["id"] == mid)
+    assert m["text"] == screening_text() and not m["picture"]
+    assert parent.get(f"/api/device/chat/picture/{mid}", headers=ADAM).status_code == 404
+    held = parent.get("/api/parent/chat-held").json()["held"]
+    assert [h["id"] for h in held] == [mid] and held[0]["held"]
+    assert parent.get(f"/api/parent/chat/picture/{mid}").status_code == 200       # parents can look
+    # A parent's own picture is never checked.
+    assert not parent.get("/api/parent/chat-held").json()["held"][1:]
+    assert parent.post(f"/api/parent/chat/{mid}/release").status_code == 200
+    assert parent.get(f"/api/device/chat/picture/{mid}", headers=ADAM).status_code == 200
+    assert parent.get("/api/parent/chat-held").json()["held"] == []
+
+
+def screening_text():
+    from app.chat import HELD
+    return HELD
+
+
+def test_picture_check_lets_an_ordinary_picture_through(tmp_path):
+    import pytest
+    from app import screening
+    if not screening.available():
+        pytest.skip("nudenet not installed")
+    Image.new("RGB", (640, 480), (90, 140, 200)).save(tmp_path / "sky.jpg")
+    assert screening.check_file(tmp_path / "sky.jpg") == ""
