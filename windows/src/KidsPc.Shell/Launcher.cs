@@ -99,6 +99,14 @@ public static class Launcher
                         Process.Start(new ProcessStartInfo(Steam, "-silent") { UseShellExecute = false })?.Dispose();
                     });
                     break;
+                case "steam_shutdown" when File.Exists(Steam):
+                    // So a game a parent asked to remove can come off: Steam mustn't be holding its files.
+                    Process.Start(new ProcessStartInfo(Steam, "-shutdown") { UseShellExecute = false })?.Dispose();
+                    break;
+                case "steam_install_prompt" when !string.IsNullOrWhiteSpace(n.Arg) && n.Arg.All(char.IsDigit):
+                    // A free game that isn't on his Steam account yet: Steam's own Install box, which adds it in one press.
+                    OpenUri($"steam://install/{n.Arg}", "Steam");
+                    break;
                 case "battlenet_install" when File.Exists(BattleNet) && !string.IsNullOrWhiteSpace(n.Arg):
                     Process.Start(new ProcessStartInfo(BattleNet, $"--exec=\"install {n.Arg}\"") { UseShellExecute = false })?.Dispose();   // GUESS: Battle.net CLI verb
                     break;

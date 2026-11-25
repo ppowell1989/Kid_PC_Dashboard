@@ -20,7 +20,7 @@ def pc(parent, kid="adam"):
 
 def test_approving_a_game_puts_it_on_that_kids_install_list(parent):
     gid = add(parent)
-    assert parent.get("/api/device/rules", headers=ADAM).json()["installs"] == [{"game_id": gid, "retry": 0}]
+    assert parent.get("/api/device/rules", headers=ADAM).json()["installs"] == [{"game_id": gid, "retry": 0, "owned": None, "free": False}]
     assert parent.get("/api/device/rules", headers=BARRETT).json()["installs"] == []
 
 
@@ -82,7 +82,7 @@ def test_try_again_starts_over_and_ignores_reports_from_before(parent, client):
     beat(client, {str(gid): {"state": "no_space", "detail": "Only 2 GB free."}})
     assert pc(parent)["games"][0]["plain"]["label"] == "PC is full"
     parent.post(f"/api/parent/installs/adam/{gid}/retry")
-    assert parent.get("/api/device/rules", headers=ADAM).json()["installs"] == [{"game_id": gid, "retry": 1}]
+    assert parent.get("/api/device/rules", headers=ADAM).json()["installs"] == [{"game_id": gid, "retry": 1, "owned": None, "free": False}]
     beat(client, {str(gid): {"state": "no_space", "retry": 0}})      # a heartbeat already on its way
     assert pc(parent)["games"][0]["state"] == "queued"
     beat(client, {str(gid): {"state": "installing", "retry": 1}})
@@ -181,3 +181,86 @@ def test_a_stuck_install_carries_the_stores_own_words(parent, client):
     said = "AppID 291550 update canceled : Failed to start update (No subscription)"
     beat(client, {str(gid): {"state": "stuck", "stage": "Stuck", "store_log": said}})
     assert pc(parent)["games"][0]["store_log"] == said
+
+
+def test_remove_takes_a_game_off_the_pc_and_install_puts_it_back(parent, client):
+    gid = add(parent)
+    beat(client, {str(gid): {"state": "installed"}})
+    row = pc(parent)["games"][0]
+    assert row["plain"]["can_remove"]
+
+    parent.post(f"/api/parent/installs/adam/{gid}/remove")
+    r = parent.get("/api/device/rules", headers=ADAM).json()
+    assert r["installs"] == [] and r["uninstalls"] == [{"game_id": gid, "retry": 1}]
+    assert pc(parent)["games"][0]["plain"]["label"] == "Removing"
+
+    beat(client, {str(gid): {"state": "installed", "retry": 0}})            # from before Remove: ignored
+    assert pc(parent)["games"][0]["plain"]["label"] == "Removing"
+    beat(client, {str(gid): {"state": "removing", "stage": "Closing Steam", "retry": 1}})
+    assert pc(parent)["games"][0]["plain"]["label"] == "Closing Steam"
+    beat(client, {str(gid): {"state": "not_installed", "retry": 1}})
+    g = pc(parent)["games"][0]
+    assert not g["remove"] and g["plain"]["label"] == "Not on the PC" and g["plain"]["fix"] == "install"
+    act = parent.get("/api/parent/kids/adam/activity").json()["events"]
+    assert any(e["kind"] == "game_removed" for e in act)
+    assert parent.get("/api/device/rules", headers=ADAM).json()["uninstalls"] == []
+
+    parent.put(f"/api/parent/installs/adam/{gid}", json={"install": True})
+    r = parent.get("/api/device/rules", headers=ADAM).json()
+    assert r["uninstalls"] == [] and r["installs"][0]["game_id"] == gid and r["installs"][0]["retry"] == 2
+
+
+def test_steam_account_on_the_pc_and_owned_games_make_reasons_plain(parent, client, monkeypatch):
+    from app import steamlink
+    from app.main import get_db
+    asked = []
+
+    async def fake_owned(key, steamid):
+        asked.append((key, steamid))
+        return {"appids": ["620"], "count": 1}
+    monkeypatch.setattr(steamlink, "fetch_owned", fake_owned)
+
+    paid = add(parent, "Moving Out", "996770")
+    free = add(parent, "Brawlhalla", "291550")
+    portal = add(parent, "Portal 2", "620")
+    get_db().x("INSERT INTO kv(key,value) VALUES('steam:291550', ?)", ('{"_at": 9999999999, "app": {"free": true}}',))
+
+    # The PC says who Steam is signed in as; without a key the hub only shows that.
+    beat(client, {}, steam_account={"id": "76561198000000001", "name": "AdamPlays", "login": "adam_p"})
+    p = pc(parent)
+    assert "AdamPlays" in p["steam"]["text"] and "API key" in p["steam"]["text"]
+    assert all(g.get("owned") is None for g in p["games"])
+
+    # With a key, the hub reads the account's games and says which ones it doesn't own, before anything is tried.
+    r = parent.put("/api/parent/steam", json={"api_key": "A" * 32})
+    assert r.status_code == 200, r.text
+    assert asked == [("a" * 32, "76561198000000001")]
+    assert "api_key" not in r.text.lower().replace("has_key", "")
+    p = pc(parent)
+    assert "1 games" in p["steam"]["text"]
+    by = {g["game_id"]: g for g in p["games"]}
+    assert by[portal]["owned"] is True and by[paid]["owned"] is False
+    assert by[paid]["plain"]["label"] == "Not on his account" and "AdamPlays" in by[paid]["plain"]["text"]
+    assert by[free]["plain"]["label"] == "Add it on Steam" and "Install" in by[free]["plain"]["text"]
+    rules = {i["game_id"]: i for i in parent.get("/api/device/rules", headers=ADAM).json()["installs"]}
+    assert rules[free] == {"game_id": free, "retry": 0, "owned": False, "free": True}
+    assert rules[portal]["owned"] is True
+
+    # Once it is downloading (shared through Steam Family, say) the ownership words step aside.
+    beat(client, {str(paid): {"state": "installing", "stage": "Downloading", "done_bytes": 1, "total_bytes": 10}})
+    assert next(g for g in pc(parent)["games"] if g["game_id"] == paid)["plain"]["label"].startswith("Downloading")
+
+
+def test_a_parent_can_type_in_a_steam_account(parent, monkeypatch):
+    from app import steamlink
+
+    async def fake_owned(key, steamid):
+        return {"private": True}
+    monkeypatch.setattr(steamlink, "fetch_owned", fake_owned)
+    parent.put("/api/parent/steam", json={"api_key": "b" * 32})
+    r = parent.put("/api/parent/steam", json={"kid_id": "adam", "account": "https://steamcommunity.com/profiles/76561198000000002/"})
+    assert r.status_code == 200, r.text
+    adam = next(k for k in r.json()["kids"] if k["id"] == "adam")
+    assert adam["account"]["id"] == "76561198000000002" and adam["manual"] and adam["private"]
+    assert "Privacy" in adam["line"]["text"]
+    assert parent.put("/api/parent/steam", json={"kid_id": "adam", "account": "not a profile!"}).status_code == 400

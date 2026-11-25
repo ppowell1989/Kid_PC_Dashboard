@@ -75,8 +75,10 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
         {
             case "state":
                 // A game still being put on the PC is not ready to play, even if its folder is already there.
+                // Nor is one a parent asked to take off: it leaves his home screen straight away.
                 var installing = deployer.Captions();
-                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules).Where(id => !installing.ContainsKey(id)), deployer.Nudges(), installing,
+                var leaving = deployer.Removing();
+                return Ok(cache.Snapshot(library.InstalledGameIds(cache.Rules).Where(id => !installing.ContainsKey(id) && !leaving.Contains(id)), deployer.Nudges(), installing,
                     deployer.Percents(), deployer.SignInNeeded()));
 
             case "request":   // ask a parent for a game, more time, or a website

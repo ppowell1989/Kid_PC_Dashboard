@@ -161,6 +161,7 @@ async function loadFamilySwitches() {
 function loadConnections() {
   loadConsoles();
   if (typeof loadSkylight === "function") loadSkylight();
+  loadSteamLink();
   loadChatSettings().catch(oops);
   loadFamilySwitches().catch(oops);
 }
@@ -417,7 +418,8 @@ function installRow(g, p) {
   const t = g.plain, pct = t.percent ?? null;
   const btn = t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
     : t.fix === "install" ? `<button class="small" data-pcinstall="${g.game_id}" data-kid="${p.id}">Install</button>`
-    : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>` : "";
+    : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
+    : t.fix === "remove" || t.can_remove ? `<button class="ghost small" data-pcremove="${g.game_id}" data-kid="${p.id}" data-title="${esc(g.title)}">Remove from PC</button>` : "";
   return `<li class="inst t-${t.tone}">
     ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
     <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
@@ -435,6 +437,14 @@ function wireInstalls(root, reload) {
   root.querySelectorAll("[data-pcinstall]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Sending…";
     try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcinstall}`, { method: "PUT", body: { install: true } }); } catch (err) { oops(err); }
+    reload();
+  }));
+  root.querySelectorAll("[data-pcremove]").forEach((b) => (b.onclick = async () => {
+    const name = kidName(b.dataset.kid);
+    if (!await sheet({ title: `Take ${b.dataset.title} off ${name}'s PC?`, ok: "Remove", kind: "bad",
+      text: `It comes off within a few minutes (after his game, if he's playing), and his saved progress stays with the store. It stays approved, so Install puts it back. To stop him playing it, unapprove it in Games too.` })) return;
+    b.disabled = true; b.textContent = "Removing…";
+    try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcremove}/remove`, { method: "POST" }); } catch (err) { oops(err); }
     reload();
   }));
   root.querySelectorAll("[data-pchow]").forEach((b) => (b.onclick = () => {
@@ -484,6 +494,7 @@ async function loadPcs() {
       <h3>Devices</h3>${devices ? `<ul class="list devices">${devices}</ul>` : ""}
       ${apps ? `<h3>Kept on ${dv.length > 1 ? "each" : "the"} PC by the hub</h3><p class="hint">Nothing to set up here: the hub installs these by itself and keeps them working. Retry shows if one fails.</p>` : ""}
       ${apps || how ? `<div class="chips">${apps}${how}</div>` : ""}${newer ? `<div class="muted">${newer}</div>` : ""}
+      ${p.steam ? `<div class="steamline t-${p.steam.tone}">${esc(p.steam.text)}</div>` : ""}
       <div class="actions even">
         <button class="ghost small" data-setup="${p.id}">+ Add a device</button>
         ${k.online ? `<button class="ghost small" data-cmd="restart" data-kid="${p.id}">Restart</button><button class="ghost small" data-cmd="shutdown" data-kid="${p.id}">Shut down</button>` : ""}
@@ -554,7 +565,7 @@ $("#kidForm").onsubmit = async (e) => {
 const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
 // Where an approved game stands on one kid's PC, in a few words (the PCs tab has the detail and the fix).
 const INSTALL_WORDS = { installed: "On his PC", queued: "Installing soon", downloading: "Installing", installing: "Installing",
-  needs_signin: "Needs a sign-in", not_owned: "Not bought yet", no_space: "PC is full", failed: "Didn't install" };
+  needs_signin: "Needs a sign-in", not_owned: "Not bought yet", no_space: "PC is full", failed: "Didn't install", removing: "Being removed" };
 function ago(iso) {
   if (!iso) return "";
   const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 864e5);
@@ -868,6 +879,36 @@ async function loadSkylight(pending = null) {
   box.querySelector("[data-skyunlink]").onclick = async () => {
     if (!await sheet({ title: "Unlink Skylight?", text: "The kids stop seeing their points. Nothing changes in Skylight.", ok: "Unlink", kind: "bad" })) return;
     await api("/api/parent/skylight", { method: "DELETE" }); loadSkylight();
+  };
+}
+// Steam accounts: each PC says which account it's signed in to; with a Web API key the hub reads what that account
+// owns, so the PCs page can say "not on his account" before anyone waits on a download.
+async function loadSteamLink() {
+  let d;
+  try { d = await api("/api/parent/steam"); } catch { $("#steamLink").innerHTML = ""; return; }
+  const box = $("#steamLink");
+  box.innerHTML = `<div class="card"><h2 class="split">Steam accounts ${d.has_key ? `<button class="ghost small" data-steamunlink="1">Remove key</button>` : ""}</h2>
+    <p class="muted">Each PC tells the hub which Steam account is signed in. With a Steam Web API key the hub also reads which games that account owns,
+      so it can say when an approved game isn't on his account (and open Steam's Install box on his PC for free games). The key stays on your hub.</p>
+    ${d.has_key ? "" : `<form id="steamKey"><label>Steam Web API key <input name="key" autocomplete="off" spellcheck="false" placeholder="32 letters and numbers" required></label>
+      <p class="hint">Get one free at steamcommunity.com/dev/apikey, signed in to your own Steam account (any domain name works, e.g. home).</p>
+      <button class="wide">Save key</button></form>`}
+    <ul class="list">${d.kids.map((k) => `<li><div class="split"><b>${esc(k.name)}</b>
+        <button class="ghost small" data-steamacct="${esc(k.id)}" data-manual="${k.manual ? 1 : 0}">${k.manual ? "Change" : "Set account"}</button></div>
+        <div class="steamline t-${k.line.tone}">${esc(k.line.text)}</div></li>`).join("")}</ul></div>`;
+  const save = async (body) => { try { await api("/api/parent/steam", { method: "PUT", body }); } catch (err) { oops(err); } loadSteamLink(); };
+  if ($("#steamKey")) $("#steamKey").onsubmit = (e) => { e.preventDefault(); const b = e.target.querySelector("button"); b.disabled = true; b.textContent = "Checking with Steam…"; save({ api_key: new FormData(e.target).get("key").trim() }); };
+  box.querySelectorAll("[data-steamacct]").forEach((b) => (b.onclick = async () => {
+    const name = kidName(b.dataset.steamacct);
+    const v = await sheet({ title: `${name}'s Steam account`, input: { placeholder: "steamcommunity.com/id/… or /profiles/7656…" },
+      text: `Paste the link to his Steam profile. Leave it empty to go by whichever account is signed in on his PC.`, ok: "Save" });
+    if (v === null) return;
+    save({ kid_id: b.dataset.steamacct, account: v });
+  }));
+  const un = box.querySelector("[data-steamunlink]");
+  if (un) un.onclick = async () => {
+    if (!await sheet({ title: "Remove the Steam key?", text: "The hub stops checking which games each account owns. The accounts the PCs report still show.", ok: "Remove", kind: "bad" })) return;
+    await api("/api/parent/steam", { method: "DELETE" }); loadSteamLink();
   };
 }
 async function loadPlaytimes() { return loadScreenTime(); }

@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, retention, rules, updates, xbox
+from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, retention, rules, steamlink, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -68,6 +68,7 @@ async def lifespan(app: FastAPI):
             app.state.db, settings, lambda kid: today_state(app.state.db, settings, kid), settings.consoles.poll_seconds)))
     if pollers_on:
         tasks.append(asyncio.create_task(skylight.refresh_forever(app.state.db)))
+        tasks.append(asyncio.create_task(steamlink.keep_fresh(app.state.db, lambda: [k.id for k in settings.kids])))
     yield
     for t in tasks:
         t.cancel()
@@ -197,6 +198,15 @@ async def steam_app(appid: str, db: DB | None = None) -> dict:
     return app_
 
 
+def steam_app_cached(db: DB, appid: str) -> dict:
+    """Store details already in the cache, without asking Steam (for code that mustn't wait on the internet)."""
+    row = db.one("SELECT value FROM kv WHERE key=?", (f"steam:{appid}",))
+    try:
+        return json.loads(row["value"])["app"] if row else {}
+    except (ValueError, KeyError):
+        return {}
+
+
 async def steam_lookup(appid: str) -> dict:
     """Name and header image (kept for add_game)."""
     a = await steam_app(appid)
@@ -300,6 +310,13 @@ class GameInstallState(BaseModel):
     store_log: str = Field(default="", max_length=300)   # the store's own last log lines about this game, as it wrote them
 
 
+class SteamAccountIn(BaseModel):
+    """The Steam account signed in on the PC, read from Steam's own files there."""
+    id: str = Field(pattern=r"^7656\d{13}$")
+    name: str = Field(default="", max_length=64)     # display name
+    login: str = Field(default="", max_length=64)    # sign-in name
+
+
 class Heartbeat(BaseModel):
     running: str = ""            # title of the foreground game/app, "" when on the home screen
     active: bool = False         # true when a game or Chrome is in use (counts against time)
@@ -312,6 +329,7 @@ class Heartbeat(BaseModel):
     games: dict[int, GameInstallState] = Field(default_factory=dict)   # approved games by catalogue id: where each stands on this PC
     disk_free_gb: float | None = Field(default=None, ge=0)              # free space on the drive games go to
     computer: str = Field(default="", max_length=64)                    # Windows' computer name, for Family & Devices
+    steam_account: SteamAccountIn | None = None                         # who Steam on the PC is signed in as
 
 
 class KidRequest(BaseModel):
@@ -344,9 +362,24 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
             managed.append(launcher)
     # The PC's install list: approved games the hub puts there by itself, and the "Try again" round of each.
     ids = {g["id"] for g in games}
-    install = [{"game_id": r["game_id"], "retry": r["retry"] or 0} for r in db.q(
+    # For Steam games, whether his Steam account owns it (None: can't tell) and whether it's free: a free game that
+    # isn't on his account yet needs Steam's own Install box once, which the PC opens by itself.
+    by_id = {g["id"]: g for g in games}
+    owns = steamlink.owned(db, kid.id)
+
+    def item(r: dict) -> dict:
+        out = {"game_id": r["game_id"], "retry": r["retry"] or 0}
+        g = by_id[r["game_id"]]
+        if g["launcher"] == "steam":
+            out["owned"] = None if owns is None else g["launch_ref"] in owns
+            out["free"] = bool(steam_app_cached(db, g["launch_ref"]).get("free"))
+        return out
+    install = [item(r) for r in db.q(
         """SELECT a.game_id, i.retry FROM approvals a LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id
-           WHERE a.kid_id=? AND a.auto_install=1 ORDER BY a.game_id""", (kid.id,)) if r["game_id"] in ids]
+           WHERE a.kid_id=? AND a.auto_install=1 AND COALESCE(i.remove,0)=0 ORDER BY a.game_id""", (kid.id,)) if r["game_id"] in ids]
+    # Games a parent asked to take off the PC.
+    uninstall = [{"game_id": r["game_id"], "retry": r["retry"] or 0} for r in db.q(
+        "SELECT game_id, retry FROM game_installs WHERE kid_id=? AND remove=1 ORDER BY game_id", (kid.id,)) if r["game_id"] in ids]
     return {
         "kid": {"id": kid.id, "name": kid.name},
         "time": st.__dict__,
@@ -357,6 +390,7 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "game_pass_enabled": settings.decisions.game_pass_enabled,
         "managed_apps": managed,
         "installs": install,
+        "uninstalls": uninstall,
         "auto_update": auto_update(db, kid.id),
         "commands": db.q("SELECT id,kind,arg,created_by FROM commands WHERE kid_id=? AND state='pending' ORDER BY id", (kid.id,)),
         "pending_requests": db.q("SELECT id,kind,detail,state,created_at FROM requests WHERE kid_id=? AND state='pending'", (kid.id,)),
@@ -391,6 +425,8 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
                 ON CONFLICT(kid_id,app) DO UPDATE SET state=excluded.state, detail=excluded.detail, at=excluded.at""",
              (kid.id, app_name[:30], a.state, a.detail, now.isoformat()))
     save_install_reports(db, kid, hb, now)
+    if hb.steam_account:
+        steamlink.seen_on_pc(db, kid.id, hb.steam_account.model_dump())
     if hb.disk_free_gb is not None:
         db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
              (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
@@ -434,7 +470,7 @@ def track_session(db: DB, kid_id: str, kind: str, what: str, now: datetime) -> N
 def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None:
     """Store where each approved game stands on the PC, and put the moments that matter in the activity feed."""
     approved = {r["game_id"]: r for r in db.q(
-        """SELECT a.game_id, g.title, i.state, i.retry, i.stage, i.detail, i.done_bytes, i.at, i.changed_at, i.rate
+        """SELECT a.game_id, g.title, i.state, i.retry, i.stage, i.detail, i.done_bytes, i.at, i.changed_at, i.rate, i.remove
            FROM approvals a JOIN games g ON g.id=a.game_id
            LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id WHERE a.kid_id=?""", (kid.id,))}
     for gid, rep in list(hb.games.items())[:200]:
@@ -451,6 +487,11 @@ def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None
                 done_bytes=excluded.done_bytes, total_bytes=excluded.total_bytes, at=excluded.at,
                 stage=excluded.stage, changed_at=excluded.changed_at, rate=excluded.rate, store_log=excluded.store_log""",
              (kid.id, gid, rep.state, rep.detail, rep.done_bytes, rep.total_bytes, now.isoformat(), rep.stage, changed_at, rate, rep.store_log))
+        if cur["remove"] and rep.state == "not_installed":
+            # Taken off the PC as a parent asked. It stays approved; Install puts it back.
+            db.x("UPDATE game_installs SET remove=0, retry=retry+1, state='not_installed' WHERE kid_id=? AND game_id=?", (kid.id, gid))
+            db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, "game_removed", cur["title"], now.isoformat()))
+            continue
         if rep.state != cur["state"] and cur["state"] is not None and rep.state in ("installed", "failed", "no_space", "not_owned", "needs_signin"):
             kind = "game_installed" if rep.state == "installed" else "game_install_" + ("failed" if rep.state == "failed" else rep.state)
             detail = f"{cur['title']}{': ' + rep.detail if rep.detail and rep.state != 'installed' else ''}"[:300]
@@ -1193,16 +1234,23 @@ def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
     on = installs.online(s["seen_at"] if s else None, now)
     launchers = {a["app"]: a for a in db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=?", (kid.id,))}
     rows = db.q("""SELECT g.id AS game_id, g.title, g.launcher, g.launch_ref, g.image_url, a.auto_install AS install,
-                          i.state, i.detail, i.done_bytes, i.total_bytes, i.at, i.retry, i.stage, i.changed_at, i.rate, i.store_log
+                          i.state, i.detail, i.done_bytes, i.total_bytes, i.at, i.retry, i.stage, i.changed_at, i.rate, i.store_log, i.remove
                    FROM approvals a JOIN games g ON g.id=a.game_id
                    LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id
                    WHERE a.kid_id=? ORDER BY g.title""", (kid.id,))
     if not settings.decisions.game_pass_enabled:
         rows = [r for r in rows if r["launcher"] != "gamepass"]
     games = []
+    acct = steamlink.account(db, kid.id)
+    owns = steamlink.owned(db, kid.id)
     for r in rows:
         r = with_art(r)
         r["install"] = bool(r["install"])
+        r["remove"] = bool(r["remove"])
+        if r["launcher"] == "steam":
+            r["owned"] = None if owns is None else r["launch_ref"] in owns
+            r["free"] = bool(steam_app_cached(db, r["launch_ref"]).get("free"))
+            r["steam_name"] = (acct or {}).get("name") or (acct or {}).get("login") or ""
         r["state"] = r["state"] or ("queued" if r["install"] else "not_installed")
         r["plain"] = installs.plain(r, kid.name, on, launchers.get(r["launcher"]))
         r["plain"]["since"] = installs.since(r, now)
@@ -1212,6 +1260,7 @@ def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
             "disk_free_gb": float(free) if free else None,
             "launchers": [{"app": k, "state": v["state"], "detail": v["detail"]} for k, v in sorted(launchers.items())
                           if k in ("steam", "battlenet", "chrome")],
+            "steam": installs.steam_line(acct, steamlink.owned_info(db, kid.id), steamlink.has_key(db), kid.name),
             "games": games}
 
 
@@ -1260,6 +1309,67 @@ def parent_set_install(kid_id: str, gid: int, body: InstallIn, parent: str = Dep
     else:
         db.x("UPDATE approvals SET auto_install=0 WHERE kid_id=? AND game_id=?", (kid.id, gid))
     return {"install": body.install}
+
+
+@app.post("/api/parent/installs/{kid_id}/{gid}/remove")
+def parent_remove_install(kid_id: str, gid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Take a game off the PC, the way an IT office pulls software back. It stays approved: Install puts it back."""
+    kid = kid_or_404(settings, kid_id)
+    if not db.one("SELECT 1 FROM approvals WHERE kid_id=? AND game_id=?", (kid.id, gid)):
+        raise HTTPException(404, "that game isn't approved for him")
+    db.x("UPDATE approvals SET auto_install=0 WHERE kid_id=? AND game_id=?", (kid.id, gid))
+    db.x("""INSERT INTO game_installs(kid_id,game_id,state,remove) VALUES(?,?,'removing',1) ON CONFLICT(kid_id,game_id)
+            DO UPDATE SET remove=1, retry=retry+1, state='removing', detail='', stage='', done_bytes=0, total_bytes=0""", (kid.id, gid))
+    return installs_for(db, settings, kid, rules.local_now(settings.timezone))
+
+
+# Steam accounts: which account each PC uses, and what it owns -------------------------------
+
+class SteamLinkIn(BaseModel):
+    api_key: str | None = Field(default=None, pattern=r"^[A-Fa-f0-9]{32}$")   # a Steam Web API key is 32 hex digits
+    kid_id: str | None = None
+    account: str | None = Field(default=None, max_length=200)   # profile link, SteamID64 or custom URL name; "" = go by the PC
+
+
+def steam_link_view(db: DB, settings: Settings) -> dict:
+    kids = []
+    for k in settings.kids:
+        info = steamlink.owned_info(db, k.id)
+        kids.append({"id": k.id, "name": k.name, "account": steamlink.account(db, k.id),
+                     "manual": bool(steamlink.settings(db).get("ids", {}).get(k.id)),
+                     "owned_count": info.get("count"), "private": bool(info.get("private")), "error": info.get("error", ""),
+                     "line": installs.steam_line(steamlink.account(db, k.id), info, steamlink.has_key(db), k.name)})
+    return {"has_key": steamlink.has_key(db), "kids": kids}
+
+
+@app.get("/api/parent/steam")
+def parent_steam(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The Connections card: the Steam Web API key (never sent back), and each kid's Steam account and game count."""
+    return steam_link_view(db, settings)
+
+
+@app.put("/api/parent/steam")
+async def parent_set_steam(body: SteamLinkIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    if body.api_key:
+        steamlink.set_key(db, body.api_key.lower())
+    if body.kid_id is not None and body.account is not None:
+        kid = kid_or_404(settings, body.kid_id)
+        try:
+            steamlink.set_manual(db, kid.id, await steamlink.resolve(db, body.account) if body.account.strip() else None)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    for k in settings.kids:
+        await steamlink.refresh(db, k.id, force=True)
+    return steam_link_view(db, settings)
+
+
+@app.delete("/api/parent/steam")
+def parent_unlink_steam(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Forget the API key and the game lists. The accounts the PCs report keep showing."""
+    steamlink.set_key(db, None)
+    for k in settings.kids:
+        db.x("DELETE FROM kv WHERE key=?", (f"steam_owned:{k.id}",))
+    return steam_link_view(db, settings)
 
 
 @app.post("/api/parent/installs/{kid_id}/{gid}/retry")
@@ -1531,7 +1641,8 @@ def approve(db: DB, kid_id: str, gid: int) -> None:
             approved_at=CASE WHEN COALESCE(approved_at,'')='' THEN excluded.approved_at ELSE approved_at END""",
          (kid_id, gid, datetime.now(timezone.utc).isoformat()))
     db.x("""INSERT INTO game_installs(kid_id,game_id,state) VALUES(?,?,'queued') ON CONFLICT(kid_id,game_id)
-            DO UPDATE SET state=CASE WHEN state='installed' THEN state ELSE 'queued' END""", (kid_id, gid))
+            DO UPDATE SET state=CASE WHEN state='installed' THEN state ELSE 'queued' END,
+            retry=CASE WHEN remove=1 THEN retry+1 ELSE retry END, remove=0""", (kid_id, gid))
 
 
 @app.delete("/api/parent/games/{gid}")

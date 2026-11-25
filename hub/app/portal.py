@@ -169,6 +169,7 @@ EVENT_WORDS: dict[str, tuple[str, str]] = {
     "shell_restarted": ("blocked", "{k}'s screen was closed and was started again"),
     "game_install_started": ("installs", "Started installing {d}"),
     "game_installed": ("installs", "{d} installed"),
+    "game_removed": ("installs", "Taken off {k}'s PC: {d}"),
     "game_install_failed": ("installs", "Didn't install: {d}"),
     "game_install_no_space": ("installs", "{k}'s PC is full: {d}"),
     "game_install_not_owned": ("installs", "Not bought on his account yet: {d}"),
