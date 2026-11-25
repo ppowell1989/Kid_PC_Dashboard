@@ -560,6 +560,9 @@ button.linkish { display: block; margin: 10px auto 0; }
 .chip:disabled { opacity: .5; text-decoration: line-through; cursor: default; }
 .tagline.rating { background: var(--well); color: var(--text); }
 .card.hub.attn .status { color: var(--bad-text); }
+/* The hub card's line is a sentence or two, not a one-word status: let it wrap instead of widening the page on a phone. */
+.pc .pchead > div { min-width: 0; }
+.card.hub .status { white-space: normal; }
 
 /* A friend's page with more than one chat (a parent added them to a group) */
 .convpills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }

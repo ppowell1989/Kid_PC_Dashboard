@@ -16,6 +16,8 @@ jobs:
       - run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg   # chat video clips
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - name: Walk through every feature on a running hub
+        run: python tests/e2e_live.py local
 
   windows:
     runs-on: windows-latest

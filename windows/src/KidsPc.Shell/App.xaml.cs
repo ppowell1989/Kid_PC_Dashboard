@@ -31,7 +31,7 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, _) => Restart();
         if (DemoScene is null)
         {
-            // One screen per sign-in. The helper starts a new one if this one is ever closed (see ShellWatchdog),
+            // One screen per sign-in. The helper starts a new one if this one is ever closed (see KidLockdown in the helper),
             // and a crash restart starts one too; a copy that finds another already up steps aside.
             _single = new Mutex(false, "Local\\KidsPcShell");
             bool mine;
