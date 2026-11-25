@@ -21,7 +21,9 @@ public sealed record Game(
     int Id, string Title, string Launcher,
     [property: JsonPropertyName("launch_ref")] string LaunchRef,
     string Rating,
-    [property: JsonPropertyName("image_url")] string ImageUrl);
+    [property: JsonPropertyName("image_url")] string ImageUrl,
+    [property: JsonPropertyName("last_played")] string? LastPlayed = null,   // ISO time he last played it, "" = never
+    bool New = false);                                                     // approved lately and not played yet
 
 public sealed record WebRules(string Mode, [property: JsonPropertyName("allowed_sites")] List<string> AllowedSites, DnsRules? Dns = null, SearchRules? Search = null);
 
@@ -122,4 +124,9 @@ public sealed record ChatPicture(string Data);
 /// <summary>A match from the hub's kid-safe game search (Steam, Battle.net, PC Game Pass). Ref names the game and
 /// the store it would come from, "steam:620" or "battlenet:WoWC", and goes with his request to Mom or Dad.</summary>
 public sealed record GameHit(string Ref, string Name,
-    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null, string? Store = null);
+    [property: JsonPropertyName("image_url")] string ImageUrl, string? Esrb = null, string? Description = null, string? Store = null,
+    bool Asked = false);   // he already asked for it and a parent hasn't answered yet
+
+/// <summary>"Get more games" shelves: games his brother has, then hand-picked ideas up to the rating a parent set.</summary>
+public sealed record GameShelf(string Title, List<GameHit> Games);
+public sealed record Discover(string Cap, List<GameShelf> Shelves);

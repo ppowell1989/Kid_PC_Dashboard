@@ -142,6 +142,13 @@ CREATE TABLE IF NOT EXISTS game_installs (  -- where each approved game stands o
     at          TEXT NOT NULL DEFAULT '',         -- last report from the PC
     PRIMARY KEY (kid_id, game_id)
 );
+CREATE TABLE IF NOT EXISTS game_play (      -- per kid, per catalogue game: minutes played and when last played
+    kid_id  TEXT NOT NULL,
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    last_at TEXT NOT NULL,
+    PRIMARY KEY (kid_id, game_id)
+);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS setup_codes (    -- one command a parent pastes on a new PC to make it a kid's PC
     code       TEXT PRIMARY KEY,
@@ -203,6 +210,8 @@ MIGRATIONS = [
     # 1 = the hub puts this game on the kid's PC by itself. Approvals made before automatic installs existed
     # stay 0 (the kid installs them from Get more games), so an upgrade never starts a pile of big downloads.
     ("approvals", "auto_install", "INTEGER NOT NULL DEFAULT 0"),
+    ("approvals", "approved_at", "TEXT DEFAULT ''"),   # when a parent approved it, so his home screen can say "New"
+
     # Clearer install status: what the store is doing in a few words, when the state, stage or progress last moved
     # (not just when the PC last reported), and the download speed worked out from progress between reports.
     ("game_installs", "stage", "TEXT DEFAULT ''"),

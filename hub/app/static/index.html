@@ -93,8 +93,13 @@
 
   <section data-panel="games" hidden>
     <h2 class="title">Games</h2>
-    <ul id="games" class="list"></ul>
-    <div class="card">
+    <!-- Whose games: everyone, or one kid (his games, most played lately first); and a quick filter by name -->
+    <div class="gamebar">
+      <div id="gameWho" class="seg" role="tablist" aria-label="Whose games"></div>
+      <input id="gameFilter" type="search" placeholder="Find a game" autocomplete="off" aria-label="Find a game in the catalogue">
+    </div>
+    <ul id="games" class="gamegrid"></ul>
+    <div class="card addgame">
       <h2>Add a game</h2>
       <form id="gameSearch" class="row" role="search">
         <input name="q" type="search" placeholder="Type a game's name, like Minecraft" autocomplete="off" required>
@@ -120,6 +125,13 @@
           <button class="wide">Add game</button>
         </form>
       </details>
+    </div>
+    <!-- Ideas: the same shelves the kids browse on "Get more games", with a rating limit per kid -->
+    <div class="card ideas">
+      <h2>Ideas for the kids</h2>
+      <p class="muted lead">Well-liked games for kids, grouped by type. The kids can browse these on their PC and ask for one. Approve here and it installs by itself.</p>
+      <div id="ideaCaps" class="caps"></div>
+      <div id="ideas"></div>
     </div>
   </section>
 
