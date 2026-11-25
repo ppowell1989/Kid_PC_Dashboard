@@ -1888,7 +1888,8 @@ async def device_buy_time(kid: Kid = Depends(current_device), db: DB = Depends(g
         await skylight.add_points(db, member, -o["price_points"])
     except skylight.SkylightError:
         raise HTTPException(400, "Can't reach Skylight right now. Your points weren't used.")
-    db.x("INSERT INTO grants(kid_id,day,minutes,by,until) VALUES(?,?,?,?,'')", (kid.id, rules.day_key(now), o["price_minutes"], skylight.BY))
+    db.x("INSERT INTO grants(kid_id,day,minutes,by,until,points) VALUES(?,?,?,?,'',?)",
+         (kid.id, rules.day_key(now), o["price_minutes"], skylight.BY, o["price_points"]))
     db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
          (kid.id, "points_spent", f"Bought {o['price_minutes']} min with {o['price_points']} Skylight points", now.isoformat()))
     return {"minutes": o["price_minutes"], "points": o["price_points"], "balance": o["balance"] - o["price_points"]}
@@ -1922,7 +1923,43 @@ async def parent_skylight(parent: str = Depends(current_parent), db: DB = Depend
         out["error"] = str(e)
     now = rules.local_now(settings.timezone)
     out["bought_today"] = {k.id: skylight.bought_today(db, k.id, rules.day_key(now)) for k in settings.kids}
+    out["purchases"] = {k.id: skylight.purchases(db, k.id, rules.day_key(now)) for k in settings.kids}
     return out
+
+
+class SkylightGiveBack(BaseModel):
+    kid_id: str = Field(min_length=1, max_length=40)
+    grant_id: int | None = None      # which purchase; default his newest one today
+
+
+@app.post("/api/parent/skylight/giveback")
+async def parent_skylight_giveback(body: SkylightGiveBack, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                                   settings: Settings = Depends(get_settings)):
+    """Undo a purchase: the points go back in Skylight first, then the bought minutes come off his day."""
+    kid = kid_or_404(settings, body.kid_id)
+    cfg = skylight.load(db)
+    member = cfg["members"].get(kid.id)
+    if not skylight.linked(cfg) or not member:
+        raise HTTPException(400, f"Skylight isn't linked for {kid.name}.")
+    day = rules.day_key(rules.local_now(settings.timezone))
+    bought = skylight.purchases(db, kid.id, day)
+    g = next((b for b in bought if body.grant_id in (None, b["id"])), None)
+    if not g:
+        raise HTTPException(404, f"{kid.name} hasn't bought any time with points today.")
+    points = g["points"] or cfg["price_points"]   # purchases from before points were recorded paid the price of the day
+    try:
+        await skylight.add_points(db, member, points)
+    except skylight.SkylightError as e:
+        raise HTTPException(400, f"{e} Nothing was changed.")
+    db.x("DELETE FROM grants WHERE id=?", (g["id"],))
+    now = rules.local_now(settings.timezone)
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+         (kid.id, "points_returned", f"{parent} gave back {points} Skylight points and took off {g['minutes']} min", now.isoformat()))
+    try:
+        bal = (await skylight.balances(db, fresh=True)).get(member)
+    except skylight.SkylightError:
+        bal = None
+    return {"points": points, "minutes": g["minutes"], "balance": bal}
 
 
 class SkylightSignIn(BaseModel):

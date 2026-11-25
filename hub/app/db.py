@@ -281,6 +281,7 @@ MIGRATIONS = [
     ("console_players", "enforce", "INTEGER NOT NULL DEFAULT 0"),  # 1 = block his Xbox when he is locked on the hub
     ("console_players", "blocked", "INTEGER NOT NULL DEFAULT 0"),  # Xbox blocked right now, as last read or set
     ("console_players", "hub_block", "TEXT DEFAULT ''"),          # until when the hub blocked it ('' = hub didn't)
+    ("grants", "points", "INTEGER NOT NULL DEFAULT 0"),           # Skylight points paid for these minutes (0 = not bought)
 ]
 
 

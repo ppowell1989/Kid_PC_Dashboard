@@ -866,7 +866,9 @@ async function loadSkylight(pending = null) {
     ${d.frames.length > 1 ? `<label>Household <select id="skyFrame">${d.frames.map((f) => `<option value="${esc(f.id)}" ${f.id === d.frame_id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
     <ul class="list">${state.kids.map((k) => { const m = d.members[k.id], bal = m ? d.balances[m] : null;
       return `<li class="split"><span><b>${esc(k.name)}</b> <span class="muted">${bal != null ? `${bal} points` : m ? "points not read yet" : ""}${d.bought_today?.[k.id] ? ` · bought ${fmtMin(d.bought_today[k.id])} today` : ""}</span></span>
-        <select data-skykid="${esc(k.id)}" aria-label="${esc(k.name)} in Skylight">${opts(m)}</select></li>`; }).join("")}</ul>
+        <select data-skykid="${esc(k.id)}" aria-label="${esc(k.name)} in Skylight">${opts(m)}</select></li>
+        ${(d.purchases?.[k.id] || []).map((b) => `<li class="split sub"><span class="muted">Bought ${fmtMin(b.minutes)} for ${b.points || d.price_points} points</span>
+          <button class="ghost small" data-skyback="${esc(k.id)}" data-grant="${b.id}" data-pts="${b.points || d.price_points}" data-min="${b.minutes}" data-name="${esc(k.name)}">Give back</button></li>`).join("")}`; }).join("")}</ul>
     <div class="row prices">
       <label><input id="skyPts" type="number" min="1" value="${d.price_points}"> points buy</label>
       <label><input id="skyMin" type="number" min="5" max="120" step="5" value="${d.price_minutes}"> minutes</label>
@@ -876,7 +878,14 @@ async function loadSkylight(pending = null) {
   box.querySelectorAll("[data-skykid]").forEach((s) => (s.onchange = () => save({ members: Object.fromEntries([...box.querySelectorAll("[data-skykid]")].map((x) => [x.dataset.skykid, x.value])) })));
   if ($("#skyFrame")) $("#skyFrame").onchange = (e) => save({ frame_id: e.target.value, members: {} });
   ["#skyPts", "#skyMin", "#skyCap"].forEach((id) => ($(id).onchange = () => save({ price_points: +$("#skyPts").value, price_minutes: +$("#skyMin").value, daily_cap: +$("#skyCap").value })));
-  box.querySelector("[data-skyunlink]").onclick = async () => {
+  box.querySelectorAll("[data-skyback]").forEach((b) => (b.onclick = async () => {
+    const { skyback: kid, grant, pts, min, name } = b.dataset;
+    if (!await sheet({ title: `Give ${name} his ${pts} points back?`, text: `The points go back in Skylight and the ${fmtMin(+min)} he bought come off today's time. If he's already used them, his PC may lock.`, ok: "Give back" })) return;
+    b.disabled = true;
+    try { await api("/api/parent/skylight/giveback", { method: "POST", body: { kid_id: kid, grant_id: +grant } }); } catch (err) { oops(err); }
+    loadSkylight();
+  }));
+    box.querySelector("[data-skyunlink]").onclick = async () => {
     if (!await sheet({ title: "Unlink Skylight?", text: "The kids stop seeing their points. Nothing changes in Skylight.", ok: "Unlink", kind: "bad" })) return;
     await api("/api/parent/skylight", { method: "DELETE" }); loadSkylight();
   };
