@@ -423,13 +423,79 @@ async function loadPcs() {
 }
 
 const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
+// Where an approved game stands on one kid's PC, in a few words (the PCs tab has the detail and the fix).
+const INSTALL_WORDS = { installed: "On his PC", queued: "Installing soon", downloading: "Installing", installing: "Installing",
+  needs_signin: "Needs a sign-in", not_owned: "Not bought yet", no_space: "PC is full", failed: "Didn't install" };
+function ago(iso) {
+  if (!iso) return "";
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 864e5);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : days < 7 ? new Date(iso).toLocaleDateString([], { weekday: "long" }) : `${days} days ago`;
+}
+// No store art (Battle.net, by hand): the game's first letter on a colour picked from its name.
+function cover(g, cls = "cover") {
+  if (g.image_url) return `<img class="${cls}" src="${esc(g.image_url)}" alt="" loading="lazy" data-l="${esc((g.title || "?")[0])}"
+    onerror="this.replaceWith(Object.assign(document.createElement('div'), { className: this.className + ' noart', textContent: this.dataset.l }))">`;
+  const hue = [...(g.title || "")].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return `<div class="${cls} noart" style="--h:${hue}">${esc((g.title || "?")[0])}</div>`;
+}
+const games = { all: [], who: "", filter: "" };
 async function loadGames() {
-  const games = await api("/api/parent/games");
-  $("#games").innerHTML = games.map((g) => `<li>${g.image_url ? `<img class="art" src="${esc(g.image_url)}" alt="" loading="lazy">` : ""}<b>${esc(g.title)}</b> ${g.rating ? `<span class="tagline rating">${esc(g.rating)}</span>` : ""} <span class="muted">${STORE[g.launcher] || g.launcher}</span>
-    <div class="actions">${state.kids.map((k) => `<label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${g.approved_for.includes(k.id) ? "checked" : ""}> ${esc(k.name)}</label>`).join("")}
-    <button class="ghost small" data-delgame="${g.id}">Remove</button></div></li>`).join("") || `<li class="muted">Catalogue is empty.</li>`;
-  document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = () => api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } })));
-  document.querySelectorAll("[data-delgame]").forEach((b) => (b.onclick = async () => { await api(`/api/parent/games/${b.dataset.delgame}`, { method: "DELETE" }); loadGames(); }));
+  games.all = await api("/api/parent/games");
+  renderGames();
+  loadIdeas().catch(() => {});
+}
+function renderGames() {
+  $("#gameWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
+    .map(([id, name]) => `<button type="button" class="${games.who === id ? "on" : ""}" data-who="${esc(id)}">${esc(name)}</button>`).join("");
+  document.querySelectorAll("[data-who]").forEach((b) => (b.onclick = () => { games.who = b.dataset.who; renderGames(); }));
+  const f = games.filter.toLowerCase();
+  let list = games.all.filter((g) => (!games.who || g.approved_for.includes(games.who)) && (!f || g.title.toLowerCase().includes(f)));
+  if (games.who) list = [...list].sort((a, b) => (b.kids[games.who].last_played || "").localeCompare(a.kids[games.who].last_played || "") || a.title.localeCompare(b.title));
+  const kidRow = (g, k) => {
+    const on = g.approved_for.includes(k.id), st = g.kids[k.id] || {};
+    const words = !on ? "Not approved" : [INSTALL_WORDS[st.install] || "", st.minutes ? `${fmtMin(st.minutes)} played` : "Not played yet",
+      st.last_played ? `last ${ago(st.last_played)}` : ""].filter(Boolean).join(" · ");
+    const tone = !on ? "off" : ["needs_signin", "not_owned", "no_space", "failed"].includes(st.install) ? "attn" : "";
+    return `<li class="${tone}"><label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${on ? "checked" : ""}> ${esc(k.name)}</label><span>${esc(words)}</span></li>`;
+  };
+  $("#games").innerHTML = list.map((g) => `<li class="game">${cover(g)}
+      <div class="gbody"><b class="gtitle">${esc(g.title)}</b>
+        <div class="meta">${g.rating ? `<span class="tagline rating">${esc(g.rating)}</span>` : ""} ${esc(STORE[g.launcher] || g.launcher)}</div>
+        <ul class="perkid">${state.kids.map((k) => kidRow(g, k)).join("")}</ul>
+        <button class="ghost small" data-delgame="${g.id}" data-title="${esc(g.title)}">Remove from catalogue</button></div></li>`).join("")
+    || `<li class="muted">${games.all.length ? "No games match." : "No games yet. Search for one, or pick from the ideas below."}</li>`;
+  document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = async () => {
+    try { await api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } }); } catch (err) { oops(err); }
+    loadGames();
+  }));
+  document.querySelectorAll("[data-delgame]").forEach((b) => (b.onclick = async () => {
+    if (!await sheet({ title: `Remove ${b.dataset.title}?`, text: "It comes off the catalogue for every kid, and they can't start it from their home screen any more. It stays installed on their PCs.", ok: "Remove", kind: "bad" })) return;
+    try { await api(`/api/parent/games/${b.dataset.delgame}`, { method: "DELETE" }); } catch (err) { return oops(err); }
+    loadGames();
+  }));
+}
+$("#gameFilter").oninput = (e) => { games.filter = e.target.value.trim(); renderGames(); };
+
+const CAP_WORDS = { off: "Don't show ideas", E: "Rated E only", "E10+": "Up to E10+", T: "Up to T", M: "Up to M" };
+async function loadIdeas() {
+  const d = await api("/api/parent/games/ideas");
+  $("#ideaCaps").innerHTML = state.kids.map((k) => `<label>${esc(k.name)} sees
+    <select data-cap="${esc(k.id)}">${d.choices.map((c) => `<option value="${c}" ${d.caps[k.id] === c ? "selected" : ""}>${CAP_WORDS[c] || c}</option>`).join("")}</select></label>`).join("");
+  document.querySelectorAll("[data-cap]").forEach((s) => (s.onchange = async () => {
+    try { await api(`/api/parent/kids/${s.dataset.cap}/ideas`, { method: "PUT", body: { rating: s.value } }); } catch (err) { oops(err); }
+  }));
+  const shelves = [];
+  for (const i of d.ideas) { let sh = shelves.find((x) => x.title === i.shelf); if (!sh) shelves.push(sh = { title: i.shelf, ideas: [] }); sh.ideas.push(i); }
+  $("#ideas").innerHTML = shelves.map((sh) => `<h3>${esc(sh.title)}</h3><ul class="ideagrid">${sh.ideas.map((i) => `<li>${cover(i, "icover")}
+      <b>${esc(i.title)}</b><div class="meta">${i.esrb ? `<span class="tagline rating">${esc(i.esrb)}</span>` : ""} ${esc(i.store)}</div>
+      <div class="who">${state.kids.map((k) => i.approved_for.includes(k.id)
+        ? `<span class="yes">${esc(k.name)}</span>`
+        : `<button type="button" class="small ghost" data-idea="${esc(i.ref)}" data-kid="${esc(k.id)}">+ ${esc(k.name)}</button>`).join("")}</div></li>`).join("")}</ul>`).join("");
+  document.querySelectorAll("[data-idea]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = "Adding…";
+    try { await api("/api/parent/games/from-search", { method: "POST", body: { ref: b.dataset.idea, approved_for: [b.dataset.kid] } }); } catch (err) { b.disabled = false; return oops(err); }
+    loadGames();
+  }));
 }
 $("#gameForm").onsubmit = async (e) => {
   e.preventDefault();

@@ -316,6 +316,44 @@ button.small.attn { color: var(--bad-text); }
 .pc:not(.online) .avatar { background: var(--line-2); }
 .pc .pchead .avatar { width: 44px; height: 44px; font-size: 1.2rem; }
 
+/* Games: the catalogue as cards (cover, rating, and each kid's line: approved, on his PC, how much he plays it) */
+.gamebar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; }
+.gamebar .seg { margin: 0; flex: 1 1 260px; }
+.gamebar input { flex: 1 1 200px; margin: 0; }
+.gamegrid { list-style: none; padding: 0; margin: 0 0 18px; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.gamegrid > li.game { display: flex; flex-direction: column; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+.gamegrid > li.muted { grid-column: 1 / -1; text-align: center; padding: 18px; border: 2px dashed var(--line-2); border-radius: 14px; }
+.cover, .icover { display: block; width: 100%; aspect-ratio: 460 / 215; object-fit: cover; background: var(--well); }
+.noart { display: grid; place-items: center; color: #fff; font-size: 2.6rem; font-weight: 800;
+  background: linear-gradient(135deg, hsl(var(--h, 225) 70% 62%), hsl(calc(var(--h, 225) + 30) 65% 44%)); }
+.icover.noart { font-size: 1.8rem; }
+@media (max-width: 899px) { .gamegrid .cover { aspect-ratio: 460 / 130; } }   /* a strip of art on phones, so more games fit */
+.gbody { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.gtitle { font-size: 1.05rem; line-height: 1.25; }
+.meta { font-size: .82rem; color: var(--muted); }
+.perkid { list-style: none; padding: 0; margin: 8px 0 10px; display: grid; gap: 6px; }
+.perkid li { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 6px 10px; border-radius: 12px; background: var(--well); }
+.perkid li label { margin: 0; font-weight: 700; }
+.perkid li span { font-size: .8rem; color: var(--muted); text-align: right; }
+.perkid li.off { background: none; box-shadow: inset 0 0 0 1px var(--line); }
+.perkid li.attn span { color: var(--warn-text); }
+.gbody > button[data-delgame] { align-self: flex-start; margin-top: auto; }
+
+/* Ideas: small cards in rows per type, "+ Adam" approves for him */
+.ideas .lead { text-align: left; padding: 0; margin: 2px 0 12px; }
+.ideas h3 { font-size: 1rem; margin: 18px 0 10px; }
+.caps { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.caps label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .92rem; }
+.caps select { width: auto; margin: 0; min-height: 40px; }
+.ideagrid { list-style: none; padding: 0 0 8px; margin: 0 -4px; display: grid; gap: 12px; grid-auto-flow: column; grid-auto-columns: 160px;
+  overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: thin; }   /* one row per type: swipe for more */
+.ideagrid li { scroll-snap-align: start; padding: 0 4px; }
+.ideagrid li { display: flex; flex-direction: column; gap: 3px; font-size: .9rem; line-height: 1.25; }
+.ideagrid .icover { border-radius: 10px; margin-bottom: 4px; }
+.ideagrid .who { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ideagrid .who .yes { font-size: .78rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; }
+.ideagrid .who .yes::before { content: "\2713  "; }
+
 @media (min-width: 900px) {
   /* PCs: side by side, like the kids on Now */
   #pcs { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; align-items: start; }
@@ -363,9 +401,10 @@ button.small.attn { color: var(--bad-text); }
   }
   section[data-panel="games"] > .title, section[data-panel="voice"] > .title { grid-column: 1 / -1; }
   section[data-panel="games"] > form, section[data-panel="voice"] > form { position: sticky; top: 36px; margin: 0; }
-  #games { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; align-items: start; margin: 0; }
-  #games li { margin: 0; }
-  #games li.muted { grid-column: 1 / -1; }
+  section[data-panel="games"] > .gamebar, #games, section[data-panel="games"] > .ideas { grid-column: 1; }
+  section[data-panel="games"] > .addgame { grid-column: 2; grid-row: 2 / span 3; position: sticky; top: 36px; margin: 0; }
+  #games { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 18px; }
+  .ideagrid { grid-auto-columns: 180px; gap: 16px; }
 
   /* Web: filters in one row, searches and pages next to each other, allowed sites underneath */
   section[data-panel="web"]:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; align-items: start; }

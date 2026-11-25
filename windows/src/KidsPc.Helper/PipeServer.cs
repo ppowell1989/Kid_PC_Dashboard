@@ -105,6 +105,9 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 var found = await http.GetFromJsonAsync<List<GameHit>>($"/api/device/games/search?q={Uri.EscapeDataString(req.Detail)}", Json.Options, ct);
                 return Ok(found ?? []);
 
+            case "game_discover":   // "Get more games" shelves to browse; the hub applies the parent's rating cap
+                return Ok(await http.GetFromJsonAsync<Discover>("/api/device/games/discover", Json.Options, ct) ?? new Discover("", []));
+
             // Chat: the family chat (works while locked, so he can always reach Mom and Dad), his brothers' chat and one
             // per invited friend. The hub decides who may talk to whom and when; its "no" comes back as a plain sentence.
             case "chat_convs":

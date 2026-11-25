@@ -95,17 +95,36 @@
             <WrapPanel x:Name="FamilyCards"/>
           </StackPanel>
           <WrapPanel x:Name="HomeTiles"/>
+          <!-- Get more games: search first, then what's ready for him, what he asked for, and shelves to browse.
+               Shelves are built in MainWindow.Discover.cs. -->
           <StackPanel x:Name="CataloguePanel" Visibility="Collapsed">
-            <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,16" Text="Games Mom and Dad have approved"/>
-            <WrapPanel x:Name="CatalogueTiles"/>
-            <TextBlock Style="{DynamicResource Heading}" Margin="0,18,0,16" Text="Want something else? Search for it"/>
-            <StackPanel Orientation="Horizontal">
-              <TextBox x:Name="AskGameBox" Width="460" Height="52" FontSize="20" Padding="14,0" KeyDown="SearchKeyDown"/>
-              <Button Style="{DynamicResource Pill}" Margin="14,0,0,0" Content="Search" Click="SearchGames"/>
-              <Button Style="{DynamicResource Pill}" Margin="12,0,0,0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for it by name" Click="AskForGame"/>
+            <DockPanel Margin="0,0,0,6">
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="12,0,0,0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for it by name" Click="AskForGame"/>
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="14,0,0,0" Content="Search" Click="SearchGames"/>
+              <Grid>
+                <TextBox x:Name="AskGameBox" Height="52" FontSize="20" Padding="48,0,14,0" KeyDown="SearchKeyDown" TextChanged="SearchTextChanged" VerticalContentAlignment="Center"/>
+                <TextBlock Text="&#xE721;" FontFamily="{DynamicResource Icons}" FontSize="19" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="18,1,0,0" IsHitTestVisible="False"/>
+                <TextBlock x:Name="SearchHint" Text="Search for any game" FontSize="19" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="50,0,0,1" IsHitTestVisible="False"/>
+              </Grid>
+            </DockPanel>
+            <DockPanel x:Name="SearchHead" Visibility="Collapsed" Margin="2,12,0,0">
+              <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" FontSize="15" Padding="16,7,16,8" Background="{DynamicResource Well}" Foreground="{DynamicResource Text}" Content="Clear" Click="ClearSearch"/>
+              <TextBlock x:Name="SearchStatus" FontSize="18" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </DockPanel>
+            <WrapPanel x:Name="SearchResults" Margin="0,14,0,0"/>
+
+            <StackPanel x:Name="ReadyPanel" Margin="0,18,0,0">
+              <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,4" Text="Ready for you"/>
+              <TextBlock FontSize="16" Foreground="{DynamicResource Muted}" Margin="0,0,0,14" Text="Mom and Dad said yes to these."/>
+              <WrapPanel x:Name="CatalogueTiles"/>
             </StackPanel>
-            <TextBlock x:Name="SearchStatus" FontSize="18" Foreground="{DynamicResource Muted}" Margin="2,14,0,0" TextWrapping="Wrap"/>
-            <WrapPanel x:Name="SearchResults" Margin="0,16,0,0"/>
+
+            <StackPanel x:Name="AskedPanel" Visibility="Collapsed" Margin="0,10,0,10">
+              <TextBlock Style="{DynamicResource Heading}" Margin="0,0,0,12" Text="Waiting for Mom or Dad"/>
+              <WrapPanel x:Name="AskedChips"/>
+            </StackPanel>
+
+            <StackPanel x:Name="Shelves" Margin="0,10,0,0"/>
           </StackPanel>
         </StackPanel>
       </ScrollViewer>

@@ -13,7 +13,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, media, consoles, gamesearch, installs, retention, rules, updates, xbox
+from . import adguard, chat, media, consoles, discover, gamesearch, installs, retention, rules, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -200,11 +200,22 @@ async def steam_search(q: str, db: DB, kid_safe: bool) -> list[dict]:
     return out
 
 
+NEW_GAME_DAYS = 14   # an approved game he hasn't played yet says "New" on his home screen for this long
+
+
 def games_for(db: DB, settings: Settings, kid_id: str) -> list[dict]:
-    rows = db.q("""SELECT g.* FROM games g JOIN approvals a ON a.game_id = g.id
+    """His approved games, with when he last played each (last_played, ISO or "") and whether it is new to him."""
+    rows = db.q("""SELECT g.*, a.approved_at, p.last_at AS last_played, COALESCE(p.minutes, 0) AS minutes_played
+                   FROM games g JOIN approvals a ON a.game_id = g.id
+                   LEFT JOIN game_play p ON p.kid_id = a.kid_id AND p.game_id = g.id
                    WHERE a.kid_id=? ORDER BY g.title""", (kid_id,))
     if not settings.decisions.game_pass_enabled:
         rows = [r for r in rows if r["launcher"] != "gamepass"]
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NEW_GAME_DAYS)).isoformat()
+    for r in rows:
+        approved_at = r.pop("approved_at") or ""
+        r["last_played"] = r["last_played"] or ""
+        r["new"] = not r["last_played"] and approved_at >= cutoff
     return [with_art(r) for r in rows]
 
 
@@ -357,6 +368,12 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
              (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
     st = today_state(db, settings, kid, now)
     game_id = hb.game_id if hb.game_id is not None and db.one("SELECT 1 FROM games WHERE id=?", (hb.game_id,)) else None
+    if game_id is not None:
+        # Per-game play: when he last played it (home screen order, "Played yesterday") and his minutes in it.
+        counted = int(hb.active and counted_at == now_ts)
+        db.x("""INSERT INTO game_play(kid_id,game_id,minutes,last_at) VALUES(?,?,?,?)
+                ON CONFLICT(kid_id,game_id) DO UPDATE SET minutes = minutes + excluded.minutes, last_at = excluded.last_at""",
+             (kid.id, game_id, counted, now.isoformat()))
     db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked,game_id,voice) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(kid_id) DO UPDATE SET seen_at=excluded.seen_at, running=excluded.running,
             counted_at=excluded.counted_at, locked=excluded.locked, game_id=excluded.game_id, voice=excluded.voice""",
@@ -1196,12 +1213,126 @@ class Game(BaseModel):
 
 @app.get("/api/parent/games")
 def parent_games(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """The catalogue, with who each game is approved for and, per kid, where it stands on his PC and how much he plays it."""
     games = db.q("SELECT * FROM games ORDER BY title")
     appr = db.q("SELECT * FROM approvals")
+    inst = {(r["kid_id"], r["game_id"]): r["state"] for r in db.q("SELECT kid_id, game_id, state FROM game_installs")}
+    play = {(r["kid_id"], r["game_id"]): r for r in db.q("SELECT kid_id, game_id, minutes, last_at FROM game_play")}
     for g in games:
         g["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == g["id"]]
+        g["kids"] = {k: {"install": inst.get((k, g["id"]), ""),
+                         "minutes": (play.get((k, g["id"])) or {}).get("minutes", 0),
+                         "last_played": (play.get((k, g["id"])) or {}).get("last_at", "")} for k in g["approved_for"]}
         with_art(g)
     return games
+
+
+# Ideas ----------------------------------------------------------------------
+
+def ideas_cap(db: DB, kid_id: str) -> str:
+    v = (db.one("SELECT value FROM kv WHERE key=?", (f"ideas_rating:{kid_id}",)) or {}).get("value")
+    return v if v in discover.CAPS else discover.DEFAULT_CAP
+
+
+_steam_quiet_until = 0.0
+
+
+async def ideas_with_details(db: DB) -> list[dict]:
+    """The idea list with Steam's own name, art, rating and blurb where the hub can get them (cached a day).
+    A slow or unreachable Steam only means the written-in title and rating are used."""
+    global _steam_quiet_until
+    ideas = discover.all_ideas()
+    quiet = time.time() < _steam_quiet_until   # Steam didn't answer lately: use what's cached, don't wait on it again
+
+    async def details(i: dict) -> dict:
+        if i["launcher"] != "steam":
+            return {}
+        if quiet:
+            row = db.one("SELECT value FROM kv WHERE key=?", (f"steam:{i['launch_ref']}",))
+            return json.loads(row["value"])["app"] if row else {}
+        try:
+            return await asyncio.wait_for(steam_app(i["launch_ref"], db), 5)
+        except Exception:
+            return {}
+    found = await asyncio.gather(*(details(i) for i in ideas))
+    if not quiet and not any(found):
+        _steam_quiet_until = time.time() + 600
+    for i, d in zip(ideas, found):
+        i["image_url"] = (d or {}).get("image_url") or (STEAM_ART.format(i["launch_ref"]) if i["launcher"] == "steam" else "")
+        i["title"] = (d or {}).get("name") or i["title"]
+        i["esrb"] = (d or {}).get("esrb") or i["esrb"]
+        i["description"] = (d or {}).get("description", "")
+        i["adult"] = bool((d or {}).get("adult"))
+        i["ref"] = f"{i['launcher']}:{i['launch_ref']}"
+    return [i for i in ideas if not i["adult"]]
+
+
+STORE_LABEL = {"steam": "Steam", "battlenet": "Battle.net", "gamepass": "PC Game Pass"}
+
+
+@app.get("/api/device/games/discover")
+async def device_game_discover(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Shelves for "Get more games": what his brothers have that he doesn't, then the ideas list, up to his
+    rating cap. Games already approved for him are left out; ones he already asked for say so (asked)."""
+    mine = {(g["launcher"], g["launch_ref"].lower()) for g in games_for(db, settings, kid.id)}
+    pending = db.q("SELECT detail, ref FROM requests WHERE kid_id=? AND kind='game' AND state='pending'", (kid.id,))
+    asked_refs = {r["ref"].lower() for r in pending if r["ref"]}
+    asked_titles = {r["detail"].lower() for r in pending}
+    gp = settings.decisions.game_pass_enabled
+
+    def hit(launcher: str, ref: str, title: str, image: str, esrb: str, description: str = "") -> dict:
+        r = f"{launcher}:{ref}"
+        return {"ref": r, "name": title, "image_url": image, "esrb": esrb, "description": description,
+                "store": STORE_LABEL.get(launcher, ""), "asked": r.lower() in asked_refs or title.lower() in asked_titles}
+
+    shelves = []
+    # The family's own catalogue first: approved for a brother, not for him. A parent already said yes once.
+    sibs = [k for k in settings.kids if k.id != kid.id]
+    if sibs and family_settings(db)["see"]:
+        rows = db.q(f"""SELECT DISTINCT g.* FROM games g JOIN approvals a ON a.game_id=g.id
+                        WHERE a.kid_id IN ({",".join("?" * len(sibs))}) ORDER BY g.title""", tuple(k.id for k in sibs))
+        fam = [hit(g["launcher"], g["launch_ref"], g["title"], with_art(g)["image_url"], g["rating"]) for g in rows
+               if (g["launcher"], g["launch_ref"].lower()) not in mine and g["launcher"] in STORE_LABEL
+               and (gp or g["launcher"] != "gamepass")]
+        if fam:
+            shelves.append({"title": f"{sibs[0].name} has these" if len(sibs) == 1 else "Your family has these", "games": fam[:12]})
+    cap = ideas_cap(db, kid.id)
+    if cap != "off":
+        seen = {(s["ref"].lower()) for sh in shelves for s in sh["games"]}
+        by_shelf: dict[str, list[dict]] = {}
+        for i in await ideas_with_details(db):
+            if (i["launcher"], i["launch_ref"].lower()) in mine or i["ref"].lower() in seen or not discover.rating_ok(i["esrb"], cap):
+                continue
+            by_shelf.setdefault(i["shelf"], []).append(hit(i["launcher"], i["launch_ref"], i["title"], i["image_url"], i["esrb"], i["description"]))
+        shelves += [{"title": t, "games": g} for t, g in by_shelf.items() if g]
+    return {"cap": cap, "shelves": shelves}
+
+
+@app.get("/api/parent/games/ideas")
+async def parent_game_ideas(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """The ideas list for the dashboard: each game with whether it's in the catalogue and who it's approved for,
+    plus each kid's rating cap (which ideas his screen shows)."""
+    cat = {(g["launcher"], g["launch_ref"].lower()): g["id"] for g in db.q("SELECT id, launcher, launch_ref FROM games")}
+    appr = db.q("SELECT kid_id, game_id FROM approvals")
+    out = []
+    for i in await ideas_with_details(db):
+        gid = cat.get((i["launcher"], i["launch_ref"].lower()))
+        i["game_id"] = gid
+        i["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == gid] if gid else []
+        i["store"] = STORE_LABEL.get(i["launcher"], "")
+        out.append(i)
+    return {"caps": {k.id: ideas_cap(db, k.id) for k in settings.kids}, "choices": discover.CAPS, "ideas": out}
+
+
+class IdeasCap(BaseModel):
+    rating: Literal["off", "E", "E10+", "T", "M"]
+
+
+@app.put("/api/parent/kids/{kid_id}/ideas")
+def parent_set_ideas_cap(kid_id: str, body: IdeasCap, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    kid_or_404(settings, kid_id)
+    db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (f"ideas_rating:{kid_id}", body.rating))
+    return {"rating": body.rating}
 
 
 @app.post("/api/parent/games", status_code=201)
@@ -1317,8 +1448,10 @@ def approve(db: DB, kid_id: str, gid: int) -> None:
     """Approve a game for a kid and put it on his PC's install list: it installs there by itself."""
     if not db.one("SELECT 1 FROM games WHERE id=?", (gid,)):
         raise HTTPException(404, "no such game")
-    db.x("""INSERT INTO approvals(kid_id,game_id,auto_install) VALUES(?,?,1)
-            ON CONFLICT(kid_id,game_id) DO UPDATE SET auto_install=1""", (kid_id, gid))
+    db.x("""INSERT INTO approvals(kid_id,game_id,auto_install,approved_at) VALUES(?,?,1,?)
+            ON CONFLICT(kid_id,game_id) DO UPDATE SET auto_install=1,
+            approved_at=CASE WHEN COALESCE(approved_at,'')='' THEN excluded.approved_at ELSE approved_at END""",
+         (kid_id, gid, datetime.now(timezone.utc).isoformat()))
     db.x("""INSERT INTO game_installs(kid_id,game_id,state) VALUES(?,?,'queued') ON CONFLICT(kid_id,game_id)
             DO UPDATE SET state=CASE WHEN state='installed' THEN state ELSE 'queued' END""", (kid_id, gid))
 
