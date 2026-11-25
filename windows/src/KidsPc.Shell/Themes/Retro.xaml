@@ -44,6 +44,7 @@
   <LinearGradientBrush x:Key="FuelEmpty" StartPoint="0,0" EndPoint="1,0"><GradientStop Color="#C4102C" Offset="0"/><GradientStop Color="#FF4D5E" Offset="1"/></LinearGradientBrush>
 
   <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Bungee, Bahnschrift SemiBold, Segoe UI Black, Segoe UI</FontFamily>
+  <FontFamily x:Key="Headline">/KidsPcShell;component/Assets/Fonts/#Bungee, Bahnschrift SemiBold, Segoe UI Black, Segoe UI</FontFamily>
   <FontFamily x:Key="Body">Bahnschrift, Segoe UI Variable, Segoe UI</FontFamily>
   <FontFamily x:Key="TileTitleFont">Bahnschrift SemiBold, Segoe UI Semibold, Segoe UI</FontFamily>
 
