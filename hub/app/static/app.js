@@ -735,6 +735,55 @@ function daysBetween(a, b) {
   for (let d = parseDay(a); d <= end && out.length < 62; d.setDate(d.getDate() + 1)) out.push(iso(d));
   return out;
 }
+
+// Skylight: chore points from the family calendar, spent by the kids on extra time --------------
+async function loadSkylight(pending = null) {
+  let d;
+  try { d = await api("/api/parent/skylight"); } catch { $("#skylight").innerHTML = ""; return; }
+  const box = $("#skylight");
+  if (!d.linked) {
+    box.innerHTML = `<div class="card"><h2>Skylight chore points</h2>
+      <p class="muted">Link your Skylight calendar and the kids see their chore points on their PC, and can spend them on extra time. Your password goes to Skylight only; the hub keeps a sign-in token, not the password.</p>
+      ${pending ? `<form id="skyCode"><label>Skylight emailed you a 6-digit code <input name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+        <button class="wide">Finish linking</button></form>`
+      : `<form id="skySignIn"><label>Skylight email <input name="email" type="email" autocomplete="username" required></label>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="wide">Link Skylight</button></form>`}</div>`;
+    const done = (r) => (r.code_needed ? loadSkylight(r.code_needed) : loadSkylight());
+    if ($("#skySignIn")) $("#skySignIn").onsubmit = async (e) => {
+      e.preventDefault(); const f = new FormData(e.target), b = e.target.querySelector("button");
+      b.disabled = true; b.textContent = "Linking…";
+      try { done(await api("/api/parent/skylight/signin", { method: "POST", body: { email: f.get("email"), password: f.get("password") } })); }
+      catch (err) { b.disabled = false; b.textContent = "Link Skylight"; oops(err); }
+    };
+    if ($("#skyCode")) $("#skyCode").onsubmit = async (e) => {
+      e.preventDefault();
+      try { done(await api("/api/parent/skylight/code", { method: "POST", body: { id: pending, code: new FormData(e.target).get("code") } })); } catch (err) { oops(err); }
+    };
+    return;
+  }
+  const opts = (sel) => `<option value="">Not linked</option>` + d.people.map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  box.innerHTML = `<div class="card skylight"><h2 class="split">Skylight chore points <button class="ghost small" data-skyunlink="1">Unlink</button></h2>
+    <p class="muted">Each kid sees his points next to his time, and can buy extra time with them straight away, up to the daily limit.</p>
+    ${d.error ? `<div class="alert"><span>${esc(d.error)}</span></div>` : ""}
+    ${d.frames.length > 1 ? `<label>Household <select id="skyFrame">${d.frames.map((f) => `<option value="${esc(f.id)}" ${f.id === d.frame_id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
+    <ul class="list">${state.kids.map((k) => { const m = d.members[k.id], bal = m ? d.balances[m] : null;
+      return `<li class="split"><span><b>${esc(k.name)}</b> <span class="muted">${bal != null ? `${bal} points` : m ? "points not read yet" : ""}${d.bought_today?.[k.id] ? ` · bought ${fmtMin(d.bought_today[k.id])} today` : ""}</span></span>
+        <select data-skykid="${esc(k.id)}" aria-label="${esc(k.name)} in Skylight">${opts(m)}</select></li>`; }).join("")}</ul>
+    <div class="row prices">
+      <label><input id="skyPts" type="number" min="1" value="${d.price_points}"> points buy</label>
+      <label><input id="skyMin" type="number" min="5" max="120" step="5" value="${d.price_minutes}"> minutes</label>
+      <label>Up to <input id="skyCap" type="number" min="0" max="240" step="5" value="${d.daily_cap}"> min a day</label>
+    </div></div>`;
+  const save = async (body) => { try { await api("/api/parent/skylight", { method: "PUT", body }); } catch (err) { oops(err); } loadSkylight(); };
+  box.querySelectorAll("[data-skykid]").forEach((s) => (s.onchange = () => save({ members: Object.fromEntries([...box.querySelectorAll("[data-skykid]")].map((x) => [x.dataset.skykid, x.value])) })));
+  if ($("#skyFrame")) $("#skyFrame").onchange = (e) => save({ frame_id: e.target.value, members: {} });
+  ["#skyPts", "#skyMin", "#skyCap"].forEach((id) => ($(id).onchange = () => save({ price_points: +$("#skyPts").value, price_minutes: +$("#skyMin").value, daily_cap: +$("#skyCap").value })));
+  box.querySelector("[data-skyunlink]").onclick = async () => {
+    if (!await sheet({ title: "Unlink Skylight?", text: "The kids stop seeing their points. Nothing changes in Skylight.", ok: "Unlink", kind: "bad" })) return;
+    await api("/api/parent/skylight", { method: "DELETE" }); loadSkylight();
+  };
+}
 async function loadPlaytimes() { return loadScreenTime(); }
 async function loadScreenTime() {
   const [w, p] = await Promise.all([api(`/api/parent/screentime${pt.start ? `?start=${pt.start}` : ""}`), api("/api/parent/playtimes")]);

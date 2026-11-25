@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, media, consoles, discover, gamesearch, installs, retention, rules, updates, xbox
+from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, retention, rules, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -66,6 +66,8 @@ async def lifespan(app: FastAPI):
     if settings.consoles.enabled and pollers_on:
         tasks.append(asyncio.create_task(consoles.sync_forever(
             app.state.db, settings, lambda kid: today_state(app.state.db, settings, kid), settings.consoles.poll_seconds)))
+    if pollers_on:
+        tasks.append(asyncio.create_task(skylight.refresh_forever(app.state.db)))
     yield
     for t in tasks:
         t.cancel()
@@ -362,6 +364,8 @@ def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         "family": family_for(db, settings, kid),
         "family_voice": family_settings(db)["voice"],
         "timezone": settings.timezone,   # the PC's clock follows the hub, which decides "today" and bedtime
+        # Skylight chore points he can spend on extra time (None when Skylight isn't linked for him)
+        "points": skylight.offer(db, kid.id, rules.day_key(rules.local_now(settings.timezone)), st.lock_reason, st.minutes_to_stop),
     }
 
 
@@ -1732,6 +1736,142 @@ def healthz(db: DB = Depends(get_db)):
     """The self-updater's health check (deploy/hub-autoupdate.sh): up, database readable, which version."""
     db.one("SELECT COUNT(*) AS n FROM sqlite_master")
     return {"ok": True, "version": hub_version()}
+
+
+# Skylight points ------------------------------------------------------------
+
+def _skylight_error(e: skylight.SkylightError):
+    raise HTTPException(400, str(e))
+
+
+@app.post("/api/device/points/buy")
+async def device_buy_time(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """He spends Skylight points on extra minutes: the points come off in Skylight first, then the minutes go on.
+    Straight away, no parent needed (Patrick's choice), up to the daily cap a parent set."""
+    cfg = skylight.load(db)
+    member = cfg["members"].get(kid.id)
+    if not skylight.linked(cfg) or not member:
+        raise HTTPException(400, "Points aren't set up. Ask Mom or Dad.")
+    try:
+        await skylight.balances(db, fresh=True)
+    except skylight.SkylightError:
+        pass
+    now = rules.local_now(settings.timezone)
+    st = today_state(db, settings, kid, now)
+    o = skylight.offer(db, kid.id, rules.day_key(now), st.lock_reason, st.minutes_to_stop)
+    if o is None:
+        raise HTTPException(400, "Can't reach Skylight right now. Try again in a minute.")
+    if not o["can_buy"]:
+        raise HTTPException(400, o["why"])
+    try:
+        await skylight.add_points(db, member, -o["price_points"])
+    except skylight.SkylightError:
+        raise HTTPException(400, "Can't reach Skylight right now. Your points weren't used.")
+    db.x("INSERT INTO grants(kid_id,day,minutes,by,until) VALUES(?,?,?,?,'')", (kid.id, rules.day_key(now), o["price_minutes"], skylight.BY))
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+         (kid.id, "points_spent", f"Bought {o['price_minutes']} min with {o['price_points']} Skylight points", now.isoformat()))
+    return {"minutes": o["price_minutes"], "points": o["price_points"], "balance": o["balance"] - o["price_points"]}
+
+
+@app.get("/api/parent/skylight")
+async def parent_skylight(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Skylight link status, the household's people (to match to the kids), balances, price and cap."""
+    cfg = skylight.load(db)
+    out = {k: cfg[k] for k in ("price_points", "price_minutes", "daily_cap", "members")}
+    out.update(linked=skylight.linked(cfg), frame_id=cfg.get("frame_id", ""), frames=[], people=[], balances={}, error="")
+    if not out["linked"]:
+        return out
+    try:
+        out["frames"] = await skylight.frames(db)
+        if not out["frame_id"] and out["frames"]:
+            cfg["frame_id"] = out["frame_id"] = out["frames"][0]["id"]
+            skylight.save(db, cfg)
+        if out["frame_id"]:
+            out["people"] = await skylight.people(db, out["frame_id"])
+            if not cfg["members"]:   # first time: match by name
+                for k in settings.kids:
+                    hit = next((p for p in out["people"] if p["name"].strip().lower().startswith(k.name.lower())), None)
+                    if hit:
+                        cfg["members"][k.id] = hit["id"]
+                skylight.save(db, cfg)
+                out["members"] = cfg["members"]
+            out["balances"] = await skylight.balances(db, fresh=True)
+            out["error"] = skylight._balances["error"]
+    except skylight.SkylightError as e:
+        out["error"] = str(e)
+    now = rules.local_now(settings.timezone)
+    out["bought_today"] = {k.id: skylight.bought_today(db, k.id, rules.day_key(now)) for k in settings.kids}
+    return out
+
+
+class SkylightSignIn(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+def _store_tokens(db: DB, tokens: dict) -> None:
+    cfg = skylight.load(db)
+    cfg.update(tokens)
+    skylight.save(db, cfg)
+
+
+@app.post("/api/parent/skylight/signin")
+async def parent_skylight_signin(body: SkylightSignIn, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """The email and password go to Skylight and nowhere else; the hub keeps only Skylight's tokens."""
+    try:
+        r = await skylight.sign_in(body.email.strip(), body.password)
+    except skylight.SkylightError as e:
+        _skylight_error(e)
+    if "tokens" in r:
+        _store_tokens(db, r["tokens"])
+        return {"linked": True}
+    return {"code_needed": r["code_needed"]}
+
+
+class SkylightCode(BaseModel):
+    id: str = Field(max_length=64)
+    code: str = Field(max_length=20)
+
+
+@app.post("/api/parent/skylight/code")
+async def parent_skylight_code(body: SkylightCode, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    try:
+        r = await skylight.submit_code(body.id, body.code)
+    except skylight.SkylightError as e:
+        _skylight_error(e)
+    _store_tokens(db, r["tokens"])
+    return {"linked": True}
+
+
+class SkylightSettings(BaseModel):
+    frame_id: str | None = Field(default=None, max_length=40)
+    members: dict[str, str] | None = None
+    price_points: int | None = Field(default=None, ge=1, le=100000)
+    price_minutes: int | None = Field(default=None, ge=5, le=120)
+    daily_cap: int | None = Field(default=None, ge=0, le=240)
+
+
+@app.put("/api/parent/skylight")
+def parent_skylight_settings(body: SkylightSettings, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    cfg = skylight.load(db)
+    if body.members is not None:
+        for k in body.members:
+            kid_or_404(settings, k)
+        cfg["members"] = {k: v for k, v in body.members.items() if v}
+    for f in ("frame_id", "price_points", "price_minutes", "daily_cap"):
+        if getattr(body, f) is not None:
+            cfg[f] = getattr(body, f)
+    skylight.save(db, cfg)
+    return {k: cfg[k] for k in ("price_points", "price_minutes", "daily_cap", "members")}
+
+
+@app.delete("/api/parent/skylight")
+def parent_skylight_unlink(parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    cfg = skylight.load(db)
+    for k in ("access_token", "refresh_token", "expires_at"):
+        cfg.pop(k, None)
+    skylight.save(db, cfg)
+    return {}
 
 
 from . import portal  # noqa: E402  (the new dashboard pages' endpoints; imports this module)

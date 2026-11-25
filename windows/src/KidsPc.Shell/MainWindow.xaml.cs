@@ -85,7 +85,8 @@ public partial class MainWindow : Window
         TimeLeft.Text = t.MinutesLeft >= 60 ? $"{t.MinutesLeft / 60}h {t.MinutesLeft % 60}m" : $"{t.MinutesLeft}m";
         ShowFuel(t);
         SetTicker(rules.Kid.Name);
-        StatusLine.Text = _state.HubReachable ? "" : "Can't reach the home server. Your time is still counting down.";
+        if (!_state.HubReachable) StatusLine.Text = "Can't reach the home server. Your time is still counting down.";
+        else if (DateTimeOffset.Now > _statusHold) StatusLine.Text = "";
 
         if (t.Warn)
         {
@@ -133,6 +134,7 @@ public partial class MainWindow : Window
             Topmost = false;
         }
 
+        ShowPoints(rules);
         BuildHomeTiles(rules);
         BuildFamily(rules);
         BuildCatalogue(rules);

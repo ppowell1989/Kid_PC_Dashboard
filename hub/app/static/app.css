@@ -316,6 +316,12 @@ button.small.attn { color: var(--bad-text); }
 .pc:not(.online) .avatar { background: var(--line-2); }
 .pc .pchead .avatar { width: 44px; height: 44px; font-size: 1.2rem; }
 
+/* Skylight: price and daily limit on one row */
+.skylight .prices { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; }
+.skylight .prices label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .92rem; }
+.skylight .prices input { width: 76px; margin: 0; }
+.skylight .list select { width: auto; margin: 0; }
+
 /* Games: the catalogue as cards (cover, rating, and each kid's line: approved, on his PC, how much he plays it) */
 .gamebar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; }
 .gamebar .seg { margin: 0; flex: 1 1 260px; }

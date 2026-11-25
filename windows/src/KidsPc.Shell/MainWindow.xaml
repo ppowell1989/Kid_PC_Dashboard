@@ -16,8 +16,24 @@
           <TextBlock x:Name="Clock" FontSize="19" Foreground="{DynamicResource Muted}" Margin="2,2,0,0"/>
         </StackPanel>
 
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+        <!-- Skylight chore points, and spending them on extra time (MainWindow.Points.cs). Hidden when Skylight isn't linked. -->
+        <Grid x:Name="PointsCard" VerticalAlignment="Stretch" Margin="0,0,18,0" Visibility="Collapsed">
+          <Border Style="{DynamicResource Shadow}"/>
+          <Border Style="{DynamicResource CardBox}" Padding="22,12,22,14">
+            <StackPanel VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="24" Foreground="#F5B400" VerticalAlignment="Center" Margin="0,2,10,0"/>
+                <TextBlock x:Name="PointsBalance" FontSize="34" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="0"/>
+                <TextBlock Text="points" FontSize="16" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="8,0,0,8"/>
+              </StackPanel>
+              <Button x:Name="BuyTimeButton" Style="{DynamicResource Pill}" Margin="0,6,0,0" FontSize="15" Padding="16,7,16,8" HorizontalAlignment="Left" Click="BuyTime"/>
+              <TextBlock x:Name="PointsWhy" FontSize="14" Foreground="{DynamicResource Muted}" Margin="0,8,0,0" MaxWidth="260" TextWrapping="Wrap" Visibility="Collapsed"/>
+            </StackPanel>
+          </Border>
+        </Grid>
         <!-- Time left today -->
-        <Grid HorizontalAlignment="Right" VerticalAlignment="Center" Width="390">
+        <Grid VerticalAlignment="Center" Width="390">
           <Border Style="{DynamicResource Shadow}"/>
           <Border Style="{DynamicResource CardBox}" Padding="24,14,24,20">
             <StackPanel>
@@ -34,6 +50,7 @@
             </StackPanel>
           </Border>
         </Grid>
+        </StackPanel>
       </Grid>
 
       <!-- A message from Mom or Dad -->
@@ -155,6 +172,13 @@
           <Button Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Content="Ask for 15 more minutes" Tag="15" Click="AskForTime"/>
           <Button Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Margin="0" Background="{DynamicResource Card}" Foreground="{DynamicResource Text}" BorderBrush="{DynamicResource Line}" Content="Ask for 30" Tag="30" Click="AskForTime"/>
         </StackPanel>
+        <Button x:Name="LockBuy" Style="{DynamicResource Pill}" FontSize="20" Padding="28,15,28,16" Margin="0,16,0,0" HorizontalAlignment="Center"
+                Background="{DynamicResource WarnSoft}" Foreground="{DynamicResource WarnText}" BorderBrush="{DynamicResource WarnLine}" Visibility="Collapsed" Click="BuyTime">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="20" VerticalAlignment="Center" Margin="0,1,12,0"/>
+            <TextBlock x:Name="LockBuyText" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
         <TextBlock x:Name="LockStatus" FontSize="18" Foreground="{DynamicResource Good}" TextAlignment="Center" Margin="0,20,0,0"/>
         <Button Style="{DynamicResource Pill}" Margin="0,40,0,0" HorizontalAlignment="Center" Background="{DynamicResource Well}" Foreground="{DynamicResource Muted}" BorderBrush="{DynamicResource Line}" Content="Shut down" Click="ShutDown"/>
       </StackPanel>
