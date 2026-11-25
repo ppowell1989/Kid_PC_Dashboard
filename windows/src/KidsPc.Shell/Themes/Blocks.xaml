@@ -1,7 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=System.Runtime">
-  <!-- Blocks: a blocky build-anything world. Blue sky, grass and dirt, square corners, pixel type.
+  <!-- Blocks: a blocky build-anything world. Blue sky, grass and dirt, square corners, pixel headlines.
        A theme is this one file: a set of colours, fonts and corner sizes, plus which control shapes to use
        (Styles\Flat.xaml or Styles\Chunky.xaml). To add a theme, copy this file, change the values, and add a
        line to Theme.All in Theme.cs. Every key below must be present. -->
@@ -38,9 +38,12 @@
   <SolidColorBrush x:Key="FuelLow" Color="#E0A21A"/>
   <SolidColorBrush x:Key="FuelEmpty" Color="#C0392B"/>
 
-  <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Pixelify Display, Consolas, Segoe UI</FontFamily>
+  <!-- Pixel type (Jersey 15) only for big headlines, where it reads well; buttons, tile names and messages use
+       Russo One, a square, solid face that keeps the blocky feel at small sizes. Both OFL, bundled. -->
+  <FontFamily x:Key="Headline">/KidsPcShell;component/Assets/Fonts/#Jersey 15, Russo One, Segoe UI</FontFamily>
+  <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Russo One, Segoe UI Semibold, Segoe UI</FontFamily>
   <FontFamily x:Key="Body">/KidsPcShell;component/Assets/Fonts/#Nunito Text, Segoe UI Variable Text, Segoe UI</FontFamily>
-  <FontFamily x:Key="TileTitleFont">/KidsPcShell;component/Assets/Fonts/#Pixelify Display, Consolas, Segoe UI</FontFamily>
+  <FontFamily x:Key="TileTitleFont">/KidsPcShell;component/Assets/Fonts/#Russo One, Segoe UI Semibold, Segoe UI</FontFamily>
 
   <CornerRadius x:Key="RCard">4</CornerRadius>
   <CornerRadius x:Key="RTile">4</CornerRadius>

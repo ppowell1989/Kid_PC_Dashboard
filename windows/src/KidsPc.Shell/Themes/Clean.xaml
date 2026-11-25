@@ -38,6 +38,7 @@
   <SolidColorBrush x:Key="FuelEmpty" Color="#E5484D"/>
 
   <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Nunito Display, Segoe UI Semibold, Segoe UI</FontFamily>
+  <FontFamily x:Key="Headline">/KidsPcShell;component/Assets/Fonts/#Nunito Display, Segoe UI Semibold, Segoe UI</FontFamily>
   <FontFamily x:Key="Body">/KidsPcShell;component/Assets/Fonts/#Nunito Text, Segoe UI Variable Text, Segoe UI</FontFamily>
   <FontFamily x:Key="TileTitleFont">/KidsPcShell;component/Assets/Fonts/#Nunito Display, Segoe UI Semibold, Segoe UI</FontFamily>
 

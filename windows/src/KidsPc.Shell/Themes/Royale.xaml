@@ -40,6 +40,7 @@
   <SolidColorBrush x:Key="FuelEmpty" Color="#FF4D6D"/>
 
   <FontFamily x:Key="Display">/KidsPcShell;component/Assets/Fonts/#Lilita One, Segoe UI Black, Segoe UI</FontFamily>
+  <FontFamily x:Key="Headline">/KidsPcShell;component/Assets/Fonts/#Lilita One, Segoe UI Black, Segoe UI</FontFamily>
   <FontFamily x:Key="Body">/KidsPcShell;component/Assets/Fonts/#Nunito Text, Segoe UI Variable Text, Segoe UI</FontFamily>
   <FontFamily x:Key="TileTitleFont">/KidsPcShell;component/Assets/Fonts/#Lilita One, Segoe UI Black, Segoe UI</FontFamily>
 

@@ -7,14 +7,14 @@
        to their labels. The window sets the body font and text colour; everything inherits from there. -->
 
   <Style x:Key="Heading" TargetType="TextBlock">
-    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Headline}"/>
     <Setter Property="FontSize" Value="24"/>
     <Setter Property="Foreground" Value="{DynamicResource Text}"/>
   </Style>
 
   <!-- Big titles: "Hi, Adam!", the lock screen, the time left. -->
   <Style x:Key="Title" TargetType="TextBlock">
-    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Headline}"/>
     <Setter Property="Foreground" Value="{DynamicResource TitleBrush}"/>
   </Style>
 

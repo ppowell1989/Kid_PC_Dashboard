@@ -5,14 +5,14 @@
        DynamicResource so a theme can be swapped while the shell is running. -->
 
   <Style x:Key="Heading" TargetType="TextBlock">
-    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Headline}"/>
     <Setter Property="FontSize" Value="26"/>
     <Setter Property="Foreground" Value="{DynamicResource Text}"/>
   </Style>
 
   <!-- Big titles get the theme's hard drop edge. -->
   <Style x:Key="Title" TargetType="TextBlock">
-    <Setter Property="FontFamily" Value="{DynamicResource Display}"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Headline}"/>
     <Setter Property="Foreground" Value="{DynamicResource TitleBrush}"/>
     <Setter Property="Effect" Value="{DynamicResource TitleEffect}"/>
   </Style>

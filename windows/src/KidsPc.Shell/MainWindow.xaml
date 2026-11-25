@@ -24,7 +24,7 @@
             <StackPanel VerticalAlignment="Center">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE735;" FontFamily="{DynamicResource Icons}" FontSize="24" Foreground="#F5B400" VerticalAlignment="Center" Margin="0,2,10,0"/>
-                <TextBlock x:Name="PointsBalance" FontSize="34" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="0"/>
+                <TextBlock x:Name="PointsBalance" FontSize="34" FontFamily="{DynamicResource Headline}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="0"/>
                 <TextBlock Text="points" FontSize="16" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="8,0,0,8"/>
               </StackPanel>
               <Button x:Name="BuyTimeButton" Style="{DynamicResource Pill}" Margin="0,6,0,0" FontSize="15" Padding="16,7,16,8" HorizontalAlignment="Left" Click="BuyTime"/>
@@ -40,7 +40,7 @@
               <DockPanel>
                 <TextBlock x:Name="TimeLeftLabel" DockPanel.Dock="Left" VerticalAlignment="Bottom" Margin="0,0,0,9"
                            FontSize="16" Foreground="{DynamicResource Muted}" Text="Time left today"/>
-                <TextBlock x:Name="TimeLeft" HorizontalAlignment="Right" FontSize="38" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" Text="--"/>
+                <TextBlock x:Name="TimeLeft" HorizontalAlignment="Right" FontSize="38" FontFamily="{DynamicResource Headline}" Foreground="{DynamicResource Text}" Text="--"/>
               </DockPanel>
               <Border Height="12" CornerRadius="6" Background="{DynamicResource Well}" Margin="0,6,0,0">
                 <Grid x:Name="FuelLane" Width="342" HorizontalAlignment="Left">
@@ -196,7 +196,7 @@
                 <Border.Background><ImageBrush x:Name="AskArt" Stretch="UniformToFill"/></Border.Background>
               </Border>
             </Border>
-            <TextBlock x:Name="AskTitle" FontSize="32" FontFamily="{DynamicResource Display}" TextWrapping="Wrap"/>
+            <TextBlock x:Name="AskTitle" FontSize="32" FontFamily="{DynamicResource Headline}" TextWrapping="Wrap"/>
             <Border HorizontalAlignment="Left" Margin="0,8,0,0" Padding="10,3,10,4" CornerRadius="8" Background="{DynamicResource Well}">
               <TextBlock x:Name="AskRating" FontSize="14" Foreground="{DynamicResource Muted}"/>
             </Border>
@@ -221,7 +221,7 @@
           <StackPanel>
             <DockPanel Margin="0,0,16,18">
               <Button DockPanel.Dock="Right" Style="{DynamicResource Pill}" Margin="0" Content="Done" Click="CloseThemes"/>
-              <TextBlock FontSize="30" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="Pick your look"/>
+              <TextBlock FontSize="30" FontFamily="{DynamicResource Headline}" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Text="Pick your look"/>
             </DockPanel>
             <WrapPanel x:Name="ThemeChoices"/>
           </StackPanel>
@@ -235,7 +235,7 @@
         <Border Style="{DynamicResource Shadow}"/>
         <Border Style="{DynamicResource CardBox}" Padding="30,26,30,26">
           <StackPanel>
-            <TextBlock FontSize="30" FontFamily="{DynamicResource Display}" Foreground="{DynamicResource Text}" Text="Done for now?"/>
+            <TextBlock FontSize="30" FontFamily="{DynamicResource Headline}" Foreground="{DynamicResource Text}" Text="Done for now?"/>
             <TextBlock FontSize="18" Foreground="{DynamicResource Muted}" Margin="0,6,0,22" TextWrapping="Wrap" Text="Save your game first. Anything not saved will be lost."/>
             <Button Style="{DynamicResource Pill}" Margin="0,0,0,12" FontSize="20" Padding="24,15,24,16" HorizontalContentAlignment="Left" Tag="shutdown" Click="DoPower">
               <StackPanel Orientation="Horizontal">
