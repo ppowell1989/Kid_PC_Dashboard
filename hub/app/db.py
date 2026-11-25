@@ -265,6 +265,7 @@ MIGRATIONS = [
     ("game_installs", "stage", "TEXT DEFAULT ''"),
     ("game_installs", "changed_at", "TEXT DEFAULT ''"),
     ("game_installs", "rate", "REAL NOT NULL DEFAULT 0"),   # bytes per second, smoothed
+    ("game_installs", "store_log", "TEXT DEFAULT ''"),   # the store's own last words about it (Steam's log lines)
     # Chat beyond the one family room: the kids' own chat and one chat per invited friend, with pictures and links.
     ("chat", "conv", "TEXT NOT NULL DEFAULT 'family'"),   # family / kids / friend-<hash of invite code>
     ("chat", "friend", "INTEGER NOT NULL DEFAULT 0"),     # 1 = an invited friend sent it from the invite page

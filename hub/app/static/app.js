@@ -209,6 +209,7 @@ async function loadRequests() {
   loadStuck().catch(() => { $("#stuck").innerHTML = ""; });
   loadHeld().catch(() => { $("#heldBox").innerHTML = ""; });
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
+  state.shownReqs = reqs.map((r) => r.id).join(",");
   $("#requests").innerHTML = reqs.length ? reqs.map((r) => {
     const what = r.kind === "time" ? `${esc(r.detail)} more minutes` : r.kind === "game" ? `Game: ${esc(r.detail)}` : `Site: ${esc(r.detail)}`;
     const gamePick = r.kind === "game"
@@ -421,7 +422,8 @@ function installRow(g, p) {
     ${g.image_url ? `<img src="${esc(g.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`}
     <div class="what"><b>${esc(g.title)}</b> <span class="pill t-${t.tone}">${esc(t.label)}</span>
       ${pct !== null ? `<div class="bar"><div style="width:${pct}%"></div></div>` : t.tone === "busy" ? `<div class="bar busy"><div></div></div>` : ""}
-      <div class="muted">${esc(t.text)}</div>${t.since ? `<div class="since">${esc(t.since)}</div>` : ""}</div>
+      <div class="muted">${esc(t.text)}</div>${t.since ? `<div class="since">${esc(t.since)}</div>` : ""}
+      ${g.store_log && t.tone !== "ok" ? `<details class="storelog"><summary>What ${esc(APP_NAME[g.launcher] || "the store")} said</summary><code>${esc(g.store_log)}</code></details>` : ""}</div>
     <div class="do">${btn}</div></li>`;
 }
 function wireInstalls(root, reload) {
@@ -782,6 +784,14 @@ $("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention()
 $("#needs").onclick = (e) => { if (e.target.closest("[data-go]")) go("requests"); };
 refresh().catch(() => {});
 setInterval(() => { if (!$("#app").hidden && !$('[data-panel="home"]').hidden) refresh().catch(() => {}); }, 10000);
+// Requests open on the screen: a new ask from a kid shows up by itself, without wiping a game a parent is choosing.
+setInterval(async () => {
+  if ($("#app").hidden || $('[data-panel="requests"]').hidden || document.hidden) return;
+  try {
+    const ids = (await api("/api/parent/requests")).map((r) => r.id).join(",");
+    if (ids !== state.shownReqs) { loadRequests().catch(() => {}); refresh().catch(() => {}); }
+  } catch {}
+}, 10000);
 
 // Playtimes -----------------------------------------------------------------
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];

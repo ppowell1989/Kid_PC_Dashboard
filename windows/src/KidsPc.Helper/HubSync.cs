@@ -93,7 +93,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 appStates["kidspc"] = new { state = updater.Status.State, detail = updater.Status.Detail };
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
                 var owed = (int)(_offlineSeconds / 60);
-                var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry, stage = kv.Value.Stage });
+                var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry, stage = kv.Value.Stage, store_log = kv.Value.StoreLog });
                 var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed, games, disk_free_gb = deployer.FreeGb(), computer = Environment.MachineName }, ct);
                 if (owed > 0 && hb.IsSuccessStatusCode)
                 {
