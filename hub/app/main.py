@@ -38,6 +38,14 @@ def get_db() -> DB:
     return app.state.db
 
 
+def load_added_kids(db: DB, settings: Settings) -> None:
+    """Kids added on the dashboard live in the database; config.yaml's kids keep working alongside them."""
+    have = {k.id for k in settings.kids}
+    for r in db.q("SELECT * FROM kids_added ORDER BY added_at"):
+        if r["id"] not in have:
+            settings.kids.append(Kid(id=r["id"], name=r["name"], device_token=r["device_token"], extension_token=r["extension_token"]))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -46,6 +54,7 @@ async def lifespan(app: FastAPI):
     # Chat pictures sit next to the database, so a backup of the data folder has them too.
     app.state.chat_dir = retention.PICTURES_DIR = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "chat-pictures"
     app.state.media = media.LocalStore(app.state.chat_dir)   # photos and clips stay on this box; screens get signed links
+    load_added_kids(app.state.db, settings)
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"
@@ -118,8 +127,21 @@ def today_state(db: DB, settings: Settings, kid: Kid, now: datetime | None = Non
     late_until = datetime.fromisoformat(max(untils)) if untils else None
     p = db.one("SELECT until FROM pauses WHERE kid_id=?", (kid.id,))
     paused_until = datetime.fromisoformat(p["until"]) if p else None
-    return rules.compute(rule_for(db, kid, now.weekday()), now, used, g["m"] if g else 0, late_until, paused_until,
-                         rule_for=lambda wd: rule_for(db, kid, wd))
+    return rules.compute(day_rule(db, kid, now.date()), now, used, g["m"] if g else 0, late_until, paused_until,
+                         rule_for=lambda d: day_rule(db, kid, d))
+
+
+def date_change(db: DB, kid: Kid, day) -> dict | None:
+    """A parent's change for this one date (holiday, vacation), if there is one."""
+    return db.one("SELECT * FROM playtime_dates WHERE kid_id=? AND day=?", (kid.id, str(day)))
+
+
+def day_rule(db: DB, kid: Kid, day) -> rules.DayRule:
+    """The rule for a calendar date: a change saved for that date, else the usual rule for its weekday."""
+    r = date_change(db, kid, day)
+    if r:
+        return rules.DayRule(daily_minutes=r["daily_minutes"], bedtime=r["bedtime"], windows=[tuple(w) for w in json.loads(r["windows"])])
+    return rule_for(db, kid, day.weekday())
 
 
 STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
@@ -378,11 +400,29 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO game_play(kid_id,game_id,minutes,last_at) VALUES(?,?,?,?)
                 ON CONFLICT(kid_id,game_id) DO UPDATE SET minutes = minutes + excluded.minutes, last_at = excluded.last_at""",
              (kid.id, game_id, counted, now.isoformat()))
+    if hb.running and hb.active:
+        track_session(db, kid.id, "play", hb.running[:80], now)
+    if hb.voice and not st.locked:
+        track_session(db, kid.id, "voice", hb.voice, now)
     db.x("""INSERT INTO status(kid_id,seen_at,running,counted_at,locked,game_id,voice) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(kid_id) DO UPDATE SET seen_at=excluded.seen_at, running=excluded.running,
             counted_at=excluded.counted_at, locked=excluded.locked, game_id=excluded.game_id, voice=excluded.voice""",
          (kid.id, now.isoformat(), hb.running, counted_at, int(st.locked), game_id, hb.voice if not st.locked else ""))
     return {"time": st.__dict__}
+
+
+SESSION_GAP = timedelta(minutes=3)   # check-ins come every minute or so; a longer gap starts a new stretch
+
+
+def track_session(db: DB, kid_id: str, kind: str, what: str, now: datetime) -> None:
+    """Grow the kid's current stretch of play (or of a voice call), or start a new one. Feeds Activity:
+    "Played Minecraft 3:10 to 3:55 PM", "Voice call with friends, 25 min"."""
+    last = db.one("SELECT id, what, ended_at FROM sessions WHERE kid_id=? AND kind=? ORDER BY id DESC LIMIT 1", (kid_id, kind))
+    if last and last["what"] == what and now - datetime.fromisoformat(last["ended_at"]) <= SESSION_GAP:
+        db.x("UPDATE sessions SET ended_at=? WHERE id=?", (now.isoformat(timespec="seconds"), last["id"]))
+    else:
+        at = now.isoformat(timespec="seconds")
+        db.x("INSERT INTO sessions(kid_id,kind,what,started_at,ended_at) VALUES(?,?,?,?,?)", (kid_id, kind, what, at, at))
 
 
 def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None:
@@ -520,8 +560,20 @@ class Event(BaseModel):
 @app.post("/api/device/events", status_code=204)
 def device_events(events: list[Event], kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
     for e in events[:100]:
+        if e.kind in SAME_AS_LAST_SKIPPED:
+            last = db.one("SELECT detail FROM events WHERE kid_id=? AND kind=? ORDER BY at DESC, id DESC LIMIT 1", (kid.id, e.kind))
+            if last and last["detail"] == e.detail:
+                continue   # the helper says this on every start; only a change is news
         db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
+
+
+WEB_FILTER_WORDS = {"cloudflare_family": "family filter (blocks adult and harmful sites)", "adguard": "home network filter (AdGuard)",
+                    "none": "no filter"}
+# Events the PC repeats on every start (the web filter it set, the time zone it follows): kept once per change.
+SAME_AS_LAST_SKIPPED = {"web_filter", "timezone_set"}
+# Housekeeping no parent needs to read. Still stored (support and tests use them), never shown in Activity.
+HIDDEN_EVENTS = {"battlenet_products", "timezone_set"}
 
 
 @app.get("/api/device/update")
@@ -708,7 +760,8 @@ def parent_overview(parent: str = Depends(current_parent), db: DB = Depends(get_
             "flagged_today": db.one("SELECT COUNT(*) n FROM searches WHERE kid_id=? AND flagged=1 AND at >= ?",
                                     (kid.id, rules.day_key(rules.local_now(settings.timezone))))["n"],
         })
-    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline()}
+    held = db.one("SELECT COUNT(*) n FROM chat WHERE held!='' AND removed_by=''")["n"]
+    return {"parent": parent, "kids": out, "decisions": settings.decisions.model_dump(), "builds": updates.pipeline(), "held_pictures": held}
 
 
 def install_counts(pc: dict) -> dict:
@@ -1107,7 +1160,18 @@ def parent_auto_update(kid_id: str, body: AutoUpdateIn, parent: str = Depends(cu
 @app.get("/api/parent/kids/{kid_id}/activity")
 def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    events = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 500)))
+    rows = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC, id DESC LIMIT ?", (kid_id, min(limit, 500) * 4))
+    events, prev_filter = [], {}
+    for e in reversed(rows):            # oldest first, so a repeated web filter line is dropped after its first
+        if e["kind"] in HIDDEN_EVENTS:
+            continue
+        if e["kind"] == "web_filter":
+            if prev_filter.get("v") == e["detail"]:
+                continue
+            prev_filter["v"] = e["detail"]
+            e = {**e, "detail": WEB_FILTER_WORDS.get(e["detail"], e["detail"])}
+        events.append(e)
+    events = events[::-1][:min(limit, 500)]
     cmds = db.q("SELECT kind, arg, state, result, created_by, created_at, done_at FROM commands WHERE kid_id=? ORDER BY id DESC LIMIT 20", (kid_id,))
     return {"events": events, "commands": cmds}
 
@@ -1585,6 +1649,8 @@ def voice_join(code: str, db: DB = Depends(get_db), settings: Settings = Depends
         raise HTTPException(403, "A parent needs to confirm this invite first.")
     kid = kid_or_404(settings, inv["kid_id"])
     room = f"room-{kid.id}"
+    db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
+         (kid.id, "friend_joined_voice", inv["friend_name"], rules.local_now(settings.timezone).isoformat(timespec="seconds")))
     # Identity is tied to the invite, so revoking it lets the hub kick that friend (see voice/README).
     return {"url": settings.livekit.url, "room": room, "kid_name": kid.name, "friend_name": inv["friend_name"],
             "token": livekit_token(settings, f"friend-{code[:8]}", inv["friend_name"], room, ttl=3 * 3600)}
@@ -1806,3 +1872,7 @@ def parent_skylight_unlink(parent: str = Depends(current_parent), db: DB = Depen
         cfg.pop(k, None)
     skylight.save(db, cfg)
     return {}
+
+
+from . import portal  # noqa: E402  (the new dashboard pages' endpoints; imports this module)
+app.include_router(portal.router)
