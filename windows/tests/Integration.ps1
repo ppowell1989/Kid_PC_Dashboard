@@ -291,6 +291,23 @@ if ($LauncherInstall) {
   Check "install a Battle.net game once Battle.net is there -> starts Battle.net" ($bn.data.action -eq "exec" -and $bn.data.uri -eq $bnExe) ($bn | ConvertTo-Json)
 }
 
+# Remove from PC: a parent takes Portal 2 back off. With Steam closed the helper deletes Steam's record of it
+# (only ever its own manifest and its folder under steamapps\common); with Steam open it waits to close Steam first.
+Invoke-RestMethod "$hub/api/parent/installs/adam/$($g.id)/remove" -Method Post -WebSession $s | Out-Null
+$rm = $null
+for ($i = 0; $i -lt 20; $i++) {
+  $rm = @((Invoke-RestMethod "$hub/api/parent/installs" -WebSession $s).pcs | Where-Object { $_.id -eq "adam" })[0].games | Where-Object { $_.game_id -eq $g.id }
+  if (-not (Test-Path $acf) -and -not $rm.remove) { break }
+  Start-Sleep 3
+}
+Write-Host "INFO  Portal 2 after Remove: state=$($rm.state) remove=$($rm.remove) [$($rm.plain.label)] $($rm.plain.text) manifest=$(Test-Path $acf)"
+Check "remove from PC: manifest gone and hub says not on the PC, or waiting on Steam to close" `
+  (((-not (Test-Path $acf)) -and $rm.state -eq "not_installed" -and -not $rm.remove) -or ($rm.remove -and $rm.state -eq "removing")) ($rm | ConvertTo-Json -Depth 4)
+$st = Pipe @{ op = "state" }
+Check "a game being removed is not on his home screen" (@($st.data.installedGameIds) -notcontains $g.id)
+$act = Invoke-RestMethod "$hub/api/parent/kids/adam/activity" -WebSession $s
+if (-not $rm.remove) { Check "removal shows in Activity" (($act.events | Where-Object { $_.kind -eq "game_removed" }) -ne $null) }
+
 # Lock: a parent sets every day to 0 minutes in Playtimes (the hub's DB owns the rules, not config.yaml).
 Invoke-RestMethod "$hub/api/parent/playtimes/adam" -Method Put -WebSession $s -ContentType application/json `
   -Body '{"days":[0,1,2,3,4,5,6],"daily_minutes":0,"bedtime":"23:59","windows":[]}' | Out-Null

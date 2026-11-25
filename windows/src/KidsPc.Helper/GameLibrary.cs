@@ -8,7 +8,7 @@ namespace KidsPc.Helper;
 public sealed record Activity(string Title, bool Active, List<GameProcess> Processes, int? GameId = null);
 
 /// <summary>Steam's appmanifest numbers for one game. Flags is StateFlags.</summary>
-public sealed record SteamManifest(string AppId, long Flags, long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, string File);
+public sealed record SteamManifest(string AppId, long Flags, long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, string File, string InstallDir = "");
 
 /// <summary>A running process the helper recognises, and the catalogue game it belongs to (if any).</summary>
 public sealed record GameProcess(int Pid, string Path, string Kind, string? SteamAppId, Game? Approved);
@@ -122,7 +122,8 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
                 .GroupBy(m => m.Groups[1].Value, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Groups[2].Value, StringComparer.OrdinalIgnoreCase);
             long N(string k) => long.TryParse(f.GetValueOrDefault(k), out var v) ? v : 0;
-            return new(appId, N("StateFlags"), N("BytesToDownload"), N("BytesDownloaded"), N("BytesToStage"), N("BytesStaged"), file);
+            return new(appId, N("StateFlags"), N("BytesToDownload"), N("BytesDownloaded"), N("BytesToStage"), N("BytesStaged"), file,
+                f.GetValueOrDefault("installdir") ?? "");
         }
         catch (IOException) { return null; }     // Steam is writing it; look again next time
     }

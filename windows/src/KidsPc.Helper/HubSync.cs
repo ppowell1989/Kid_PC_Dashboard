@@ -94,7 +94,8 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
                 var owed = (int)(_offlineSeconds / 60);
                 var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry, stage = kv.Value.Stage, store_log = kv.Value.StoreLog });
-                var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed, games, disk_free_gb = deployer.FreeGb(), computer = Environment.MachineName }, ct);
+                var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed, games, disk_free_gb = deployer.FreeGb(), computer = Environment.MachineName,
+                    steam_account = deployer.SteamAccountHere() is { } sa ? new { id = sa.Id, name = sa.Name, login = sa.Login } : null }, ct);
                 if (owed > 0 && hb.IsSuccessStatusCode)
                 {
                     log.LogInformation("told the hub about {Minutes} minutes played while it was unreachable", owed);

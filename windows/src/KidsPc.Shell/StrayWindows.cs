@@ -22,7 +22,8 @@ internal static class StrayWindows
     };
 
     // Words in a window title that mean a person has to type something there. GUESS at the titles.
-    private static readonly string[] SignInWords = ["sign in", "sign-in", "login", "log in", "steam guard", "verify"];
+    // "install" keeps Steam's own Install box up: the PC opens it on purpose for a free game that isn't on his account yet.
+    private static readonly string[] SignInWords = ["sign in", "sign-in", "login", "log in", "steam guard", "verify", "install"];
 
     private static readonly Dictionary<IntPtr, string> Hidden = [];
 

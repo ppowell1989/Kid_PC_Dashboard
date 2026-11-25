@@ -67,7 +67,9 @@ public sealed record Rules(
     // helper sets the PC's clock to match so the time on his screen agrees with when the PC locks.
     string? Timezone = null,
     // Skylight chore points he can spend on extra time; null when a parent hasn't linked Skylight for him.
-    PointsOffer? Points = null);
+    PointsOffer? Points = null,
+    // Games a parent asked to take off this PC (they stay approved). Retry is the round, as for installs.
+    List<InstallItem>? Uninstalls = null);
 
 /// <summary>His Skylight points and the price of extra time. CanBuy false comes with Why, in his words.</summary>
 public sealed record PointsOffer(int Balance,
@@ -79,8 +81,10 @@ public sealed record PointsOffer(int Balance,
 
 public sealed record BoughtTime(int Minutes, int Points, int Balance);
 
-/// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.</summary>
-public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0);
+/// <summary>One game on the PC's install list. Retry goes up each time a parent presses "Try again", and the helper starts that game over.
+/// For a Steam game the hub also says whether the kid's Steam account owns it (null: it can't tell) and whether it is free:
+/// a free game that isn't on the account yet won't download from a written manifest, so the PC opens Steam's Install box.</summary>
+public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0, bool? Owned = null, bool Free = false);
 
 /// <summary>Something the helper needs done in the kid's own session, where Steam and Battle.net run as him:
 /// steam_start, steam_restart (so Steam reads a game it was just given), battlenet_install (Arg = product code).

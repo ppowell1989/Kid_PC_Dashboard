@@ -6,6 +6,9 @@ using Microsoft.Win32;
 
 namespace KidsPc.Helper;
 
+/// <summary>A Steam account, as Steam's loginusers.vdf on the PC names it.</summary>
+public sealed record SteamAccount(string Id, string Name, string Login);
+
 /// <summary>Where one approved game stands on this PC, as reported to the hub. Retry is the hub's "Try again" round it belongs to.
 /// Stage is a few words on exactly what the store is doing right now ("Waiting for Steam", "Downloading", "Installing",
 /// "Checking files", "Paused"): it goes on the kid's tile and the parents' PCs page, so "on its way" is never all anyone sees.</summary>
@@ -34,6 +37,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         public bool NeedsKick;
         public DateTimeOffset? KickedAt;
         public bool Restarted;                // the kick restarted Steam (rather than starting it)
+        public DateTimeOffset? PromptedAt;    // Steam's Install box was opened for a free game not on his account yet
         public long LogOffset = -1;           // Steam's content_log.txt length when this attempt began: only newer lines are about it
         public long LastSize = -1;            // Battle.net: folder size last time, and since when it hasn't changed
         public DateTimeOffset SizeSince = DateTimeOffset.Now;
@@ -89,6 +93,12 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
     private static int? Pct(GameInstallStatus s) => s.TotalBytes > 0 ? (int)Math.Min(99, s.DoneBytes * 100 / s.TotalBytes) : null;
 
+    /// <summary>Games a parent asked to take off this PC that haven't gone yet.</summary>
+    public HashSet<int> Removing()
+    {
+        lock (_gate) return _status.Where(kv => kv.Value.State == "removing").Select(kv => kv.Key).ToHashSet();
+    }
+
     /// <summary>How far each download is, for the bar on its tile.</summary>
     public Dictionary<int, int> Percents()
     {
@@ -117,7 +127,9 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         _kidName = rules.Kid.Name;
         _launcherOf = rules.Games.ToDictionary(g => g.Id, g => g.Launcher);
         ReportBattleNetProducts();
-        var wanted = (rules.Installs ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First().Retry);
+        var items = (rules.Installs ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First());
+        var wanted = items.ToDictionary(kv => kv.Key, kv => kv.Value.Retry);
+        var removing = (rules.Uninstalls ?? []).GroupBy(i => i.GameId).ToDictionary(g => g.Key, g => g.First().Retry);
         var installed = library.InstalledGameIds(rules).ToHashSet();
         var steamHere = kidHere && SteamRunning();
         _steamSeenSince = steamHere ? _steamSeenSince ?? DateTimeOffset.Now : null;
@@ -128,17 +140,19 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
             foreach (var g in rules.Games)
             {
-                var isWanted = wanted.TryGetValue(g.Id, out var retry);
+                var toRemove = removing.TryGetValue(g.Id, out var retry);
+                var isWanted = !toRemove && wanted.TryGetValue(g.Id, out retry);
                 if (!_attempts.TryGetValue(g.Id, out var at) || at.Retry != retry)
                     _attempts[g.Id] = at = new Attempt { Retry = retry };
 
                 GameInstallStatus st;
-                if (g.Launcher == "battlenet") st = BattleNet(g, at, isWanted, kidHere);   // its folder appears long before it is done
+                if (toRemove) st = Remove(g, at, kidHere, gameRunning);
+                else if (g.Launcher == "battlenet") st = BattleNet(g, at, isWanted, kidHere);   // its folder appears long before it is done
                 else if (installed.Contains(g.Id)) st = new("installed");
                 else if (!isWanted) st = new("not_installed");
                 else st = g.Launcher switch
                 {
-                    "steam" => Steam(g, at, kidHere, steamHere, gameRunning),
+                    "steam" => Steam(g, at, items[g.Id], kidHere, steamHere, gameRunning),
                     "direct" => Direct(g, at),
                     "gamepass" => new("manual", "Game Pass games install from the Xbox app on the PC for now."),
                     _ => new("manual", "The hub doesn't know how to install this kind of game."),
@@ -166,10 +180,25 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
 
     // ------------------------------------------------------------------ Steam
 
-    private GameInstallStatus Steam(Game g, Attempt at, bool kidHere, bool steamHere, bool gameRunning)
+    private GameInstallStatus Steam(Game g, Attempt at, InstallItem item, bool kidHere, bool steamHere, bool gameRunning)
     {
         if (LauncherNotReady("steam", "Steam") is { } wait) return wait;
         var m = library.SteamManifest(g.LaunchRef);
+        // A free game that isn't on his Steam account yet: Steam ignores a written manifest for it (no licence), and
+        // only its own Install box adds the free licence. So open that box on his screen once; one press does the rest.
+        if (item.Owned == false && item.Free && (m is null || (m.BytesDownloaded == 0 && m.BytesStaged == 0 && (m.Flags & Busy) == 0)))
+        {
+            if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC.", Stage: "Waiting for the PC");
+            if (at.PromptedAt is null)
+            {
+                if (gameRunning) return new("waiting", $"Starts after {_kidName} closes his game, so it doesn't interrupt him.", Stage: "After his game");
+                at.PromptedAt = DateTimeOffset.Now;
+                _nudges.Add((new Nudge($"steam-prompt-{g.Id}-{at.Retry}-{DateTimeOffset.Now.ToUnixTimeSeconds()}", "steam_install_prompt", g.LaunchRef), DateTimeOffset.Now));
+                events.Add("game_install_started", $"{g.Title} (Steam, free game added on the PC)");
+            }
+            return new("waiting", $"{g.Title} is free but isn't on his Steam account yet. Steam's Install box was opened on {_kidName}'s screen at " +
+                $"{at.PromptedAt.Value:h:mm tt}: pressing Install there once adds it and starts the download.", Stage: "Press Install in Steam");
+        }
         if (m is null)
         {
             // Steam deletes a manifest for a game the signed-in account can't download. GUESS: that is the usual reason.
@@ -464,6 +493,117 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         if (at.Running.IsFaulted) return new("failed", $"Its installer didn't run: {at.Running.Exception?.GetBaseException().Message}");
         return File.Exists(g.LaunchRef) ? new("installed") : new("failed", $"Its installer finished but {Path.GetFileName(g.LaunchRef)} isn't where the hub expects it.");
     }
+
+    // ------------------------------------------------------------------ taking games off
+
+    /// <summary>A parent asked for this game to come off the PC. Steam has to be closed while its files go, so its own
+    /// records don't disagree with the disk; Battle.net and installer games are removed from their folders. Never
+    /// while a game is running. The game stays approved: Install on the dashboard puts it back.</summary>
+    private GameInstallStatus Remove(Game g, Attempt at, bool kidHere, bool gameRunning) => g.Launcher switch
+    {
+        "steam" => RemoveSteam(g, at, kidHere, gameRunning),
+        "battlenet" => RemoveBattleNet(g, gameRunning),
+        "gamepass" => new("manual", "Game Pass games are removed in the Xbox app on the PC for now."),
+        _ => new("manual", "Remove it on the PC from Windows Settings, Apps (it needs a grown-up's sign-in)."),
+    };
+
+    [GeneratedRegex(@"^[^\\/:*?""<>|]+$")]
+    private static partial Regex PlainFolderName();
+
+    private GameInstallStatus RemoveSteam(Game g, Attempt at, bool kidHere, bool gameRunning)
+    {
+        var m = library.SteamManifest(g.LaunchRef);
+        // Only ever a folder straight inside steamapps\common, named by Steam's own manifest.
+        var dir = m is not null && m.InstallDir.Trim() is { Length: > 0 } d && d != "." && d != ".." && PlainFolderName().IsMatch(d)
+            ? Path.Combine(library.SteamApps, "common", d) : null;
+        if (m is null) return new("not_installed");
+        if (gameRunning) return new("removing", $"Comes off after {_kidName} closes his game.", Stage: "After his game");
+
+        if (Process.GetProcessesByName("steam").Length > 0)
+        {
+            if (!kidHere) return new("removing", $"Comes off the next time {_kidName} is signed in on the PC.", Stage: "Waiting for the PC");
+            if (at.KickedAt is null || DateTimeOffset.Now - at.KickedAt > KickGap)
+            {
+                at.KickedAt = DateTimeOffset.Now;
+                _lastSteamKick = DateTimeOffset.Now;
+                _nudges.Add((new Nudge($"steam_shutdown-{DateTimeOffset.Now.ToUnixTimeSeconds()}", "steam_shutdown"), DateTimeOffset.Now));
+                log.LogInformation("asked the shell to close Steam so {Title} can come off", g.Title);
+            }
+            return new("removing", "Closing Steam in the background so the game's files can go.", Stage: "Closing Steam");
+        }
+
+        try
+        {
+            File.Delete(m.File);
+            if (dir is not null && Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+            foreach (var extra in new[] { Path.Combine(library.SteamApps, "downloading", g.LaunchRef), Path.Combine(library.SteamApps, "shadercache", g.LaunchRef) })
+                if (Directory.Exists(extra)) Directory.Delete(extra, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.LogWarning("could not remove {Title}: {Msg}", g.Title, ex.Message);
+            return new("removing", "Some of its files are in use. Trying again in a minute.", Stage: "Removing");
+        }
+        log.LogInformation("removed Steam game {Title} ({AppId})", g.Title, g.LaunchRef);
+        if (kidHere)   // Steam back in the background, so his other games keep updating
+            _nudges.Add((new Nudge($"steam_start-{DateTimeOffset.Now.ToUnixTimeSeconds()}", "steam_start"), DateTimeOffset.Now));
+        return new("not_installed");
+    }
+
+    private GameInstallStatus RemoveBattleNet(Game g, bool gameRunning)
+    {
+        var folder = library.BattleNetFolder(g.LaunchRef);
+        if (folder is null) return new("manual", "The hub doesn't know where Battle.net put this game. Remove it in Battle.net on the PC.");
+        if (!Directory.Exists(folder)) return new("not_installed");
+        if (gameRunning) return new("removing", $"Comes off after {_kidName} closes his game.", Stage: "After his game");
+        // GUESS: Battle.net copes with a game's folder going away (it shows Install again). Its own uninstaller can't
+        // be driven from outside.
+        try { Directory.Delete(folder, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.LogWarning("could not remove {Title}: {Msg}", g.Title, ex.Message);
+            return new("removing", "Battle.net is using some of its files. Trying again in a minute; closing Battle.net on the PC lets it finish.", Stage: "Removing");
+        }
+        log.LogInformation("removed Battle.net game {Title} ({Code})", g.Title, g.LaunchRef);
+        return new("not_installed");
+    }
+
+    // ------------------------------------------------------------------ which Steam account
+
+    [GeneratedRegex("\"(7656\\d{13})\"\\s*\\{([^{}]*)\\}")]
+    private static partial Regex LoginUser();
+
+    /// <summary>The Steam account signed in on this PC (or the one Steam signs in by itself): its SteamID64, display
+    /// name and sign-in name, read from Steam's loginusers.vdf. The hub uses it to read which games the account owns.</summary>
+    public SteamAccount? SteamAccountHere()
+    {
+        try
+        {
+            var f = Path.Combine(cfg.SteamPath, "config", "loginusers.vdf");
+            if (!File.Exists(f)) return null;
+            var users = LoginUser().Matches(File.ReadAllText(f)).Select(m => (Id: m.Groups[1].Value, Fields: AcfFields(m.Groups[2].Value))).ToList();
+            if (users.Count == 0) return null;
+            // Prefer the account signed in right now, then the one Steam last used.
+            string? active = null;
+            if (KidSid() is { } sid)
+            {
+                using var k = Registry.Users.OpenSubKey($@"{sid}\Software\Valve\Steam\ActiveProcess");
+                if (k?.GetValue("ActiveUser") is int id && id != 0) active = (76561197960265728L + (uint)id).ToString();
+            }
+            var u = users.FirstOrDefault(x => x.Id == active);
+            if (u.Id is null) u = users.FirstOrDefault(x => x.Fields.GetValueOrDefault("MostRecent") == "1");
+            if (u.Id is null) u = users[0];
+            return new(u.Id, u.Fields.GetValueOrDefault("PersonaName") ?? "", u.Fields.GetValueOrDefault("AccountName") ?? "");
+        }
+        catch { return null; }
+    }
+
+    [GeneratedRegex("\"(\\w+)\"\\s+\"([^\"]*)\"")]
+    private static partial Regex VdfPair();
+
+    private static Dictionary<string, string> AcfFields(string block) =>
+        VdfPair().Matches(block).GroupBy(m => m.Groups[1].Value, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Groups[2].Value, StringComparer.OrdinalIgnoreCase);
 
     // ------------------------------------------------------------------ shared
 
