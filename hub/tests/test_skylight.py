@@ -96,3 +96,35 @@ def test_members_saved_as_numbers_still_show_points(parent, sky):
     parent.get("/api/parent/skylight")
     assert parent.get("/api/device/rules", headers=ADAM).json()["points"]["balance"] == 25
     assert all(isinstance(p["id"], str) for p in parent.get("/api/parent/skylight").json()["people"])
+
+
+def test_parent_gives_a_purchase_back(parent, sky):
+    """Undo: the points go back in Skylight, the bought minutes come off his day, and the cap frees up."""
+    link(parent)
+    parent.get("/api/parent/skylight")
+    before = parent.get("/api/device/rules", headers=ADAM).json()["time"]["minutes_left"]
+    assert parent.post("/api/device/points/buy", headers=ADAM).status_code == 200
+    d = parent.get("/api/parent/skylight").json()
+    [bought] = d["purchases"]["adam"]
+    assert bought["minutes"] == 15 and bought["points"] == 10 and d["purchases"]["barrett"] == []
+
+    r = parent.post("/api/parent/skylight/giveback", json={"kid_id": "adam", "grant_id": bought["id"]})
+    assert r.status_code == 200 and r.json() == {"points": 10, "minutes": 15, "balance": 25}
+    assert sky.points["11"] == 25 and ("POST", "/frames/900/reward_points", {"category_ids": ["11"], "points": 10}) in sky.calls
+    rules = parent.get("/api/device/rules", headers=ADAM).json()
+    assert rules["time"]["minutes_left"] == before and rules["points"]["left_today"] == 30
+    assert parent.get("/api/parent/skylight").json()["purchases"]["adam"] == []
+    assert parent.post("/api/parent/skylight/giveback", json={"kid_id": "adam"}).status_code == 404
+
+
+def test_give_back_changes_nothing_when_skylight_fails(parent, sky, monkeypatch):
+    link(parent)
+    parent.get("/api/parent/skylight")
+    parent.post("/api/device/points/buy", headers=ADAM)
+
+    async def down(*a, **k):
+        raise skylight.SkylightError("Couldn't reach Skylight from the hub.")
+    monkeypatch.setattr(skylight, "add_points", down)
+    r = parent.post("/api/parent/skylight/giveback", json={"kid_id": "adam"})
+    assert r.status_code == 400 and "Nothing was changed" in r.json()["detail"]
+    assert len(parent.get("/api/parent/skylight").json()["purchases"]["adam"]) == 1

@@ -294,6 +294,11 @@ def bought_today(db: DB, kid_id: str, day: str) -> int:
     return (db.one("SELECT COALESCE(SUM(minutes),0) AS m FROM grants WHERE kid_id=? AND day=? AND by=?", (kid_id, day, BY)) or {"m": 0})["m"]
 
 
+def purchases(db: DB, kid_id: str, day: str) -> list[dict]:
+    """Today's minutes bought with points, newest first, so a parent can give one back."""
+    return db.q("SELECT id, minutes, points, at FROM grants WHERE kid_id=? AND day=? AND by=? ORDER BY id DESC", (kid_id, day, BY))
+
+
 def offer(db: DB, kid_id: str, day: str, lock_reason: str, minutes_to_stop: int) -> dict | None:
     """What the kid's screen shows: his points, the price, and whether he can buy now (and if not, why, in his words).
     None when Skylight isn't set up for him. Uses the cached balance; never waits on Skylight."""

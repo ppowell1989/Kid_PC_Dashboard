@@ -182,6 +182,8 @@ EVENT_WORDS: dict[str, tuple[str, str]] = {
     "web_filter": ("installs", "Web filter set: {d}"),
     "stopped_time_up": ("time", "Time ran out, so {d} was closed"),
     "offline_play": ("time", "{d}"),
+    "points_spent": ("time", "{k}: {d}"),
+    "points_returned": ("parents", "{d}"),
 }
 GROUPS = ("played", "blocked", "installs", "chats", "requests", "time", "parents")
 
