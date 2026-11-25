@@ -30,6 +30,7 @@
   <!-- Text chat with the same kid. His parents can read it all. -->
   <section id="chatBox" class="card chat friendchat" hidden>
     <h2>Messages</h2>
+    <div id="fconvs" class="convpills" hidden></div>
     <div id="flog" class="chatlog"></div>
     <p id="fstatus" class="muted" hidden></p>
     <form id="fform" class="row">
@@ -105,7 +106,7 @@ $("#join").onclick = async () => {
 $("#mute").onclick = () => setMic(!room.localParticipant.isMicrophoneEnabled);
 
 // ---------------------------------------------------------------- text chat
-const chat = { last: 0, started: false };
+const chat = { last: 0, started: false, conv: "" };
 const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fsay = (text) => { $("#fstatus").textContent = text; $("#fstatus").hidden = !text; };
 function linked(text, links) {
@@ -120,7 +121,7 @@ function linked(text, links) {
 }
 async function loadChat() {
   let r;
-  try { r = await fetch(`/join/${code}/chat?after=${chat.last}`); } catch { return fsay("Can't reach the chat right now."); }
+  try { r = await fetch(`/join/${code}/chat?after=${chat.last}&conv=${encodeURIComponent(chat.conv)}`); } catch { return fsay("Can't reach the chat right now."); }
   if (r.status === 404) { $("#chatBox").hidden = true; return say("This invite link is no longer active.", true); }
   const j = await r.json().catch(() => null);
   if (!j) return;
@@ -132,8 +133,16 @@ async function loadChat() {
   chat.videos = j.videos;
   $("#fpic").accept = [j.pictures ? "image/*" : "", j.videos ? "video/*" : ""].filter(Boolean).join(",");
   fsay("");
+  // More than one chat (a parent added them to a group): one button each.
+  const pills = $("#fconvs");
+  pills.hidden = (j.convs || []).length < 2;
+  if (!pills.hidden) {
+    pills.innerHTML = j.convs.map((c) => `<button type="button" class="pill ${c.id === j.conv ? "on" : ""}" data-conv="${h(c.id)}">${h(c.title)}</button>`).join("");
+    pills.querySelectorAll("[data-conv]").forEach((b) => (b.onclick = () => { chat.conv = b.dataset.conv; chat.last = 0; chat.started = false; $("#flog").innerHTML = ""; loadChat(); }));
+  }
+  chat.conv = j.conv || "";
   const log = $("#flog"), msgs = j.messages;
-  if (!msgs.length) { if (!chat.started) log.innerHTML = `<p class="muted">Say hi to ${h(j.kid_name)}!</p>`; chat.started = true; return; }
+  if (!msgs.length) { if (!chat.started) log.innerHTML = `<p class="muted">Say hi to ${h(j.title || j.kid_name)}!</p>`; chat.started = true; return; }
   if (!chat.started) log.innerHTML = "";
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.insertAdjacentHTML("beforeend", msgs.map((m) => `<div class="msg ${m.mine ? "mine" : "kid"} ${m.removed ? "removed" : ""}">
@@ -152,7 +161,7 @@ $("#fform").onsubmit = async (e) => {
   const input = e.target.text, text = input.value.trim();
   if (!text) return;
   input.value = "";
-  try { await send("", { text }); } catch (err) { input.value = text; return fsay(err.message); }
+  try { await send("", { text, conv: chat.conv }); } catch (err) { input.value = text; return fsay(err.message); }
   loadChat();
 };
 $("#fpic").onchange = async (e) => {
@@ -164,7 +173,7 @@ $("#fpic").onchange = async (e) => {
     if (file.size > 100 * 1024 * 1024) return fsay("That video is too big. Videos can be up to 30 seconds.");
     fsay("Sending the video… this can take a minute.");
     const text = $("#fform").text.value.trim();
-    const r = await fetch(`/join/${code}/chat/video?text=${encodeURIComponent(text)}`, { method: "POST", body: file }).catch(() => null);
+    const r = await fetch(`/join/${code}/chat/video?text=${encodeURIComponent(text)}&conv=${encodeURIComponent(chat.conv)}`, { method: "POST", body: file }).catch(() => null);
     if (!r || !r.ok) return fsay(r ? (await r.json().catch(() => ({}))).detail || "That didn't send. Try again." : "That didn't send. Try again.");
     $("#fform").text.value = "";
     return loadChat();
@@ -172,7 +181,7 @@ $("#fpic").onchange = async (e) => {
   if (file.size > 15 * 1024 * 1024) return fsay("That picture is too big. Try a smaller one.");
   fsay("Sending the picture…");
   const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
-  try { await send("/picture", { data, text: $("#fform").text.value.trim() }); $("#fform").text.value = ""; } catch (err) { return fsay(err.message); }
+  try { await send("/picture", { data, text: $("#fform").text.value.trim(), conv: chat.conv }); $("#fform").text.value = ""; } catch (err) { return fsay(err.message); }
   loadChat();
 };
 loadChat();

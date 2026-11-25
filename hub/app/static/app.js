@@ -22,7 +22,8 @@ function sheet({ title, text = "", input = null, ok = "OK", cancel = "Cancel", k
     const d = $("#sheet"), box = $("#sheetInput");
     $("#sheetTitle").textContent = title;
     $("#sheetText").textContent = text;
-    box.hidden = input === null; box.value = ""; box.placeholder = input || "";
+    const inp = typeof input === "object" && input ? input : { placeholder: input || "", value: "" };
+    box.hidden = input === null; box.value = inp.value || ""; box.placeholder = inp.placeholder || "";
     $("#sheetOk").textContent = ok; $("#sheetOk").className = kind;
     $("#sheetCancel").hidden = !cancel; $("#sheetCancel").textContent = cancel || "";
     d.returnValue = "cancel";
@@ -103,7 +104,7 @@ async function refresh() {
       </div>
       <button class="ghost small linkish" data-feedkid="${k.id}">See ${esc(k.name)}'s activity</button>
     </div>`;
-  }).join("") || `<div class="card"><h2>No kids yet</h2><p class="muted">Add one on Family &amp; devices.</p></div>`;
+  }).join("") || `<div class="card"><h2>No kids yet</h2><p class="muted">Add one on Family &amp; Devices.</p></div>`;
   fillKidSelects();
   loadFamily().catch(() => {});
   // This runs every 10 seconds: leave the cards alone when nothing changed, so nothing jumps or closes.
@@ -443,7 +444,7 @@ function wireInstalls(root, reload) {
   }));
 }
 
-// Family & devices: each kid, his devices and their software, the games installing, and the parents' remote controls.
+// Family & Devices: each kid, his devices and their software, the games installing, and the parents' remote controls.
 // Like an IT office's view of its computers, in plain words.
 async function loadPcs() {
   clearTimeout(pcTimer);
@@ -462,7 +463,7 @@ async function loadPcs() {
       const retry = !sys && a.state === "failed" ? `<button class="ghost small" data-installapp="${esc(a.app)}" data-kid="${p.id}">Retry</button>` : "";
       const install = a.app === "kidspc" && k.online && / ready/.test(a.detail) ? `<button class="ghost small" data-update="${p.id}">Install now</button>` : "";
       const cls = a.state === "failed" ? "failed" : a.state === "installed" ? "" : "pending";
-      return `<span class="chip ${cls}" title="${esc(a.detail)}">${esc(sys || APP_NAME[a.app] || a.app)} ${esc(sys ? a.detail : a.state === "installed" ? "ready" : a.state)}${retry}${install}</span>`;
+      return `<span class="chip ${cls}" title="${esc(a.detail)}"><b>${esc(sys || APP_NAME[a.app] || a.app)}</b>&nbsp;${esc(sys ? a.detail : a.state === "installed" ? "ready" : a.state)}${retry}${install}</span>`;
     }).join("");
     const hasPc = (k.apps || []).some((a) => a.app === "kidspc");
     const how = hasPc ? `<span class="chip">Updates go in ${k.auto_update ? "right away" : "at the next restart"}<button class="ghost small" data-autoupdate="${p.id}" data-on="${k.auto_update ? 1 : 0}">Change</button></span>` : "";
@@ -471,12 +472,15 @@ async function loadPcs() {
     if (pc && b) newer = `${b.waiting_minutes >= 15 ? "A newer build should have arrived by now" : "A newer build is being made"}${b.title ? `: ${esc(b.title)}` : ""}.`;
     else if (pc && k.online && B.published && !pc.detail.includes(B.published.slice(0, 8))) newer = `A newer build${B.published_title ? ` (${esc(B.published_title)})` : ""} is on its way.`;
     const busy = p.games.filter((g) => g.plain.tone !== "ok"), done = p.games.filter((g) => g.plain.tone === "ok");
-    const devices = dv.length ? dv.map((x) => `<li class="split"><span><b>${esc(x.computer || "A PC")}</b> <span class="muted">set up ${esc(ago(x.set_up_at))}</span></span></li>`).join("")
-      : `<li class="muted">${p.seen_at ? "Set up before devices were listed here." : "None yet. Add one below: it takes one line on the new PC."}</li>`;
+    const devices = dv.map((x) => `<li class="split"><span><b>${esc(x.name || x.computer)}</b>
+        <span class="muted">${x.name ? `${esc(x.computer)} · ` : ""}${x.last_seen ? `last on ${esc(ago(x.last_seen))}` : `set up ${esc(ago(x.set_up_at))}`}</span></span>
+        <button class="ghost small" data-namedev="${esc(x.computer)}" data-kid="${p.id}" data-name="${esc(x.name)}">${x.name ? "Rename" : "Name it"}</button></li>`).join("")
+      || (p.seen_at ? `<li class="muted">${esc(p.name)}'s PC will show here, with its name, next time it checks in.</li>` : "");
     return `<div class="card pc ${p.online ? "online" : ""}">
       <div class="pchead"><div class="avatar">${esc(p.name.slice(0, 1))}</div>
         <div><h2>${esc(p.name)}</h2><div class="status"><span class="dot ${p.online ? "on" : ""}"></span>${esc(seen)}${p.disk_free_gb != null ? ` · ${gb(p.disk_free_gb)}` : ""}</div></div></div>
-      <h3>Devices</h3><ul class="list devices">${devices}</ul>
+      <h3>Devices</h3>${devices ? `<ul class="list devices">${devices}</ul>` : ""}
+      ${apps ? `<h3>Kept on ${dv.length > 1 ? "each" : "the"} PC by the hub</h3><p class="hint">Nothing to set up here: the hub installs these by itself and keeps them working. Retry shows if one fails.</p>` : ""}
       ${apps || how ? `<div class="chips">${apps}${how}</div>` : ""}${newer ? `<div class="muted">${newer}</div>` : ""}
       <div class="actions even">
         <button class="ghost small" data-setup="${p.id}">+ Add a device</button>
@@ -509,6 +513,13 @@ async function loadPcs() {
   }));
   root.querySelectorAll("[data-installapp]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.kid}/commands`, { method: "POST", body: { kind: "install_app", arg: b.dataset.installapp } }); b.textContent = "Retrying…";
+  }));
+  root.querySelectorAll("[data-namedev]").forEach((b) => (b.onclick = async () => {
+    const name = await sheet({ title: `Name this device`, text: `Windows calls it ${b.dataset.namedev}. A name like "${kidName(b.dataset.kid)}'s laptop" is easier to spot.`,
+      input: { value: b.dataset.name, placeholder: `${kidName(b.dataset.kid)}'s PC` }, ok: "Save" });
+    if (name == null) return;
+    try { await api(`/api/parent/devices/${b.dataset.kid}/name`, { method: "PUT", body: { computer: b.dataset.namedev, name: String(name) } }); } catch (err) { return oops(err); }
+    loadPcs();
   }));
   root.querySelectorAll("[data-setup]").forEach((b) => (b.onclick = () => setupDevice(b.dataset.setup).catch(oops)));
   pcTimer = setTimeout(loadPcs, 10000);   // progress moves while the page is open
@@ -644,40 +655,102 @@ async function copyText(text) {
 }
 
 // Messages and calls: approved friends (standing links), what each has done lately, and invites -----------
+const msgState = { kid: "" };
 async function loadInvites() {
-  const [inv, fr, keep, calls] = await Promise.all([api("/api/parent/invites"), api("/api/parent/friends"), api("/api/parent/retention").catch(() => null),
-    api("/api/parent/feed?group=chats&days=30").catch(() => ({ items: [] }))]);
-  const past = inv.filter((i) => i.revoked), links = Object.fromEntries(inv.map((i) => [i.code, i.link]));
+  const [inv, fr, keep, calls, chats] = await Promise.all([api("/api/parent/invites"), api("/api/parent/friends"), api("/api/parent/retention").catch(() => null),
+    api(`/api/parent/calls?days=30${msgState.kid ? `&kid=${msgState.kid}` : ""}`).catch(() => []), api("/api/parent/chats")]);
+  const K = msgState.kid, mineK = (ids) => !K || (ids || []).includes(K);
+  $("#msgWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
+    .map(([id, name]) => `<button type="button" class="${K === id ? "on" : ""}" data-mwho="${esc(id)}">${esc(name)}</button>`).join("");
+  $("#msgWho").querySelectorAll("[data-mwho]").forEach((b) => (b.onclick = () => { msgState.kid = b.dataset.mwho; loadInvites().catch(oops); }));
+
+  // Chats: newest first, each with who is in it and what you can do.
+  const live = fr;   // approved friends, for "Add someone"
+  const convs = chats.convs.filter((c) => mineK(c.kid_ids || (c.kid_id ? [c.kid_id] : []))).filter((c) => c.count || c.active)
+    .sort((a, b) => (b.last_at || "").localeCompare(a.last_at || ""));
+  $("#chatList").innerHTML = convs.map((c) => {
+    const people = c.kind === "family" ? "Mom, Dad and the kids" : c.kind === "kids" ? "Just the kids" : (c.people || []).join(", ");
+    const lastLine = c.last ? `${esc(c.last.sender)}: ${esc((c.last.text || "").slice(0, 80))}` : "No messages yet";
+    const group = c.kind === "friend" || c.kind === "group";
+    return `<li><div class="split"><span><b>${esc(c.title)}</b> ${c.kind === "group" ? `<span class="tagline">Group</span>` : ""}${c.active ? "" : ` <span class="tagline bad">Ended</span>`}</span>
+        <span class="muted">${c.last_at ? esc(ago(c.last_at)) : ""}</span></div>
+      <div class="muted">${c.named || c.kind === "family" ? `${esc(people)} · ` : ""}${c.count} message${c.count === 1 ? "" : "s"}${c.pictures ? ` · ${c.pictures} picture${c.pictures > 1 ? "s" : ""}` : ""}</div>
+      <div class="muted lastmsg">${lastLine}</div>
+      <div class="actions"><button class="ghost small" data-readconv="${esc(c.id)}">Read chat</button>
+        ${group && c.active ? `<button class="ghost small" data-addto="${esc(c.id)}">Add someone</button>` : ""}
+        ${(group && c.active) || c.kind === "kids" ? `<button class="ghost small" data-rename="${esc(c.id)}" data-name="${esc(c.named ? c.title : "")}">Rename</button>` : ""}</div>
+      ${(c.members || []).length ? `<div class="chips">${c.members.map((m) => `<span class="chip">${esc(m.name)} <button class="ghost small" data-unmember="${esc(c.id)}|${m.kind}|${esc(m.who)}" title="Take ${esc(m.name)} out of this chat">×</button></span>`).join("")}</div>` : ""}</li>`;
+  }).join("") || `<li class="muted">No chats yet.</li>`;
+
+  // Voice calls: who was on, who joined, how long.
+  const t = (iso) => new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  $("#calls").innerHTML = calls.slice(0, 20).map((c) => `<li><div class="split"><span><b>${esc(kidName(c.kid_id))}</b> <span class="muted">${esc(c.room)}</span></span><span class="pill">${fmtMin(c.minutes)}</span></div>
+      <div>${c.with.length ? `With ${esc(c.with.join(", "))}` : `<span class="muted">Nobody else joined</span>`}</div><div class="muted">${esc(t(c.started_at))}</div></li>`).join("")
+    || `<li class="muted">No calls in the last 30 days${K ? ` for ${esc(kidName(K))}` : ""}.</li>`;
+
+  // Approved friends
+  const past = inv.filter((i) => i.revoked && mineK([i.kid_id])), links = Object.fromEntries(inv.map((i) => [i.code, i.link]));
   const days = keep ? keep.days.invites : 7;
   const last = (f) => [f.last_call ? `last call ${ago(f.last_call)}` : "no calls yet", f.messages ? `${f.messages} message${f.messages > 1 ? "s" : ""}, last ${ago(f.last_message)}` : "no messages yet"].join(" · ");
-  $("#invites").innerHTML = fr.map((f) => `<li><div class="split"><span><b>${esc(f.friend_name)}</b> <span class="muted">with ${esc(kidName(f.kid_id))}</span></span>
+  $("#invites").innerHTML = fr.filter((f) => mineK([f.kid_id])).map((f) => `<li><div class="split"><span><b>${esc(f.friend_name)}</b> <span class="muted">with ${esc(kidName(f.kid_id))}</span></span>
       <span class="muted">since ${esc(ago(f.added))}</span></div>
     <div class="muted">${esc(last(f))}</div>
     <div class="actions"><button class="ghost small" data-readconv="${esc(f.conv)}">Read chat</button><button class="small" data-copy="${esc(links[f.code] || "")}">Copy link</button>
       <button class="ghost small" data-revoke="${esc(f.code)}" data-name="${esc(f.friend_name)}">Revoke</button></div></li>`).join("")
-    || `<li class="muted">No approved friends yet. Invite one below.</li>`;
+    || `<li class="muted">No approved friends${K ? ` for ${esc(kidName(K))}` : ""} yet. Invite one below.</li>`;
   if (past.length) $("#invites").insertAdjacentHTML("beforeend", `<li class="past"><details>
       <summary>Revoked (${past.length})</summary>
       <p class="muted">These links no longer work. ${days ? `They are deleted ${days === 1 ? "a day" : `${days} days`} after you revoke them.` : "They are kept until you clear them."}</p>
       <ul class="list">${past.map((i) => `<li><b>${esc(i.friend_name)}</b> with ${esc(kidName(i.kid_id))} <span class="tagline bad">Revoked</span>
         <div class="muted">${i.revoked_at ? `Revoked ${esc(localTime(i.revoked_at))}` : ""}</div></li>`).join("")}</ul>
       <button class="ghost small" id="clearInvites">Clear revoked links</button></details></li>`);
-  const t = (iso) => new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const vc = calls.items.filter((c) => c.minutes);
-  $("#calls").innerHTML = vc.slice(0, 15).map((c) => `<li><b>${esc(kidName(c.kid_id))}</b>: ${esc(c.text)} <span class="pill">${fmtMin(c.minutes)}</span><div class="muted">${esc(t(c.at))}</div></li>`).join("")
-    || `<li class="muted">No calls in the last 30 days.</li>`;
-  document.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
-  document.querySelectorAll("[data-readconv]").forEach((b) => (b.onclick = () => {
+  if (K) $("#inviteKid").value = K;
+
+  const panel = document.querySelector('[data-panel="messages"]');
+  panel.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = async () => { b.textContent = (await copyText(b.dataset.copy)) ? "Copied" : "Couldn't copy: press and hold the link"; }));
+  panel.querySelectorAll("[data-readconv]").forEach((b) => (b.onclick = () => {
     if (wide.matches) { if (!document.body.classList.contains("chat-open")) $('[data-panel="chat"] > .title').click(); }
     else window.scrollTo(0, 0);
     switchConv(b.dataset.readconv);
   }));
-  document.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
+  panel.querySelectorAll("[data-addto]").forEach((b) => (b.onclick = () => addToChat(chats.convs.find((c) => c.id === b.dataset.addto), live).catch(oops)));
+  panel.querySelectorAll("[data-rename]").forEach((b) => (b.onclick = async () => {
+    const name = await sheet({ title: "Name this chat", text: "Everyone in it sees the new name. Leave it empty to go back to the list of names.",
+      input: { value: b.dataset.name, placeholder: "Minecraft crew" }, ok: "Save" });
+    if (name == null) return;
+    try { await api(`/api/parent/chats/${encodeURIComponent(b.dataset.rename)}/name`, { method: "PUT", body: { name } }); } catch (err) { return oops(err); }
+    loadInvites(); loadConvs().catch(() => {});
+  }));
+  panel.querySelectorAll("[data-unmember]").forEach((b) => (b.onclick = async () => {
+    const [conv, kind, who] = b.dataset.unmember.split("|");
+    if (!await sheet({ title: "Take them out of this chat?", text: "They stop seeing it straight away. Their own chats aren't touched.", ok: "Take out", kind: "bad" })) return;
+    await api(`/api/parent/chats/${encodeURIComponent(conv)}/members/${kind}/${encodeURIComponent(who)}`, { method: "DELETE" }); loadInvites();
+  }));
+  panel.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
     if (!await sheet({ title: `Revoke ${b.dataset.name}'s link?`, text: "The link stops working straight away, they are dropped from a call they are in, and their chat ends. You can still read it.", ok: "Revoke", kind: "bad" })) return;
     await api(`/api/parent/invites/${b.dataset.revoke}`, { method: "DELETE" }); loadInvites();
   }));
   const clr = $("#clearInvites");
   if (clr) clr.onclick = async () => { await api("/api/parent/history/invites", { method: "DELETE" }); loadInvites(); };
+}
+
+// Add a kid at home or another approved friend to a friend's chat.
+async function addToChat(c, friends) {
+  if (!c) return;
+  const inIt = new Set([...(c.kid_ids || []), ...(c.members || []).map((m) => m.who)]);
+  const own = friends.find((f) => f.conv === c.id);
+  const choices = [...state.kids.filter((k) => !inIt.has(k.id)).map((k) => ({ kind: "kid", who: k.id, label: k.name })),
+    ...friends.filter((f) => f.conv !== c.id && !inIt.has(f.code) && (!own || f.code !== own.code)).map((f) => ({ kind: "friend", who: f.code, label: `${f.friend_name} (${kidName(f.kid_id)}'s friend)` }))];
+  if (!choices.length) return sheet({ title: "Nobody else to add", text: "Everyone at home and every approved friend is already in this chat. Invite a friend first to add them.", cancel: "" });
+  const box = $("#addPick");
+  box.innerHTML = choices.map((x, i) => `<label class="pick"><input type="radio" name="addwho" value="${i}" ${i ? "" : "checked"}><span>${esc(x.label)}</span></label>`).join("");
+  box.hidden = false;
+  const ok = await sheet({ title: `Add someone to ${c.title}`, text: "They see what is said from now on, not what was said before. You can take them out again.", ok: "Add" });
+  box.hidden = true;
+  if (!ok) return;
+  const x = choices[+box.querySelector("input:checked").value];
+  try { await api(`/api/parent/chats/${encodeURIComponent(c.id)}/members`, { method: "POST", body: { kind: x.kind, who: x.who } }); } catch (err) { return oops(err); }
+  loadInvites(); loadConvs().catch(() => {});
 }
 $("#inviteForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -962,6 +1035,8 @@ function wireWindows() {
 }
 
 // One editor for both: a weekday of the usual week, or a run of dates (holiday, vacation).
+// Closing the editor (Save or Cancel) leaves no day looking picked.
+$("#ptSheet").addEventListener("close", () => { if (document.activeElement && document.activeElement.closest("#stWeek")) document.activeElement.blur(); });
 function editDate(from, to = from) {
   const kid = pt.data.kids.find((k) => k.id === pt.kid), wk = pt.st.kids.find((k) => k.id === pt.kid);
   const d = wk.week.find((x) => x.date === from) || kid.days[parseDay(from).getDay() === 0 ? 6 : parseDay(from).getDay() - 1];
@@ -1130,7 +1205,7 @@ function renderConvs() {
   $("#chatConvs").innerHTML = shown.map((c) => {
     const isNew = c.last_id > (chat.seen[c.id] || 0) && c.id !== chat.conv;
     return `<button type="button" role="tab" data-conv="${esc(c.id)}" class="${c.id === chat.conv ? "on" : ""} ${isNew ? "dot" : ""} ${c.active ? "" : "off"}"
-      aria-selected="${c.id === chat.conv}" title="${esc(c.who)}">${esc(c.kind === "family" ? "Family" : c.kind === "kids" ? "Kids at home" : c.title)}${c.flagged ? `<span class="n" title="Flagged words">!${c.flagged}</span>` : ""}</button>`;
+      aria-selected="${c.id === chat.conv}" title="${esc(c.who)}">${esc(c.kind === "family" ? "Family" : c.kind === "kids" ? (c.named ? c.title : "Kids at home") : c.title)}${c.flagged ? `<span class="n" title="Flagged words">!${c.flagged}</span>` : ""}</button>`;
   }).join("") + (shared ? `<button type="button" role="tab" data-conv="shared" class="${chat.conv === "shared" ? "on" : ""}">Pictures &amp; links</button>` : "");
   document.querySelectorAll("[data-conv]").forEach((b) => (b.onclick = () => switchConv(b.dataset.conv)));
 }
@@ -1143,7 +1218,7 @@ function switchConv(conv) {
   $("#chatForm").hidden = !family;
   $("#chatNote").hidden = family;
   $("#chatNote").textContent = conv === "shared" ? "Every picture and link sent in any chat, newest first. Tap a picture to see it full size."
-    : c ? `${c.who}. You can read this chat; ${c.kind === "kids" ? "only the kids at home write in it" : "only the kid and the friend write in it"}. Remove a message to hide it from them.` : "";
+    : c ? `${c.who}. You can read this chat; ${c.kind === "kids" ? "only the kids at home write in it" : c.kind === "group" ? `only ${(c.people || []).join(", ")} write in it` : "only the kid and the friend write in it"}. Remove a message to hide it from them.` : "";
   chatSeen();
   loadChat().catch(oops);
 }

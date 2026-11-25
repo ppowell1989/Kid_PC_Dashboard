@@ -97,16 +97,53 @@ def _limit(who: str, kind: str) -> None:
 
 # --------------------------------------------------------------------------- conversations
 
+def chat_name(db: DB, conv: str) -> str:
+    r = db.one("SELECT name FROM chat_names WHERE conv=?", (conv,))
+    return r["name"] if r else ""
+
+
+def extra_members(db: DB, conv: str) -> list[dict]:
+    """People a parent added to this chat (see add_member). Friends only while their own link is live."""
+    out = []
+    for m in db.q("SELECT kind, who, from_id FROM chat_members WHERE conv=? ORDER BY added_at", (conv,)):
+        if m["kind"] == "friend":
+            inv = db.one("SELECT friend_name FROM invites WHERE code=? AND revoked=0", (m["who"],))
+            if not inv:
+                continue
+            m["name"] = inv["friend_name"]
+        out.append(m)
+    return out
+
+
+def _floor(db: DB, conv: str, kind: str, who: str) -> int:
+    """An added member sees only what was said after they were added."""
+    r = db.one("SELECT from_id FROM chat_members WHERE conv=? AND kind=? AND who=?", (conv, kind, who))
+    return r["from_id"] if r else 0
+
+
+def _title(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " & " + names[-1]
+
+
 def kid_convs(db: DB, settings: Settings, kid: Kid) -> list[dict]:
-    """The conversations one kid's shell shows, in order: family, his brothers, then each friend."""
+    """The conversations one kid's shell shows, in order: family, the kids at home, each friend's chat (with anyone
+    a parent added to it), then chats a parent added him to."""
     cs = chat_settings(db)
+    kids = {k.id: k.name for k in settings.kids}
     out = [{"id": FAMILY, "title": "Family", "kind": "family"}]
     sibs = [k.name for k in settings.kids if k.id != kid.id]
     if cs["kids"] and sibs:
-        out.append({"id": KIDS, "title": " & ".join(sibs), "kind": "kids"})
+        out.append({"id": KIDS, "title": chat_name(db, KIDS) or " & ".join(sibs), "kind": "kids"})
     if cs["friends"]:
-        for inv in db.q("SELECT code, friend_name FROM invites WHERE kid_id=? AND revoked=0 ORDER BY created_at", (kid.id,)):
-            out.append({"id": friend_conv(inv["code"]), "title": inv["friend_name"], "kind": "friend"})
+        for inv in db.q("SELECT code, kid_id, friend_name FROM invites WHERE revoked=0 ORDER BY created_at"):
+            conv = friend_conv(inv["code"])
+            extra = extra_members(db, conv)
+            mine = inv["kid_id"] == kid.id
+            if not mine and not any(m["kind"] == "kid" and m["who"] == kid.id for m in extra):
+                continue
+            people = ([] if mine else [kids.get(inv["kid_id"], inv["kid_id"])]) + [inv["friend_name"]] + \
+                     [m.get("name") or kids.get(m["who"], m["who"]) for m in extra if not (m["kind"] == "kid" and m["who"] == kid.id)]
+            out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "kind": "group" if extra or not mine else "friend"})
     return out
 
 
@@ -116,6 +153,30 @@ def kid_conv(db: DB, settings: Settings, kid: Kid, conv: str) -> dict:
         raise HTTPException(404, "That chat isn't turned on.")
     if c["kind"] != "family" and _locked(db, settings, kid):
         raise HTTPException(403, "This chat is off while the PC is locked. Family chat still works.")
+    return c
+
+
+def friend_convs(db: DB, settings: Settings, code: str) -> list[dict]:
+    """A friend's chats: their own with the kid who invited them, plus any a parent added them to."""
+    kids = {k.id: k.name for k in settings.kids}
+    own = live_friend(db, code)
+    out = []
+    for inv in db.q("SELECT code, kid_id, friend_name FROM invites WHERE revoked=0 ORDER BY created_at"):
+        conv = friend_conv(inv["code"])
+        extra = extra_members(db, conv)
+        if inv["code"] != code and not any(m["kind"] == "friend" and m["who"] == code for m in extra):
+            continue
+        people = [kids.get(inv["kid_id"], inv["kid_id"])] + ([] if inv["code"] == code else [inv["friend_name"]]) + \
+                 [m.get("name") or kids.get(m["who"], m["who"]) for m in extra if not (m["kind"] == "friend" and m["who"] == code)]
+        out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "own": inv["code"] == code,
+                    "floor": _floor(db, conv, "friend", code)})
+    return out or [{"id": friend_conv(code), "title": kids.get(own["kid_id"], ""), "own": True, "floor": 0}]
+
+
+def _friend_conv_ok(db: DB, settings: Settings, code: str, conv: str) -> dict:
+    c = next((c for c in friend_convs(db, settings, code) if c["id"] == (conv or friend_conv(code))), None)
+    if not c:
+        raise HTTPException(404, "That chat isn't open to you.")
     return c
 
 
@@ -137,8 +198,8 @@ def live_friend(db: DB, code: str) -> dict:
 COLS = "id, conv, sender, kid_id, friend, text, at, picture, video, links, flagged, removed_by, held"
 
 
-def _rows(db: DB, conv: str, after: int, limit: int = 100) -> list[dict]:
-    rows = db.q(f"SELECT {COLS} FROM chat WHERE conv=? AND id>? ORDER BY id DESC LIMIT ?", (conv, after, limit))
+def _rows(db: DB, conv: str, after: int, limit: int = 100, floor: int = 0) -> list[dict]:
+    rows = db.q(f"SELECT {COLS} FROM chat WHERE conv=? AND id>? ORDER BY id DESC LIMIT ?", (conv, max(after, floor), limit))
     return rows[::-1]
 
 
@@ -291,7 +352,7 @@ async def read_upload(request: Request, limit: int) -> bytes:
 
 def _media_link(request: Request, db: DB, mid: int, col: str, conv_ok) -> RedirectResponse:
     """Access is checked here; the file itself is reached through a short-lived signed link (see media.py)."""
-    m = db.one(f"SELECT conv, {col} AS key, removed_by, held FROM chat WHERE id=?", (mid,))
+    m = db.one(f"SELECT id, conv, {col} AS key, removed_by, held FROM chat WHERE id=?", (mid,))
     if not m or not m["key"] or not conv_ok(m) or not store(request).path(m["key"]).exists():
         raise HTTPException(404)
     return RedirectResponse(media.signed_link(get_settings().session_secret, m["key"]), status_code=307,
@@ -349,7 +410,7 @@ def device_chats(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
 def device_chat(after: int = 0, conv: str = FAMILY, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                 settings: Settings = Depends(get_settings)):
     kid_conv(db, settings, kid, conv)
-    return [{**_shown(m, False), "mine": m["kid_id"] == kid.id} for m in _rows(db, conv, after)]
+    return [{**_shown(m, False), "mine": m["kid_id"] == kid.id} for m in _rows(db, conv, after, floor=_floor(db, conv, "kid", kid.id))]
 
 
 @router.post("/api/device/chat", status_code=201)
@@ -374,7 +435,7 @@ def device_chat_picture(p: PictureIn, request: Request, kid: Kid = Depends(curre
 def device_chat_picture_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                              settings: Settings = Depends(get_settings)):
     mine = {c["id"] for c in kid_convs(db, settings, kid)}
-    return _picture_file(request, db, mid, lambda m: m["conv"] in mine and not m["removed_by"] and not m["held"])
+    return _picture_file(request, db, mid, lambda m: m["conv"] in mine and m["id"] > _floor(db, m["conv"], "kid", kid.id) and not m["removed_by"] and not m["held"])
 
 
 def _videos_ok(db: DB) -> None:
@@ -398,7 +459,7 @@ async def device_chat_video(request: Request, conv: str = FAMILY, text: str = ""
 def device_chat_video_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                            settings: Settings = Depends(get_settings)):
     mine = {c["id"] for c in kid_convs(db, settings, kid)}
-    return _video_file(request, db, mid, lambda m: m["conv"] in mine and not m["removed_by"] and not m["held"])
+    return _video_file(request, db, mid, lambda m: m["conv"] in mine and m["id"] > _floor(db, m["conv"], "kid", kid.id) and not m["removed_by"] and not m["held"])
 
 
 # --------------------------------------------------------------------------- friend's browser (invite link)
@@ -409,66 +470,79 @@ def _friend_ok(db: DB) -> None:
 
 
 @router.get("/join/{code}/chat")
-def friend_chat(code: str, after: int = 0, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+def friend_chat(code: str, after: int = 0, conv: str = "", db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     cs = chat_settings(db)
     kid = next((k for k in settings.kids if k.id == inv["kid_id"]), None)
     if not cs["friends"] or not kid:
-        return {"on": False, "kid_name": kid.name if kid else "", "friend_name": inv["friend_name"], "messages": []}
-    conv = friend_conv(code)
-    msgs = [{**_shown(m, False), "mine": bool(m["friend"])} for m in _rows(db, conv, after)]
+        return {"on": False, "kid_name": kid.name if kid else "", "friend_name": inv["friend_name"], "messages": [], "convs": []}
+    convs = friend_convs(db, settings, code)
+    c = _friend_conv_ok(db, settings, code, conv)
+    msgs = [{**_shown(m, False), "mine": bool(m["friend"]) and m["sender"] == inv["friend_name"]}
+            for m in _rows(db, c["id"], after, floor=c["floor"])]
     for m in msgs:
         m.pop("kid_id")
+    for x in convs:
+        x["last_id"] = db.one("SELECT MAX(id) n FROM chat WHERE conv=?", (x["id"],))["n"] or 0
+        x.pop("floor")
     return {"on": True, "kid_name": kid.name, "friend_name": inv["friend_name"], "pictures": cs["pictures"], "videos": cs["videos"],
-            "links": cs["links"], "messages": msgs}
+            "links": cs["links"], "messages": msgs, "conv": c["id"], "title": c["title"], "convs": convs}
 
 
 class FriendIn(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT)
+    conv: str = Field(default="", max_length=40)
 
 
 @router.post("/join/{code}/chat", status_code=201)
 def friend_chat_send(code: str, m: FriendIn, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     _friend_ok(db)
+    c = _friend_conv_ok(db, settings, code, m.conv)
     _limit(f"friend-{code}", "text")
-    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, m.text)}
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, m.text)}
 
 
 @router.post("/join/{code}/chat/picture", status_code=201)
 def friend_chat_picture(code: str, p: PictureIn, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     _friend_ok(db)
+    c = _friend_conv_ok(db, settings, code, "" if p.conv == FAMILY else p.conv)
     if not chat_settings(db)["pictures"]:
         raise HTTPException(403, "Pictures are switched off in chat.")
     _limit(f"friend-{code}", "picture")
     name = save_picture(store(request), p.data)
-    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, p.text, picture=name, st=store(request))}
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, p.text, picture=name, st=store(request))}
+
+
+def _friend_media_ok(db: DB, settings: Settings, code: str):
+    floors = {c["id"]: c["floor"] for c in friend_convs(db, settings, code)}
+    return lambda m: m["conv"] in floors and m["id"] > floors[m["conv"]] and not m["removed_by"] and not m["held"]
 
 
 @router.get("/join/{code}/chat/picture/{mid}")
-def friend_chat_picture_file(code: str, mid: int, request: Request, db: DB = Depends(get_db)):
+def friend_chat_picture_file(code: str, mid: int, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     live_friend(db, code)
-    conv = friend_conv(code)
-    return _picture_file(request, db, mid, lambda m: m["conv"] == conv and not m["removed_by"] and not m["held"])
+    return _picture_file(request, db, mid, _friend_media_ok(db, settings, code))
 
 
 @router.post("/join/{code}/chat/video", status_code=201)
-async def friend_chat_video(code: str, request: Request, text: str = "", db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+async def friend_chat_video(code: str, request: Request, text: str = "", conv: str = "", db: DB = Depends(get_db),
+                            settings: Settings = Depends(get_settings)):
     inv = live_friend(db, code)
     _friend_ok(db)
     _videos_ok(db)
+    c = _friend_conv_ok(db, settings, code, conv)
     _limit(f"friend-{code}", "video")
     raw = await read_upload(request, MAX_VIDEO_BYTES)
     vid, pic = await run_in_threadpool(save_video, store(request), raw)
-    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, text[:MAX_TEXT], picture=pic, video=vid, st=store(request))}
+    return {"id": _post(db, settings, c["id"], inv["friend_name"], None, True, text[:MAX_TEXT], picture=pic, video=vid, st=store(request))}
 
 
 @router.get("/join/{code}/chat/video/{mid}")
-def friend_chat_video_file(code: str, mid: int, request: Request, db: DB = Depends(get_db)):
+def friend_chat_video_file(code: str, mid: int, request: Request, db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     live_friend(db, code)
-    conv = friend_conv(code)
-    return _video_file(request, db, mid, lambda m: m["conv"] == conv and not m["removed_by"] and not m["held"])
+    return _video_file(request, db, mid, _friend_media_ok(db, settings, code))
 
 
 # --------------------------------------------------------------------------- parents' dashboard
@@ -510,17 +584,22 @@ def parent_chats(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     """Every conversation the kids have, for reading: the family chat, the brothers' chat, and each friend's
     (revoked friends too while their messages are kept)."""
     names = {k.id: k.name for k in settings.kids}
-    out = [{"id": FAMILY, "title": "Family chat", "kind": "family", "who": "Everyone", "can_send": True, "active": True}]
+    out = [{"id": FAMILY, "title": "Family chat", "kind": "family", "who": "Everyone", "can_send": True, "active": True, "kid_ids": list(names)}]
     if len(settings.kids) > 1:
-        out.append({"id": KIDS, "title": " & ".join(names.values()), "kind": "kids", "who": "Just the kids",
+        out.append({"id": KIDS, "title": chat_name(db, KIDS) or " & ".join(names.values()), "kind": "kids", "who": "Just the kids",
+                    "named": bool(chat_name(db, KIDS)), "kid_ids": list(names),
                     "can_send": False, "active": chat_settings(db)["kids"]})
     seen = set()
     for inv in db.q("SELECT code, kid_id, friend_name, revoked FROM invites ORDER BY created_at"):
         conv = friend_conv(inv["code"])
         seen.add(conv)
-        out.append({"id": conv, "title": f"{names.get(inv['kid_id'], inv['kid_id'])} & {inv['friend_name']}", "kind": "friend",
-                    "who": "Friend" + (" (link revoked)" if inv["revoked"] else ""), "can_send": False, "active": not inv["revoked"],
-                    "kid_id": inv["kid_id"]})
+        extra = extra_members(db, conv)
+        people = [names.get(inv["kid_id"], inv["kid_id"]), inv["friend_name"]] + [m.get("name") or names.get(m["who"], m["who"]) for m in extra]
+        out.append({"id": conv, "title": chat_name(db, conv) or _title(people), "kind": "group" if extra else "friend",
+                    "who": ("Group" if extra else "Friend") + (" (link revoked)" if inv["revoked"] else ""), "can_send": False,
+                    "active": not inv["revoked"], "kid_id": inv["kid_id"], "people": people, "named": bool(chat_name(db, conv)),
+                    "kid_ids": [inv["kid_id"]] + [m["who"] for m in extra if m["kind"] == "kid"],
+                    "members": [{"kind": m["kind"], "who": m["who"], "name": m.get("name") or names.get(m["who"], m["who"])} for m in extra]})
     # Messages from a friend whose revoked link has since been cleaned up are still the parents' to read.
     for r in db.q(f"SELECT DISTINCT conv FROM chat WHERE conv LIKE '{FRIEND}%'"):
         if r["conv"] not in seen:
@@ -530,6 +609,58 @@ def parent_chats(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     for c in out:
         c.update(_stats(db, c["id"]))
     return {"convs": out, "settings": chat_settings(db)}
+
+
+class Member(BaseModel):
+    kind: str = Field(pattern="^(kid|friend)$")
+    who: str = Field(min_length=1, max_length=64)     # kid id, or the friend's invite code
+
+
+def _group_base(db: DB, conv: str) -> dict:
+    """Only a friend's chat can take more people (the family and kids' chats already have everyone at home)."""
+    inv = _invite_for(db, conv)
+    if not inv or inv["revoked"]:
+        raise HTTPException(404, "Only a live chat with a friend can take more people.")
+    return inv
+
+
+@router.post("/api/parent/chats/{conv}/members", status_code=201)
+def add_member(conv: str, m: Member, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+               settings: Settings = Depends(get_settings)):
+    """Add a kid or another approved friend to a friend's chat, making it a group. They see what is said from now on,
+    not what was said before. Everyone in it still needs their own approved link (friends) or is a kid at home."""
+    inv = _group_base(db, conv)
+    if m.kind == "kid":
+        if not any(k.id == m.who for k in settings.kids) or m.who == inv["kid_id"]:
+            raise HTTPException(422, "That kid is already in this chat.")
+    else:
+        if m.who == inv["code"] or not db.one("SELECT 1 FROM invites WHERE code=? AND revoked=0", (m.who,)):
+            raise HTTPException(422, "Pick an approved friend who isn't in this chat yet.")
+    last = db.one("SELECT MAX(id) n FROM chat WHERE conv=?", (conv,))["n"] or 0
+    db.x("INSERT OR IGNORE INTO chat_members(conv,kind,who,from_id,added_by) VALUES(?,?,?,?,?)", (conv, m.kind, m.who, last, parent))
+    return {"ok": True}
+
+
+@router.delete("/api/parent/chats/{conv}/members/{kind}/{who}")
+def remove_member(conv: str, kind: str, who: str, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    db.x("DELETE FROM chat_members WHERE conv=? AND kind=? AND who=?", (conv, kind, who))
+    return {"ok": True}
+
+
+class ChatName(BaseModel):
+    name: str = Field(default="", max_length=40)
+
+
+@router.put("/api/parent/chats/{conv}/name")
+def name_chat(conv: str, body: ChatName, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    """A name for a chat, shown to everyone in it. Empty goes back to the list of names."""
+    if conv == FAMILY or (conv != KIDS and not _invite_for(db, conv)):
+        raise HTTPException(404, "That chat can't be renamed.")
+    if body.name.strip():
+        db.x("INSERT INTO chat_names(conv,name) VALUES(?,?) ON CONFLICT(conv) DO UPDATE SET name=excluded.name", (conv, body.name.strip()))
+    else:
+        db.x("DELETE FROM chat_names WHERE conv=?", (conv,))
+    return {"ok": True}
 
 
 @router.get("/api/parent/chats/{conv}")

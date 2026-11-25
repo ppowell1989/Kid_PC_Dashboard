@@ -225,6 +225,27 @@ CREATE TABLE IF NOT EXISTS kids_added (      -- kids a parent added from the das
     added_by        TEXT NOT NULL DEFAULT '',
     added_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS devices (         -- each computer a kid's PC software runs on, from its check-ins
+    kid_id     TEXT NOT NULL,
+    computer   TEXT NOT NULL,                 -- Windows' computer name
+    name       TEXT NOT NULL DEFAULT '',      -- a parent's name for it: "Adam's PC", "Adam's laptop"
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (kid_id, computer)
+);
+CREATE TABLE IF NOT EXISTS chat_members (    -- people a parent added to a chat beyond its own kid and friend
+    conv     TEXT NOT NULL,
+    kind     TEXT NOT NULL,                   -- kid / friend
+    who      TEXT NOT NULL,                   -- kid id, or the friend's invite code
+    from_id  INTEGER NOT NULL DEFAULT 0,      -- they see messages after this one, not what was said before
+    added_by TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (conv, kind, who)
+);
+CREATE TABLE IF NOT EXISTS chat_names (      -- a parent's name for a chat ("Minecraft crew")
+    conv TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
 """
 
 

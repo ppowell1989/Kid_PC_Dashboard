@@ -42,7 +42,7 @@
       <button data-tab="web" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Web</span></button>
       <button data-tab="messages"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span><span id="chatDot"></span></button>
       <button data-tab="connections" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/></svg><span>Connections</span></button>
-      <button data-tab="family" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14a6 6 0 013.5 6"/></svg><span>Family &amp; devices</span><span id="pcDot"></span></button>
+      <button data-tab="family" class="extra"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14a6 6 0 013.5 6"/></svg><span>Family &amp; Devices</span><span id="pcDot"></span></button>
       <button id="moreBtn" type="button" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>More</span><span id="moreDot"></span></button>
     </nav>
   </header>
@@ -114,7 +114,7 @@
   </section>
 
   <section data-panel="family" hidden>
-    <h2 class="title">Family &amp; devices</h2>
+    <h2 class="title">Family &amp; Devices</h2>
     <p class="lead" id="pcSummary"></p>
     <div id="pcs"></div>
     <form id="kidForm" class="card">
@@ -197,7 +197,12 @@
 
   <section data-panel="messages" hidden>
     <h2 class="title">Messages and calls</h2>
-    <p class="muted wideonly">The chats open in the bar at the bottom right. Every message, picture and link is there for you to read.</p>
+    <div id="msgWho" class="seg" role="tablist" aria-label="Whose messages and calls"></div>
+    <h2 class="sub">Chats</h2>
+    <p class="hint">Every chat, picture and link is yours to read. Add someone to a friend's chat to make it a group, so the kids have fewer chats to keep up with.</p>
+    <ul id="chatList" class="list chats"></ul>
+    <h2 class="sub">Voice calls</h2>
+    <ul id="calls" class="list"></ul>
     <h2 class="sub">Approved friends</h2>
     <p class="hint">Each friend has a standing link: it opens voice and text chat with that kid in any browser, and works again whenever they come back. Revoke ends both at once.</p>
     <ul id="invites" class="list friends"></ul>
@@ -205,11 +210,9 @@
       <h2>Invite friends</h2>
       <label>To talk with <select name="kid_id" id="inviteKid"></select></label>
       <label>Friends' names <input name="friend_name" required placeholder="Sam, or Sam, Alex, Jo for a group"></label>
-      <p class="muted">Several names make one link each. Everyone with a link to the same kid joins the same voice call, so a group can talk together.</p>
+      <p class="muted">Several names make one link each. Everyone with a link to the same kid joins the same voice call. To text as a group, add them to one chat with Add someone.</p>
       <button class="wide">Make the links</button>
     </form>
-    <h2 class="sub">Recent calls</h2>
-    <ul id="calls" class="list"></ul>
   </section>
 
   <section data-panel="connections" hidden>
@@ -228,6 +231,7 @@
     <h2 id="sheetTitle"></h2>
     <p id="sheetText" class="muted"></p>
     <input id="sheetInput" maxlength="300" autocomplete="off">
+    <div id="addPick" class="addpick" hidden></div>
     <div class="actions rev">
       <button value="ok" id="sheetOk">OK</button>
       <button value="cancel" id="sheetCancel" class="ghost" formnovalidate>Cancel</button>

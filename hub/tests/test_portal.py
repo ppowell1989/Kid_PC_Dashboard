@@ -70,3 +70,54 @@ def test_add_a_kid_from_the_dashboard(parent):
     code = parent.post("/api/parent/kids/ellarose/setup-code").json()["code"]
     assert code
     assert parent.get("/api/parent/devices").json()["ellarose"] == {"devices": [], "added_here": True}
+
+
+# --------------------------------------------------------------------------- second review round
+
+def test_group_chat_add_friend_and_kid_rename_and_history_floor(parent):
+    from tests.test_chat import BARRETT
+    from tests.test_chat import invite
+    sam, leo = invite(parent, "adam", "Sam"), invite(parent, "adam", "Leo")
+    conv = parent.get(f"/join/{sam}/chat").json()["conv"]
+    parent.post(f"/join/{sam}/chat", json={"text": "secret before Leo"})
+    assert parent.post(f"/api/parent/chats/{conv}/members", json={"kind": "friend", "who": leo}).status_code == 201
+    assert parent.post(f"/api/parent/chats/{conv}/members", json={"kind": "kid", "who": "barrett"}).status_code == 201
+    assert parent.post(f"/api/parent/chats/{conv}/members", json={"kind": "kid", "who": "adam"}).status_code == 422
+    parent.post(f"/join/{sam}/chat", json={"text": "hi everyone"})
+    # Leo now has two chats and sees only what came after he was added.
+    lj = parent.get(f"/join/{leo}/chat?conv={conv}").json()
+    assert len(lj["convs"]) == 2 and [m["text"] for m in lj["messages"]] == ["hi everyone"]
+    assert parent.post(f"/join/{leo}/chat", json={"text": "hey", "conv": conv}).status_code == 201
+    # Barrett sees the group on his PC, and only the new messages.
+    bc = {c["id"]: c for c in parent.get("/api/device/chats", headers=BARRETT).json()["convs"]}
+    assert bc[conv]["kind"] == "group" and "Sam" in bc[conv]["title"]
+    assert [m["text"] for m in parent.get(f"/api/device/chat?conv={conv}", headers=BARRETT).json()] == ["hi everyone", "hey"]
+    # Adam sees all of it; the parents name the group.
+    assert parent.put(f"/api/parent/chats/{conv}/name", json={"name": "Minecraft crew"}).status_code == 200
+    ac = {c["id"]: c for c in parent.get("/api/device/chats", headers=ADAM).json()["convs"]}
+    assert ac[conv]["title"] == "Minecraft crew"
+    pc = next(c for c in parent.get("/api/parent/chats").json()["convs"] if c["id"] == conv)
+    assert pc["kind"] == "group" and set(pc["kid_ids"]) == {"adam", "barrett"} and len(pc["members"]) == 2
+    # Taking Barrett out closes it on his PC; a stranger's code can't read it.
+    parent.delete(f"/api/parent/chats/{conv}/members/kid/barrett")
+    assert parent.get(f"/api/device/chat?conv={conv}", headers=BARRETT).status_code == 404
+    assert parent.put("/api/parent/chats/family/name", json={"name": "x"}).status_code == 404
+
+
+def test_devices_come_from_check_ins_and_can_be_named(parent):
+    parent.post("/api/device/heartbeat", headers=ADAM, json={"computer": "DESKTOP-7F3K"})
+    d = parent.get("/api/parent/devices").json()["adam"]["devices"]
+    assert [x["computer"] for x in d] == ["DESKTOP-7F3K"] and d[0]["name"] == ""
+    parent.put("/api/parent/devices/adam/name", json={"computer": "DESKTOP-7F3K", "name": "Adam's PC"})
+    assert parent.get("/api/parent/devices").json()["adam"]["devices"][0]["name"] == "Adam's PC"
+
+
+def test_calls_list_who_was_in_them(parent):
+    from tests.test_chat import invite
+    code = invite(parent, "adam", "Sam")
+    parent.post(f"/api/voice/join/{code}")
+    for _ in range(2):
+        parent.post("/api/device/heartbeat", headers=ADAM, json={"voice": "friends"})
+    calls = parent.get("/api/parent/calls?kid=adam").json()
+    assert calls and calls[0]["with"] == ["Sam"] and calls[0]["room"] == "Friends' voice"
+    assert parent.get("/api/parent/calls?kid=barrett").json() == []
