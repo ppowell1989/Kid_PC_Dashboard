@@ -51,7 +51,12 @@ class SkylightError(Exception):
 
 def load(db: DB) -> dict:
     row = db.one("SELECT value FROM kv WHERE key=?", (KEY,))
-    return {**DEFAULTS, **(json.loads(row["value"]) if row else {})}
+    cfg = {**DEFAULTS, **(json.loads(row["value"]) if row else {})}
+    # Skylight ids are compared as strings everywhere (balances are keyed by str); older saves held numbers
+    cfg["members"] = {k: str(v) for k, v in (cfg.get("members") or {}).items() if v not in (None, "")}
+    if cfg.get("frame_id") is not None:
+        cfg["frame_id"] = str(cfg["frame_id"])
+    return cfg
 
 
 def save(db: DB, cfg: dict) -> None:
@@ -228,7 +233,8 @@ def _rows(doc: dict | list) -> list[dict]:
     data = doc.get("data") or []
     out = []
     for d in data if isinstance(data, list) else [data]:
-        row = {"id": str(d.get("id", "")), "type": d.get("type", ""), **(d.get("attributes") or {})}
+        # attributes can carry their own numeric "id"; the string one from the row wins, so ids always match
+        row = {**(d.get("attributes") or {}), "id": str(d.get("id", "")), "type": d.get("type", "")}
         for name, rel in (d.get("relationships") or {}).items():
             if isinstance(rel, dict) and isinstance(rel.get("data"), dict):
                 row[f"{name}_id"] = str(rel["data"].get("id", ""))

@@ -17,8 +17,8 @@ class FakeSkylight:
         if path == "/frames":
             return {"data": [{"id": "900", "type": "frame", "attributes": {"name": "Powell home"}}]}
         if path.endswith("/categories"):
-            return {"data": [{"id": "11", "attributes": {"label": "Adam", "linked_to_profile": True}},
-                             {"id": "12", "attributes": {"label": "Barrett", "linked_to_profile": True}},
+            return {"data": [{"id": "11", "attributes": {"id": 11, "label": "Adam ", "linked_to_profile": True}},
+                             {"id": "12", "attributes": {"id": 12, "label": "Barrett", "linked_to_profile": True}},
                              {"id": "13", "attributes": {"label": "Groceries"}}]}
         if path.endswith("/reward_points") and method == "GET":
             return [{"category_id": int(k), "current_point_balance": v, "lifetime_points_earned": 100} for k, v in self.points.items()]
@@ -52,7 +52,7 @@ def test_link_matches_kids_and_buys_time(parent, sky):
     link(parent)
     d = parent.get("/api/parent/skylight").json()
     assert d["frame_id"] == "900" and d["members"] == {"adam": "11", "barrett": "12"}
-    assert [p["name"] for p in d["people"]] == ["Adam", "Barrett"] and d["balances"]["11"] == 25
+    assert [p["name"] for p in d["people"]] == ["Adam ", "Barrett"] and d["balances"]["11"] == 25
 
     pts = parent.get("/api/device/rules", headers=ADAM).json()["points"]
     assert pts == {"balance": 25, "price_points": 10, "price_minutes": 15, "can_buy": True, "why": "", "left_today": 30}
@@ -86,3 +86,13 @@ def test_not_enough_points_and_settings(parent, sky):
 def test_balance_shapes():
     assert skylight._rows([{"category_id": 11, "current_point_balance": 3}])[0]["id"] == "11"
     assert skylight._balance_of({"current_point_balance": 7}) == 7 and skylight._balance_of({"x_balance": 2}) == 2
+
+
+def test_members_saved_as_numbers_still_show_points(parent, sky):
+    """Real Skylight puts a numeric id inside the attributes too; a hub that saved those numbers must still match."""
+    link(parent)
+    db = parent.app.state.db
+    skylight.save(db, {**skylight.load(db), "frame_id": 900, "members": {"adam": 11, "barrett": 12}})
+    parent.get("/api/parent/skylight")
+    assert parent.get("/api/device/rules", headers=ADAM).json()["points"]["balance"] == 25
+    assert all(isinstance(p["id"], str) for p in parent.get("/api/parent/skylight").json()["people"])
