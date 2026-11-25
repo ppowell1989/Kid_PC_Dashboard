@@ -209,7 +209,7 @@ async function loadRequests() {
   loadStuck().catch(() => { $("#stuck").innerHTML = ""; });
   loadHeld().catch(() => { $("#heldBox").innerHTML = ""; });
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
-  state.shownReqs = reqs.map((r) => r.id).join(",");
+  state.shownSig = "";   // the next check takes the page as it is now
   $("#requests").innerHTML = reqs.length ? reqs.map((r) => {
     const what = r.kind === "time" ? `${esc(r.detail)} more minutes` : r.kind === "game" ? `Game: ${esc(r.detail)}` : `Site: ${esc(r.detail)}`;
     const gamePick = r.kind === "game"
@@ -784,12 +784,15 @@ $("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention()
 $("#needs").onclick = (e) => { if (e.target.closest("[data-go]")) go("requests"); };
 refresh().catch(() => {});
 setInterval(() => { if (!$("#app").hidden && !$('[data-panel="home"]').hidden) refresh().catch(() => {}); }, 10000);
-// Requests open on the screen: a new ask from a kid shows up by itself, without wiping a game a parent is choosing.
+// Requests open on the screen: a new ask from a kid, a newly stuck install or a held picture shows up by itself,
+// without wiping a game a parent is choosing (the page only redraws when one of those changes).
 setInterval(async () => {
   if ($("#app").hidden || $('[data-panel="requests"]').hidden || document.hidden) return;
   try {
-    const ids = (await api("/api/parent/requests")).map((r) => r.id).join(",");
-    if (ids !== state.shownReqs) { loadRequests().catch(() => {}); refresh().catch(() => {}); }
+    const [reqs, o] = await Promise.all([api("/api/parent/requests"), api("/api/parent/overview")]);
+    const sig = reqs.map((r) => r.id).join(",") + "|" + o.kids.map((k) => (k.installs || {}).needs || 0).join(",") + "|" + (o.held_pictures || 0);
+    if (state.shownSig && sig !== state.shownSig) { loadRequests().catch(() => {}); refresh().catch(() => {}); }
+    state.shownSig = sig;
   } catch {}
 }, 10000);
 
