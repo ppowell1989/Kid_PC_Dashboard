@@ -60,7 +60,7 @@ async function refresh() {
   state.kids = o.kids;
   const pending = o.kids.reduce((n, k) => n + k.pending, 0);
   $("#reqCount").textContent = pending || "";
-  $("#kids").innerHTML = o.kids.map((k) => {
+  const html = o.kids.map((k) => {
     const t = k.time, total = t.allowance + t.granted, left = total ? Math.max(0, Math.min(100, (t.minutes_left / total) * 100)) : 0;
     const status = k.online ? (k.running ? `Playing <b>${esc(k.running)}</b>` : "On the home screen") : "Offline";
     const reason = { time: "out of time", bedtime: "bedtime", paused: "paused", outside_hours: "not play time" }[t.lock_reason] || t.lock_reason;
@@ -104,7 +104,7 @@ async function refresh() {
       <div class="actions even">
         ${t.lock_reason === "paused"
           ? `<button class="good" data-resume="${k.id}">Resume</button>`
-          : `<button class="hot" data-pause="${k.id}">Pause now</button>`}
+          : `<button class="hot" data-pause="${k.id}" title="Locks his PC now, until you press Resume or midnight">Pause now</button>`}
         <button data-msg="${k.id}">Message</button>
       </div>
       <div class="actions even">
@@ -116,6 +116,17 @@ async function refresh() {
       <details data-activity="${k.id}"><summary class="muted">Activity</summary><ul class="list"></ul></details>
     </div>`;
   }).join("");
+  // This runs every 10 seconds. Rebuilding the cards would close an open Activity list and lose its contents
+  // (and jump the page), so leave the cards alone when nothing changed, and keep open lists open when it did.
+  if (html === refresh.last) { fillKidSelects(); loadFamily().catch(() => {}); return; }
+  const open = {};
+  document.querySelectorAll("[data-activity]").forEach((d) => { if (d.open) open[d.dataset.activity] = d.querySelector("ul").innerHTML; });
+  refresh.last = html;
+  $("#kids").innerHTML = html;
+  for (const [id, rows] of Object.entries(open)) {
+    const d = $(`[data-activity="${CSS.escape(id)}"]`);
+    if (d) { d.querySelector("ul").innerHTML = rows; d.open = true; d.dataset.loaded = "1"; }
+  }
   document.querySelectorAll("[data-grant]").forEach((b) => (b.onclick = async () => {
     await api(`/api/parent/kids/${b.dataset.grant}/grant`, { method: "POST", body: { minutes: +b.dataset.min } });
     refresh();
@@ -167,6 +178,7 @@ async function refresh() {
   }));
   document.querySelectorAll("[data-activity]").forEach((d) => (d.ontoggle = async () => {
     if (!d.open) return;
+    if (d.dataset.loaded) { delete d.dataset.loaded; return; }   // just restored after a refresh
     const a = await api(`/api/parent/kids/${d.dataset.activity}/activity`);
     const label = { battlenet_products: "Battle.net knows these WoW versions", game_installed: "Game installed", game_install_started: "Started installing", game_install_failed: "Game didn't install", game_install_no_space: "PC is full", game_install_not_owned: "Not in his library", game_install_needs_signin: "Store needs a sign-in", stopped_time_up: "Stopped (time up)", game_blocked: "Blocked unapproved", app_installed: "Installed", app_install_failed: "Install failed", launcher_missing: "Needs a launcher", launch_failed: "Couldn't start", browser_blocked: "Closed other browser", web_filter: "Web filter set", offline_play: "Played offline", tool_blocked: "Closed a Windows tool he shouldn't have", shell_restarted: "His screen was closed and was started again", lockdown_restored: "A Windows setting was changed on his PC and was put back" };
     const rows = [
@@ -321,8 +333,19 @@ function gameFacts(h, p) {
 }
 
 let gameHits = [];
+// ESRB order for the "Rated up to" menu. RP (rating pending) and unrated games count as unknown: shown, marked.
+const ESRB_RANK = { EC: 0, E: 1, "E10+": 2, T: 3, M: 4, AO: 5 };
+const overCap = (h) => { const max = $("#gameMax").value; return !!max && (h.adult || (h.esrb in ESRB_RANK && ESRB_RANK[h.esrb] > ESRB_RANK[max])); };
+function gameNote() {
+  const note = $("#gameSearchNote"), hidden = gameHits.filter(overCap).length, shown = gameHits.length - hidden;
+  if (!gameHits.length) return;
+  note.textContent = (shown ? "Tap a store to choose where he gets it." : "Every match is rated above your limit.")
+    + (hidden ? ` ${hidden} game${hidden > 1 ? "s" : ""} rated above ${$("#gameMax").selectedOptions[0].textContent.replace(/^Up to |^Rated | only$/g, "")} hidden.` : "");
+}
+const SEARCH_NOTE = "Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.";
 function renderGameHits() {
   $("#gameResults").innerHTML = gameHits.map((h, i) => {
+    if (overCap(h)) return "";
     const p = h.platforms[h.pick ?? h.default ?? 0];
     const kids = state.kids.map((k) => `<label><input type="checkbox" data-hitkid="${i}" value="${k.id}" checked> ${esc(k.name)}</label>`).join("");
     return `<li>${h.image_url ? `<img class="art" src="${esc(h.image_url)}" alt="" loading="lazy">` : ""}
@@ -346,10 +369,15 @@ $("#gameSearch").onsubmit = async (e) => {
   try {
     const r = await api(`/api/parent/games/search?q=${encodeURIComponent(q)}`);
     gameHits = r.results;
-    note.textContent = !gameHits.length ? "No games found. Try a shorter name." : r.xbox === "unavailable" ? "Couldn't reach the Xbox catalogue just now, so Game Pass isn't shown." : "Tap a store to choose where he gets it.";
+    if (!gameHits.length) note.textContent = "No games found. Try a shorter name.";
+    else { gameNote(); if (r.xbox === "unavailable") note.textContent += " Couldn't reach the Xbox catalogue just now, so Game Pass isn't shown."; }
   } catch (err) { note.textContent = err.message; }
   renderGameHits();
 };
+// Clearing the box (the x, or deleting the words) clears the results too, ready for a new search.
+$("#gameSearch").q.oninput = (e) => { if (!e.target.value.trim()) { gameHits = []; renderGameHits(); $("#gameSearchNote").textContent = SEARCH_NOTE; } };
+// The rating menu filters what is already showing; no new search needed.
+$("#gameMax").onchange = () => { renderGameHits(); gameNote(); };
 
 // PCs: like an IT office's view of its computers, in plain words. Every approved game on every PC, how far
 // along it is, and the one thing to do when it's stuck. The hub writes the words (installs.py).
@@ -780,25 +808,7 @@ $("#ptSave").onclick = async (e) => {
     for (const k of kids.length ? kids : [pt.kid]) await api(`/api/parent/playtimes/${k}`, { method: "PUT", body });
   } catch (err) { $("#ptErr").textContent = err.message; return; }
   $("#ptSheet").close();
-  loadPlaytimes().catch(oops); // History and clean-up (Now tab) ---------------------------------------------
-const keepLabel = (d) => (d === 0 ? "Forever" : d === 1 ? "1 day" : d === 365 ? "1 year" : `${d} days`);
-async function loadRetention() {
-  const r = await api("/api/parent/retention");
-  $("#retention").innerHTML = r.kinds.map((k) => `<li class="split keep"><span>${esc(k.label)}</span><span class="inrow">
-      <select data-keep="${k.kind}" aria-label="Keep ${esc(k.label)} for">${r.choices.map((d) => `<option value="${d}" ${d === k.days ? "selected" : ""}>${keepLabel(d)}</option>`).join("")}</select>
-      <button class="ghost small" data-clearkind="${k.kind}" data-label="${esc(k.label)}">Clear</button></span></li>`).join("");
-  document.querySelectorAll("[data-keep]").forEach((s) => (s.onchange = async () => {
-    try { await api("/api/parent/retention", { method: "PUT", body: { days: { [s.dataset.keep]: +s.value } } }); } catch (err) { oops(err); }
-    loadRetention();
-  }));
-  document.querySelectorAll("[data-clearkind]").forEach((b) => (b.onclick = async () => {
-    if (!await sheet({ title: `Clear ${b.dataset.label.toLowerCase()}?`, text: "This deletes all of it now, for both kids. It can't be undone.", ok: "Clear", kind: "bad" })) return;
-    try { const r = await api(`/api/parent/history/${b.dataset.clearkind}`, { method: "DELETE" }); b.textContent = `Cleared ${r.deleted}`; b.disabled = true; } catch (err) { oops(err); }
-  }));
-}
-$("#historyCard").ontoggle = () => { if ($("#historyCard").open) loadRetention().catch(oops); };
-
-refresh().catch(() => {});
+  loadPlaytimes().catch(oops);
 };
 
 // Chat ----------------------------------------------------------------------

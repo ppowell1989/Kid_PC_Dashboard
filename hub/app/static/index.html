@@ -93,22 +93,20 @@
 
   <section data-panel="games" hidden>
     <h2 class="title">Games</h2>
-    <!-- Whose games: everyone, or one kid (his games, most played lately first); and a quick filter by name -->
-    <div class="gamebar">
-      <div id="gameWho" class="seg" role="tablist" aria-label="Whose games"></div>
-      <input id="gameFilter" type="search" placeholder="Find a game" autocomplete="off" aria-label="Find a game in the catalogue">
-    </div>
-    <ul id="games" class="gamegrid"></ul>
     <div class="card addgame">
       <h2>Add a game</h2>
       <form id="gameSearch" class="row" role="search">
         <input name="q" type="search" placeholder="Type a game's name, like Minecraft" autocomplete="off" required>
+        <select name="max" id="gameMax" aria-label="Rated up to">
+          <option value="">Any rating</option><option value="E">Rated E only</option><option value="E10+">Up to E10+</option>
+          <option value="T" selected>Up to T</option><option value="M">Up to M</option>
+        </select>
         <button>Search</button>
       </form>
       <p class="muted" id="gameSearchNote">Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.</p>
       <ul id="gameResults" class="list results"></ul>
       <details>
-        <summary>Add one by hand (launcher and id)</summary>
+        <summary>Advanced: add a game the search can't find (launcher and id)</summary>
         <form id="gameForm">
           <label>Launcher
             <select name="launcher">
@@ -120,12 +118,18 @@
           </label>
           <label>Steam store link or app id <input name="launch_ref" placeholder="store.steampowered.com/app/291550 or 291550" required></label>
           <label>Title <input name="title" placeholder="Leave blank for Steam: filled in from the store"></label>
-          <label>Rating <input name="rating" placeholder="E10+"></label>
+          <label>Rating label <input name="rating" placeholder="E10+"><small class="muted">Shown with the game. To filter search results, use the menu next to Search.</small></label>
           <fieldset id="gameKids"><legend>Approved for</legend></fieldset>
           <button class="wide">Add game</button>
         </form>
       </details>
     </div>
+    <!-- Whose games: everyone, or one kid (his games, most played lately first); and a quick filter by name -->
+    <div class="gamebar">
+      <div id="gameWho" class="seg" role="tablist" aria-label="Whose games"></div>
+      <input id="gameFilter" type="search" placeholder="Find a game" autocomplete="off" aria-label="Find a game in the catalogue">
+    </div>
+    <ul id="games" class="gamegrid"></ul>
     <!-- Ideas: the same shelves the kids browse on "Get more games", with a rating limit per kid -->
     <div class="card ideas">
       <h2>Ideas for the kids</h2>

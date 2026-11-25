@@ -401,8 +401,13 @@ button.small.attn { color: var(--bad-text); }
   }
   section[data-panel="games"] > .title, section[data-panel="voice"] > .title { grid-column: 1 / -1; }
   section[data-panel="games"] > form, section[data-panel="voice"] > form { position: sticky; top: 36px; margin: 0; }
-  section[data-panel="games"] > .gamebar, #games, section[data-panel="games"] > .ideas { grid-column: 1; }
-  section[data-panel="games"] > .addgame { grid-column: 2; grid-row: 2 / span 3; position: sticky; top: 36px; margin: 0; }
+  /* Games: search full width at the top (results right under it), then the library, then ideas */
+  section[data-panel="games"]:not([hidden]) { display: block; }
+  section[data-panel="games"] > .addgame { margin: 0 0 22px; }
+  #gameSearch { max-width: 760px; }
+  #gameSearch select { flex: 0 0 170px; width: 170px; }
+  #gameResults { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  #gameResults li { margin: 0; }
   #games { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 18px; }
   .ideagrid { grid-auto-columns: 180px; gap: 16px; }
 

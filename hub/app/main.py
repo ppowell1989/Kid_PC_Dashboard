@@ -516,8 +516,20 @@ class Event(BaseModel):
 @app.post("/api/device/events", status_code=204)
 def device_events(events: list[Event], kid: Kid = Depends(current_device), db: DB = Depends(get_db)):
     for e in events[:100]:
+        if e.kind in SAME_AS_LAST_SKIPPED:
+            last = db.one("SELECT detail FROM events WHERE kid_id=? AND kind=? ORDER BY at DESC, id DESC LIMIT 1", (kid.id, e.kind))
+            if last and last["detail"] == e.detail:
+                continue   # the helper says this on every start; only a change is news
         db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, e.kind, e.detail, e.at))
     return Response(status_code=204)
+
+
+WEB_FILTER_WORDS = {"cloudflare_family": "family filter (blocks adult and harmful sites)", "adguard": "home network filter (AdGuard)",
+                    "none": "no filter"}
+# Events the PC repeats on every start (the web filter it set, the time zone it follows): kept once per change.
+SAME_AS_LAST_SKIPPED = {"web_filter", "timezone_set"}
+# Housekeeping no parent needs to read. Still stored (support and tests use them), never shown in Activity.
+HIDDEN_EVENTS = {"battlenet_products", "timezone_set"}
 
 
 @app.get("/api/device/update")
@@ -1103,7 +1115,18 @@ def parent_auto_update(kid_id: str, body: AutoUpdateIn, parent: str = Depends(cu
 @app.get("/api/parent/kids/{kid_id}/activity")
 def parent_activity(kid_id: str, limit: int = 50, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     kid_or_404(settings, kid_id)
-    events = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC LIMIT ?", (kid_id, min(limit, 500)))
+    rows = db.q("SELECT kind, detail, at FROM events WHERE kid_id=? ORDER BY at DESC, id DESC LIMIT ?", (kid_id, min(limit, 500) * 4))
+    events, prev_filter = [], {}
+    for e in reversed(rows):            # oldest first, so a repeated web filter line is dropped after its first
+        if e["kind"] in HIDDEN_EVENTS:
+            continue
+        if e["kind"] == "web_filter":
+            if prev_filter.get("v") == e["detail"]:
+                continue
+            prev_filter["v"] = e["detail"]
+            e = {**e, "detail": WEB_FILTER_WORDS.get(e["detail"], e["detail"])}
+        events.append(e)
+    events = events[::-1][:min(limit, 500)]
     cmds = db.q("SELECT kind, arg, state, result, created_by, created_at, done_at FROM commands WHERE kid_id=? ORDER BY id DESC LIMIT 20", (kid_id,))
     return {"events": events, "commands": cmds}
 

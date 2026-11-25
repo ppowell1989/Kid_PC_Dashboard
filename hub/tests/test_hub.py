@@ -671,3 +671,15 @@ def test_revoked_invites_can_be_cleared(parent):
     parent.delete(f"/api/parent/invites/{b['code']}")
     assert parent.delete("/api/parent/history/invites").json() == {"deleted": 1}
     assert parent.get("/api/parent/invites").json() == []
+
+
+def test_activity_drops_repeated_web_filter_and_housekeeping(parent):
+    """The helper reports the web filter on every start. Parents see it once, in words, and again only if it changes."""
+    from tests.conftest import ADAM
+    for i, d in enumerate(["cloudflare_family", "cloudflare_family", "cloudflare_family", "adguard"]):
+        parent.post("/api/device/events", headers=ADAM, json=[{"kind": "web_filter", "detail": d, "at": f"2026-11-24T0{i}:00:00"}])
+    parent.post("/api/device/events", headers=ADAM, json=[{"kind": "battlenet_products", "detail": "wow, wow_classic", "at": "2026-11-24T05:00:00"},
+                                                          {"kind": "game_blocked", "detail": "Fortnite", "at": "2026-11-24T06:00:00"}])
+    ev = parent.get("/api/parent/kids/adam/activity").json()["events"]
+    assert [e["kind"] for e in ev] == ["game_blocked", "web_filter", "web_filter"]
+    assert ev[2]["detail"].startswith("family filter")
