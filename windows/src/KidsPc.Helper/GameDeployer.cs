@@ -9,7 +9,7 @@ namespace KidsPc.Helper;
 /// <summary>Where one approved game stands on this PC, as reported to the hub. Retry is the hub's "Try again" round it belongs to.
 /// Stage is a few words on exactly what the store is doing right now ("Waiting for Steam", "Downloading", "Installing",
 /// "Checking files", "Paused"): it goes on the kid's tile and the parents' PCs page, so "on its way" is never all anyone sees.</summary>
-public sealed record GameInstallStatus(string State, string Detail = "", long DoneBytes = 0, long TotalBytes = 0, int Retry = 0, string Stage = "");
+public sealed record GameInstallStatus(string State, string Detail = "", long DoneBytes = 0, long TotalBytes = 0, int Retry = 0, string Stage = "", string StoreLog = "");
 
 /// <summary>
 /// Puts the games on the hub's install list onto this PC by themselves, like software pushed out by an IT office:
@@ -212,9 +212,10 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
                 : new("waiting", "Handing it to Steam. Steam starts or restarts in the background within a few minutes.", Stage: "Starting Steam");
         }
         var kicked = $"Steam was {(at.Restarted ? "restarted" : "started")} at {at.KickedAt.Value:h:mm tt} to pick it up";
+        var steamSaid = at.LogOffset >= 0 ? SteamLogTail(g.LaunchRef, at.LogOffset) : "";
         if (DateTimeOffset.Now - at.KickedAt > StuckAfter)
-            return new("stuck", $"{kicked}, but it hasn't downloaded anything since. Try again restarts Steam on the PC. If that doesn't work, open Steam on the PC and press Install on the game.", Stage: "Stuck");
-        return new("waiting", $"{kicked}. It hasn't started downloading yet; that usually takes a minute or two.", Stage: "Waiting for Steam");
+            return new("stuck", $"{kicked}, but it hasn't downloaded anything since. Try again restarts Steam on the PC. If that doesn't work, open Steam on the PC and press Install on the game.", Stage: "Stuck", StoreLog: steamSaid);
+        return new("waiting", $"{kicked}. It hasn't started downloading yet; that usually takes a minute or two.", Stage: "Waiting for Steam", StoreLog: steamSaid);
     }
 
     [GeneratedRegex("[^A-Za-z0-9 _.-]")]
@@ -291,6 +292,33 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
             return said;
         }
         catch { return null; }
+    }
+
+    [GeneratedRegex(@"^\[[^\]]*\]\s*")]
+    private static partial Regex LogStamp();
+
+    /// <summary>The last few lines Steam wrote about this game since the attempt began, without their time stamps, so a
+    /// parent (and whoever fixes this) can see Steam's own words when a game sits there without downloading. "" when
+    /// Steam hasn't said anything about it.</summary>
+    private string SteamLogTail(string appId, long from)
+    {
+        try
+        {
+            using var fs = new FileStream(SteamLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length < from) from = 0;
+            fs.Seek(from, SeekOrigin.Begin);
+            using var r = new StreamReader(fs);
+            var lines = new Queue<string>();
+            while (r.ReadLine() is { } line)
+            {
+                if (!line.Contains($"AppID {appId} ", StringComparison.OrdinalIgnoreCase)) continue;
+                lines.Enqueue(LogStamp().Replace(line, "").Trim());
+                if (lines.Count > 3) lines.Dequeue();
+            }
+            var said = string.Join(" | ", lines);
+            return said.Length > 300 ? said[^300..] : said;
+        }
+        catch { return ""; }
     }
 
     private static bool SteamRunning()

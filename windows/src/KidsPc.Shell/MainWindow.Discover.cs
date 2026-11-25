@@ -62,7 +62,11 @@ public partial class MainWindow
     /// <summary>The games he asked for that a parent hasn't answered yet, as small labels.</summary>
     private void BuildAsked(Rules rules)
     {
-        // Ones he sent in the last couple of minutes show straight away, before the hub's list catches up.
+        // Ones he sent in the last couple of minutes show straight away, before the hub's list catches up. Once a
+        // parent has said yes the game is in his list, so it stops waiting even inside those two minutes.
+        foreach (var t in _justAsked.Keys.Concat(_askedThisSession).Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Where(t => rules.Games.Any(g => string.Equals(g.Title, t, StringComparison.OrdinalIgnoreCase))).ToList())
+        { _justAsked.Remove(t); _askedThisSession.Remove(t); }
         var recent = _justAsked.Where(kv => DateTimeOffset.Now - kv.Value < TimeSpan.FromMinutes(2)).Select(kv => kv.Key);
         var asked = rules.PendingRequests.Where(r => r.Kind == "game").Select(r => r.Detail)
             .Concat(recent).Distinct(StringComparer.OrdinalIgnoreCase).ToList();

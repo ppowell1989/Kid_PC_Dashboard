@@ -159,3 +159,25 @@ def test_no_progress_since_the_last_check_is_said_plainly(parent, client):
     for _ in range(2):
         beat(client, {str(gid): {"state": "installing", "stage": "Downloading", "done_bytes": 1 << 30, "total_bytes": 4 << 30}})
     assert "hasn't moved" in pc(parent)["games"][0]["plain"]["text"]
+
+
+def test_the_same_install_problem_is_one_line_in_activity_not_one_per_flip(parent, client):
+    """Seen on Adam's PC: the PC going off and on flipped no_space -> waiting -> no_space, and Activity said it five times."""
+    gid = add(parent, "World of Warcraft: Forever", "wow_classic_era", launcher="direct")
+    full = {"state": "no_space", "detail": "It needs about 70 GB and the PC has 21.7 GB free."}
+    beat(client, {str(gid): {"state": "waiting"}})
+    for _ in range(3):
+        beat(client, {str(gid): full})
+        beat(client, {str(gid): {"state": "waiting"}})
+    kinds = [e["kind"] for e in parent.get("/api/parent/kids/adam/activity").json()["events"]]
+    assert kinds.count("game_install_no_space") == 1
+    beat(client, {str(gid): {"state": "no_space", "detail": "It needs about 70 GB and the PC has 5.0 GB free."}})
+    kinds = [e["kind"] for e in parent.get("/api/parent/kids/adam/activity").json()["events"]]
+    assert kinds.count("game_install_no_space") == 2     # a different problem is news
+
+
+def test_a_stuck_install_carries_the_stores_own_words(parent, client):
+    gid = add(parent)
+    said = "AppID 291550 update canceled : Failed to start update (No subscription)"
+    beat(client, {str(gid): {"state": "stuck", "stage": "Stuck", "store_log": said}})
+    assert pc(parent)["games"][0]["store_log"] == said

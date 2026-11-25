@@ -580,3 +580,8 @@ button.linkish { display: block; margin: 10px auto 0; }
 .list.chats .chips .chip button { padding: 0 4px; min-height: 0; margin-left: 2px; }
 .addpick { display: grid; gap: 6px; margin: 6px 0 12px; max-height: 260px; overflow: auto; }
 #msgWho { margin: 4px 0 8px; }
+
+/* A stuck install: the store's own log lines, folded away */
+.storelog { margin-top: 4px; font-size: 12px; }
+.storelog summary { cursor: pointer; color: var(--muted, #667); }
+.storelog code { display: block; white-space: pre-wrap; word-break: break-word; margin-top: 4px; }

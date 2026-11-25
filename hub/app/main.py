@@ -297,6 +297,7 @@ class GameInstallState(BaseModel):
     total_bytes: int = Field(default=0, ge=0)
     retry: int = 0               # the "Try again" round this report belongs to; an older round's report is ignored
     stage: str = Field(default="", max_length=60)   # what the store is doing right now, e.g. "Waiting for Steam", "Checking files"
+    store_log: str = Field(default="", max_length=300)   # the store's own last log lines about this game, as it wrote them
 
 
 class Heartbeat(BaseModel):
@@ -445,15 +446,19 @@ def save_install_reports(db: DB, kid: Kid, hb: Heartbeat, now: datetime) -> None
         moved = (rep.state, rep.stage, rep.detail, rep.done_bytes) != (cur["state"], cur["stage"] or "", cur["detail"] or "", cur["done_bytes"] or 0)
         changed_at = now.isoformat() if moved or not cur["changed_at"] else cur["changed_at"]
         rate = installs.speed(cur, rep.state, rep.done_bytes, now)
-        db.x("""INSERT INTO game_installs(kid_id,game_id,state,detail,done_bytes,total_bytes,at,stage,changed_at,rate) VALUES(?,?,?,?,?,?,?,?,?,?)
+        db.x("""INSERT INTO game_installs(kid_id,game_id,state,detail,done_bytes,total_bytes,at,stage,changed_at,rate,store_log) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(kid_id,game_id) DO UPDATE SET state=excluded.state, detail=excluded.detail,
                 done_bytes=excluded.done_bytes, total_bytes=excluded.total_bytes, at=excluded.at,
-                stage=excluded.stage, changed_at=excluded.changed_at, rate=excluded.rate""",
-             (kid.id, gid, rep.state, rep.detail, rep.done_bytes, rep.total_bytes, now.isoformat(), rep.stage, changed_at, rate))
+                stage=excluded.stage, changed_at=excluded.changed_at, rate=excluded.rate, store_log=excluded.store_log""",
+             (kid.id, gid, rep.state, rep.detail, rep.done_bytes, rep.total_bytes, now.isoformat(), rep.stage, changed_at, rate, rep.store_log))
         if rep.state != cur["state"] and cur["state"] is not None and rep.state in ("installed", "failed", "no_space", "not_owned", "needs_signin"):
             kind = "game_installed" if rep.state == "installed" else "game_install_" + ("failed" if rep.state == "failed" else rep.state)
-            db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)",
-                 (kid.id, kind, f"{cur['title']}{': ' + rep.detail if rep.detail and rep.state != 'installed' else ''}"[:300], now.isoformat()))
+            detail = f"{cur['title']}{': ' + rep.detail if rep.detail and rep.state != 'installed' else ''}"[:300]
+            # The same problem said again (the PC went off and on, a Try again that hit the same wall) is one line
+            # in Activity, not one per heartbeat flip. A day later it counts as news again.
+            since = (now - timedelta(hours=24)).isoformat()
+            if kind == "game_installed" or not db.one("SELECT 1 FROM events WHERE kid_id=? AND kind=? AND detail=? AND at>=?", (kid.id, kind, detail, since)):
+                db.x("INSERT INTO events(kid_id,kind,detail,at) VALUES(?,?,?,?)", (kid.id, kind, detail, now.isoformat()))
 
 
 @app.post("/api/device/requests", status_code=201)
@@ -1188,7 +1193,7 @@ def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
     on = installs.online(s["seen_at"] if s else None, now)
     launchers = {a["app"]: a for a in db.q("SELECT app,state,detail,at FROM device_apps WHERE kid_id=?", (kid.id,))}
     rows = db.q("""SELECT g.id AS game_id, g.title, g.launcher, g.launch_ref, g.image_url, a.auto_install AS install,
-                          i.state, i.detail, i.done_bytes, i.total_bytes, i.at, i.retry, i.stage, i.changed_at, i.rate
+                          i.state, i.detail, i.done_bytes, i.total_bytes, i.at, i.retry, i.stage, i.changed_at, i.rate, i.store_log
                    FROM approvals a JOIN games g ON g.id=a.game_id
                    LEFT JOIN game_installs i ON i.kid_id=a.kid_id AND i.game_id=a.game_id
                    WHERE a.kid_id=? ORDER BY g.title""", (kid.id,))
