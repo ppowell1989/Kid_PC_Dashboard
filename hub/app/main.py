@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, consoles, gamesearch, installs, retention, rules, updates, xbox
+from . import adguard, chat, media, consoles, gamesearch, installs, retention, rules, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
     app.state.updates_dir = updates.update_dir(os.environ.get("HUB_DB", "hub.db"))
     # Chat pictures sit next to the database, so a backup of the data folder has them too.
     app.state.chat_dir = retention.PICTURES_DIR = Path(os.environ.get("HUB_DB", "hub.db")).resolve().parent / "chat-pictures"
+    app.state.media = media.LocalStore(app.state.chat_dir)   # photos and clips stay on this box; screens get signed links
     seed_playtimes(app.state.db, settings)
     tasks = []
     pollers_on = os.environ.get("HUB_DISABLE_POLLERS") != "1"

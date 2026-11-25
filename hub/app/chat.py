@@ -27,10 +27,11 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import rules
+from . import media, rules
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import current_device, current_parent
@@ -38,14 +39,21 @@ from .security import current_device, current_parent
 router = APIRouter()
 
 FAMILY, KIDS, FRIEND = "family", "kids", "friend-"
-DEFAULTS = {"kids": True, "friends": True, "pictures": True, "links": True}
+DEFAULTS = {"kids": True, "friends": True, "pictures": True, "videos": True, "links": True}
 MAX_TEXT = 500
-MAX_PICTURE_BYTES = 8 * 1024 * 1024    # what a browser or the shell may send, before the hub shrinks it
+MAX_PICTURE_BYTES = 15 * 1024 * 1024   # what a browser or the shell may send, before the hub shrinks it (an iPhone photo is 2-6 MB)
+# Picture formats the hub takes in. Everything is re-saved as PNG or JPEG, so the kids' PCs and every browser can show it.
+# MPO is how iPhones and many cameras save an ordinary JPEG; HEIF/HEIC is the iPhone's own photo format.
+PICTURE_FORMATS = ("PNG", "JPEG", "MPO", "GIF", "WEBP", "BMP", "TIFF", "HEIF", "AVIF")
+MAX_VIDEO_BYTES = 100 * 1024 * 1024    # a 30-second phone clip in 4K is about this; the hub keeps a much smaller copy
+MAX_VIDEO_SECONDS = 30
+VIDEO_SIDE = 1280                       # longest side of the copy the hub keeps (720p)
+VIDEO_BRANDS = (b"qt  ", b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"3gp4", b"3gp5", b"dash")
 MAX_SIDE = 1600                        # longest side the hub keeps; plenty for a screenshot on a phone
 REMOVED = "A parent removed this message."
 LINK_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
 # Per sender, in memory: a friend's page is on the internet, so a stuck key or a script can't fill the hub.
-RATE = {"text": (30, 60), "picture": (10, 600)}    # at most N in so many seconds
+RATE = {"text": (30, 60), "picture": (10, 600), "video": (5, 600)}    # at most N in so many seconds
 _sent: dict[tuple[str, str], list[float]] = {}
 
 
@@ -53,8 +61,8 @@ def get_db(request: Request) -> DB:
     return request.app.state.db
 
 
-def pictures_dir(request: Request) -> Path:
-    return request.app.state.chat_dir
+def store(request: Request) -> media.LocalStore:
+    return request.app.state.media
 
 
 def chat_settings(db: DB) -> dict:
@@ -125,7 +133,7 @@ def live_friend(db: DB, code: str) -> dict:
 
 # --------------------------------------------------------------------------- messages
 
-COLS = "id, conv, sender, kid_id, friend, text, at, picture, links, flagged, removed_by"
+COLS = "id, conv, sender, kid_id, friend, text, at, picture, video, links, flagged, removed_by"
 
 
 def _rows(db: DB, conv: str, after: int, limit: int = 100) -> list[dict]:
@@ -136,18 +144,18 @@ def _rows(db: DB, conv: str, after: int, limit: int = 100) -> list[dict]:
 def _shown(m: dict, parent: bool) -> dict:
     """One message as a screen shows it. Kids and friends see a removed message as a short note; parents see it all."""
     out = {"id": m["id"], "conv": m["conv"], "sender": m["sender"], "kid_id": m["kid_id"], "friend": bool(m["friend"]),
-           "text": m["text"], "at": m["at"], "picture": bool(m["picture"]), "links": json.loads(m["links"] or "[]"),
+           "text": m["text"], "at": m["at"], "picture": bool(m["picture"]), "video": bool(m.get("video")), "links": json.loads(m["links"] or "[]"),
            "removed": bool(m["removed_by"])}
     if parent:
         out["flagged"] = bool(m["flagged"])
         out["removed_by"] = m["removed_by"]
     elif m["removed_by"]:
-        out.update(text=REMOVED, picture=False, links=[])
+        out.update(text=REMOVED, picture=False, video=False, links=[])
     return out
 
 
 def _post(db: DB, settings: Settings, conv: str, sender: str, kid_id: str | None, friend: bool, text: str,
-          picture: str = "", from_parent: bool = False) -> int:
+          picture: str = "", from_parent: bool = False, video: str = "") -> int:
     text = text.strip()
     if not text and not picture:
         raise HTTPException(422, "message is empty")
@@ -156,39 +164,59 @@ def _post(db: DB, settings: Settings, conv: str, sender: str, kid_id: str | None
         raise HTTPException(403, "Links are switched off in chat.")
     from .main import is_flagged
     now = rules.local_now(settings.timezone).isoformat(timespec="seconds")
-    return db.x("INSERT INTO chat(conv,sender,kid_id,friend,text,at,picture,links,flagged) VALUES(?,?,?,?,?,?,?,?,?)",
-                (conv, sender, kid_id, int(friend), text, now, picture, json.dumps(links), int(is_flagged(text, settings.flag_words))))
+    return db.x("INSERT INTO chat(conv,sender,kid_id,friend,text,at,picture,video,links,flagged) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (conv, sender, kid_id, int(friend), text, now, picture, video, json.dumps(links), int(is_flagged(text, settings.flag_words))))
 
 
-def save_picture(folder: Path, data: str) -> str:
+def _heif() -> None:
+    """Teach Pillow to open iPhone HEIC photos (once). Without the package the hub still runs, minus HEIC."""
+    global _heif_done
+    if _heif_done:
+        return
+    _heif_done = True
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except ImportError:
+        pass
+
+
+_heif_done = False
+
+
+def save_picture(st: media.LocalStore, data: str) -> str:
     """Checks the picture really is one, shrinks it, and re-saves it without hidden data (camera, GPS)."""
     from PIL import Image, ImageOps
+    _heif()
     try:
         raw = base64.b64decode(data.split(",", 1)[-1], validate=True)   # a browser's data: URL is fine too
     except (binascii.Error, ValueError):
         raise HTTPException(422, "That picture didn't come through. Try again.")
     if len(raw) > MAX_PICTURE_BYTES:
         raise HTTPException(413, "That picture is too big. Try a smaller one.")
-    Image.MAX_IMAGE_PIXELS = 40_000_000
+    Image.MAX_IMAGE_PIXELS = 60_000_000
     try:
         im = Image.open(io.BytesIO(raw))
         fmt = im.format
-        if fmt not in ("PNG", "JPEG", "GIF", "WEBP"):
-            raise HTTPException(422, "Only photos and screenshots can be sent (PNG, JPEG, GIF or WebP).")
+        if fmt not in PICTURE_FORMATS:
+            raise HTTPException(422, "That kind of picture can't be sent. Photos and screenshots work (JPEG, PNG, HEIC, GIF or WebP).")
+        im.seek(0)                         # GIF, MPO, HEIC bursts: the first picture
         im = ImageOps.exif_transpose(im)   # keep a phone photo the right way up once its EXIF is gone
         im.thumbnail((MAX_SIDE, MAX_SIDE))
     except HTTPException:
         raise
     except Exception:
+        if raw[4:8] == b"ftyp" and raw[8:12] in VIDEO_BRANDS:
+            raise HTTPException(422, "That's a video. Use the video button, or send a photo or screenshot.")
         raise HTTPException(422, "That file isn't a picture the hub can open.")
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = st.ready()
     if fmt == "PNG":   # screenshots: keep them sharp
-        name = secrets.token_hex(16) + ".png"
+        name = st.new_key("png")
         if im.mode not in ("RGB", "RGBA", "L", "LA"):
             im = im.convert("RGBA")
         im.save(folder / name, "PNG", optimize=True)
     else:
-        name = secrets.token_hex(16) + ".jpg"
+        name = st.new_key("jpg")
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA")
             bg = Image.new("RGB", im.size, "white")
@@ -200,15 +228,87 @@ def save_picture(folder: Path, data: str) -> str:
     return name
 
 
-def _picture_file(db: DB, folder: Path, mid: int, conv_ok) -> FileResponse:
-    m = db.one("SELECT conv, picture, removed_by FROM chat WHERE id=?", (mid,))
-    if not m or not m["picture"] or not conv_ok(m):
+def save_video(st: media.LocalStore, raw: bytes) -> tuple[str, str]:
+    """Checks a clip, keeps a small copy (720p H.264 MP4, at most 30 s, no location or camera data) and a still
+    picture from its start for the chat bubble. Returns (video key, picture key)."""
+    import json as _json
+    import shutil
+    import subprocess
+    if not raw:
+        raise HTTPException(422, "That video didn't come through. Try again.")
+    if len(raw) > MAX_VIDEO_BYTES:
+        raise HTTPException(413, "That video is too big. Try a shorter one.")
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise HTTPException(503, "Videos aren't set up on the home server yet.")
+    src = st.scratch(".in")
+    src.write_bytes(raw)
+    out_key, pic_key = st.new_key("mp4"), st.new_key("jpg")
+    out = st.ready() / out_key
+    try:
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=codec_type",
+                                "-of", "json", str(src)], capture_output=True, text=True, timeout=30)
+        info = _json.loads(probe.stdout or "{}")
+        if probe.returncode != 0 or not info.get("streams"):
+            raise HTTPException(422, "That file isn't a video the hub can open.")
+        seconds = float(info.get("format", {}).get("duration") or 0)
+        if seconds > MAX_VIDEO_SECONDS + 0.5:
+            raise HTTPException(422, f"Videos can be up to {MAX_VIDEO_SECONDS} seconds. This one is {round(seconds)} seconds.")
+        side = f"scale='if(gt(iw,ih),min({VIDEO_SIDE},iw),-2)':'if(gt(iw,ih),-2,min({VIDEO_SIDE},ih))'"
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-t", str(MAX_VIDEO_SECONDS), "-map", "0:v:0", "-map", "0:a:0?",
+                            "-map_metadata", "-1", "-map_chapters", "-1", "-vf", side, "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-movflags", "+faststart", str(out)],
+                           capture_output=True, text=True, timeout=240)
+        if r.returncode != 0 or not out.exists():
+            out.unlink(missing_ok=True)
+            raise HTTPException(422, "That video couldn't be converted. Try another one.")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(out), "-frames:v", "1", "-q:v", "4", str(st.ready() / pic_key)],
+                       capture_output=True, timeout=60)
+        if not (st.ready() / pic_key).exists():
+            pic_key = ""
+    except subprocess.TimeoutExpired:
+        out.unlink(missing_ok=True)
+        raise HTTPException(422, "That video took too long to convert. Try a shorter one.")
+    finally:
+        src.unlink(missing_ok=True)
+    return out_key, pic_key
+
+
+async def read_upload(request: Request, limit: int) -> bytes:
+    """The raw request body, refused as soon as it passes the limit."""
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(413, "That video is too big. Try a shorter one.")
+    return bytes(buf)
+
+
+def _media_link(request: Request, db: DB, mid: int, col: str, conv_ok) -> RedirectResponse:
+    """Access is checked here; the file itself is reached through a short-lived signed link (see media.py)."""
+    m = db.one(f"SELECT conv, {col} AS key, removed_by FROM chat WHERE id=?", (mid,))
+    if not m or not m["key"] or not conv_ok(m) or not store(request).path(m["key"]).exists():
         raise HTTPException(404)
-    path = folder / m["picture"]
+    return RedirectResponse(media.signed_link(get_settings().session_secret, m["key"]), status_code=307,
+                            headers={"Cache-Control": "private, max-age=600"})
+
+
+def _picture_file(request: Request, db: DB, mid: int, conv_ok) -> RedirectResponse:
+    return _media_link(request, db, mid, "picture", conv_ok)
+
+
+def _video_file(request: Request, db: DB, mid: int, conv_ok) -> RedirectResponse:
+    return _media_link(request, db, mid, "video", conv_ok)
+
+
+@router.get("/media/{key}")
+def media_file(key: str, exp: int, sig: str, request: Request):
+    """A photo or clip, for whoever holds a signed link. Reachable from outside the house, like /join."""
+    if not media.KEY_RE.match(key) or not media.link_ok(get_settings().session_secret, key, exp, sig):
+        raise HTTPException(404)
+    path = store(request).path(key)
     if not path.exists():
         raise HTTPException(404)
-    return FileResponse(path, media_type="image/png" if path.suffix == ".png" else "image/jpeg",
-                        headers={"Cache-Control": "private, max-age=86400"})
+    return FileResponse(path, media_type=media.TYPES[path.suffix], headers={"Cache-Control": "private, max-age=3600"})
 
 
 class ChatIn(BaseModel):
@@ -217,7 +317,7 @@ class ChatIn(BaseModel):
 
 
 class PictureIn(BaseModel):
-    data: str = Field(min_length=8, max_length=12_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
+    data: str = Field(min_length=8, max_length=21_000_000)    # base64 of at most MAX_PICTURE_BYTES, or a data: URL
     text: str = Field(default="", max_length=MAX_TEXT)
     conv: str = Field(default=FAMILY, max_length=40)
 
@@ -236,7 +336,7 @@ def device_chats(kid: Kid = Depends(current_device), db: DB = Depends(get_db), s
         off = locked and c["kind"] != "family"
         out.append({**c, "last_id": last, "last_other_id": other, "can_send": not off,
                     "note": "Off while the PC is locked" if off else ""})
-    return {"convs": out, "pictures": cs["pictures"], "links": cs["links"]}
+    return {"convs": out, "pictures": cs["pictures"], "videos": cs["videos"], "links": cs["links"]}
 
 
 @router.get("/api/device/chat")
@@ -260,7 +360,7 @@ def device_chat_picture(p: PictureIn, request: Request, kid: Kid = Depends(curre
     if not chat_settings(db)["pictures"]:
         raise HTTPException(403, "Pictures are switched off in chat.")
     _limit(f"kid-{kid.id}", "picture")
-    name = save_picture(pictures_dir(request), p.data)
+    name = save_picture(store(request), p.data)
     return {"id": _post(db, settings, p.conv, kid.name, kid.id, False, p.text, picture=name)}
 
 
@@ -268,7 +368,31 @@ def device_chat_picture(p: PictureIn, request: Request, kid: Kid = Depends(curre
 def device_chat_picture_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
                              settings: Settings = Depends(get_settings)):
     mine = {c["id"] for c in kid_convs(db, settings, kid)}
-    return _picture_file(db, pictures_dir(request), mid, lambda m: m["conv"] in mine and not m["removed_by"])
+    return _picture_file(request, db, mid, lambda m: m["conv"] in mine and not m["removed_by"])
+
+
+def _videos_ok(db: DB) -> None:
+    if not chat_settings(db)["videos"]:
+        raise HTTPException(403, "Videos are switched off in chat.")
+
+
+@router.post("/api/device/chat/video", status_code=201)
+async def device_chat_video(request: Request, conv: str = FAMILY, text: str = "", kid: Kid = Depends(current_device),
+                            db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Body: the clip's bytes. Words with it go in ?text=."""
+    kid_conv(db, settings, kid, conv)
+    _videos_ok(db)
+    _limit(f"kid-{kid.id}", "video")
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, conv, kid.name, kid.id, False, text[:MAX_TEXT], picture=pic, video=vid)}
+
+
+@router.get("/api/device/chat/video/{mid}")
+def device_chat_video_file(mid: int, request: Request, kid: Kid = Depends(current_device), db: DB = Depends(get_db),
+                           settings: Settings = Depends(get_settings)):
+    mine = {c["id"] for c in kid_convs(db, settings, kid)}
+    return _video_file(request, db, mid, lambda m: m["conv"] in mine and not m["removed_by"])
 
 
 # --------------------------------------------------------------------------- friend's browser (invite link)
@@ -289,7 +413,7 @@ def friend_chat(code: str, after: int = 0, db: DB = Depends(get_db), settings: S
     msgs = [{**_shown(m, False), "mine": bool(m["friend"])} for m in _rows(db, conv, after)]
     for m in msgs:
         m.pop("kid_id")
-    return {"on": True, "kid_name": kid.name, "friend_name": inv["friend_name"], "pictures": cs["pictures"],
+    return {"on": True, "kid_name": kid.name, "friend_name": inv["friend_name"], "pictures": cs["pictures"], "videos": cs["videos"],
             "links": cs["links"], "messages": msgs}
 
 
@@ -312,7 +436,7 @@ def friend_chat_picture(code: str, p: PictureIn, request: Request, db: DB = Depe
     if not chat_settings(db)["pictures"]:
         raise HTTPException(403, "Pictures are switched off in chat.")
     _limit(f"friend-{code}", "picture")
-    name = save_picture(pictures_dir(request), p.data)
+    name = save_picture(store(request), p.data)
     return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, p.text, picture=name)}
 
 
@@ -320,7 +444,25 @@ def friend_chat_picture(code: str, p: PictureIn, request: Request, db: DB = Depe
 def friend_chat_picture_file(code: str, mid: int, request: Request, db: DB = Depends(get_db)):
     live_friend(db, code)
     conv = friend_conv(code)
-    return _picture_file(db, pictures_dir(request), mid, lambda m: m["conv"] == conv and not m["removed_by"])
+    return _picture_file(request, db, mid, lambda m: m["conv"] == conv and not m["removed_by"])
+
+
+@router.post("/join/{code}/chat/video", status_code=201)
+async def friend_chat_video(code: str, request: Request, text: str = "", db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    inv = live_friend(db, code)
+    _friend_ok(db)
+    _videos_ok(db)
+    _limit(f"friend-{code}", "video")
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, friend_conv(code), inv["friend_name"], None, True, text[:MAX_TEXT], picture=pic, video=vid)}
+
+
+@router.get("/join/{code}/chat/video/{mid}")
+def friend_chat_video_file(code: str, mid: int, request: Request, db: DB = Depends(get_db)):
+    live_friend(db, code)
+    conv = friend_conv(code)
+    return _video_file(request, db, mid, lambda m: m["conv"] == conv and not m["removed_by"])
 
 
 # --------------------------------------------------------------------------- parents' dashboard
@@ -344,7 +486,7 @@ def parent_chat_picture(p: PictureIn, request: Request, parent: str = Depends(cu
                         settings: Settings = Depends(get_settings)):
     if p.conv != FAMILY:
         raise HTTPException(403, "Parents write in the family chat. The other chats are for reading.")
-    name = save_picture(pictures_dir(request), p.data)
+    name = save_picture(store(request), p.data)
     return {"id": _post(db, settings, FAMILY, parent, None, False, p.text, picture=name, from_parent=True)}
 
 
@@ -401,7 +543,20 @@ def parent_shared(days: int = 0, parent: str = Depends(current_parent), db: DB =
 
 @router.get("/api/parent/chat/picture/{mid}")
 def parent_chat_picture_file(mid: int, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
-    return _picture_file(db, pictures_dir(request), mid, lambda m: True)
+    return _picture_file(request, db, mid, lambda m: True)
+
+
+@router.post("/api/parent/chat/video", status_code=201)
+async def parent_chat_video(request: Request, text: str = "", parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                            settings: Settings = Depends(get_settings)):
+    raw = await read_upload(request, MAX_VIDEO_BYTES)
+    vid, pic = await run_in_threadpool(save_video, store(request), raw)
+    return {"id": _post(db, settings, FAMILY, parent, None, False, text[:MAX_TEXT], picture=pic, video=vid, from_parent=True)}
+
+
+@router.get("/api/parent/chat/video/{mid}")
+def parent_chat_video_file(mid: int, request: Request, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
+    return _video_file(request, db, mid, lambda m: True)
 
 
 @router.delete("/api/parent/chat/{mid}")
@@ -417,6 +572,7 @@ class ChatSettings(BaseModel):
     kids: bool | None = None       # the brothers' own chat
     friends: bool | None = None    # chat with invited friends
     pictures: bool | None = None   # photos and screenshots
+    videos: bool | None = None     # clips up to 30 seconds
     links: bool | None = None      # web links in messages
 
 

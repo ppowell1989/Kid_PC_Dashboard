@@ -211,7 +211,8 @@ MIGRATIONS = [
     # Chat beyond the one family room: the kids' own chat and one chat per invited friend, with pictures and links.
     ("chat", "conv", "TEXT NOT NULL DEFAULT 'family'"),   # family / kids / friend-<hash of invite code>
     ("chat", "friend", "INTEGER NOT NULL DEFAULT 0"),     # 1 = an invited friend sent it from the invite page
-    ("chat", "picture", "TEXT DEFAULT ''"),               # file name in chat-pictures/ next to the database
+    ("chat", "picture", "TEXT DEFAULT ''"),               # media key of the picture (a clip's still frame for a video); see media.py
+    ("chat", "video", "TEXT DEFAULT ''"),                 # media key of a video clip
     ("chat", "links", "TEXT DEFAULT '[]'"),               # JSON list of the links in the text
     ("chat", "flagged", "INTEGER NOT NULL DEFAULT 0"),    # a word from the flag list (same list as searches)
     ("chat", "removed_by", "TEXT DEFAULT ''"),            # parent who hid it from the kids

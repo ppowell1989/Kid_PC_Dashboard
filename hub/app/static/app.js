@@ -852,8 +852,11 @@ function linked(text, links) {
   return out + esc(text.slice(at));
 }
 const picUrl = (id) => `/api/parent/chat/picture/${id}`;
+const vidUrl = (id) => `/api/parent/chat/video/${id}`;
+// A clip plays in place; its first frame shows until it is played.
+const clipHtml = (m, pic, vid) => `<video controls playsinline preload="none" ${m.picture ? `poster="${pic}"` : ""} src="${vid}"></video>`;
 function msgHtml(m) {
-  const pic = m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="Picture from ${esc(m.sender)}" loading="lazy"></a>` : "";
+  const pic = m.video ? clipHtml(m, picUrl(m.id), vidUrl(m.id)) : m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="Picture from ${esc(m.sender)}" loading="lazy"></a>` : "";
   const words = m.text ? (m.removed ? `<s>${linked(m.text, m.links)}</s>` : linked(m.text, m.links)) : "";
   const tools = [m.flagged ? `<span class="flag">Flagged words</span>` : "",
     m.removed ? `<span>Removed by ${esc(m.removed_by)}. Hidden from the kids.</span>` : !m.mine ? `<button type="button" data-remove="${m.id}">Remove</button>` : ""].filter(Boolean).join("");
@@ -876,7 +879,7 @@ async function loadChat() {
     const items = await api("/api/parent/chat-shared");
     const title = (m) => (chat.convs.find((c) => c.id === m.conv) || {}).title || "";
     log.innerHTML = `<div class="shared">${items.map((m) => `<div class="item">
-      ${m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="" loading="lazy"></a>` : ""}
+      ${m.video ? clipHtml(m, picUrl(m.id), vidUrl(m.id)) : m.picture ? `<a href="${picUrl(m.id)}" target="_blank"><img src="${picUrl(m.id)}" alt="" loading="lazy"></a>` : ""}
       <b>${esc(m.sender)}</b> <span class="muted">in ${esc(m.conv === "family" ? "Family" : title(m))}</span><br>
       ${m.removed ? "<s>" : ""}${linked(m.text, m.links)}${m.removed ? "</s> <span class='muted'>(removed)</span>" : ""}
       <div class="muted">${esc(new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</div></div>`).join("")
@@ -915,9 +918,18 @@ $("#chatPic").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  if (file.size > 8 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
-  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
   const text = $("#chatForm").text.value.trim();
+  if (file.type.startsWith("video/")) {
+    if (file.size > 100 * 1024 * 1024) return oops(new Error("That video is too big. Videos can be up to 30 seconds."));
+    try {
+      const r = await fetch(`/api/parent/chat/video?text=${encodeURIComponent(text)}`, { method: "POST", credentials: "same-origin", body: file });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      $("#chatForm").text.value = "";
+    } catch (err) { return oops(err); }
+    return loadChat().catch(() => {});
+  }
+  if (file.size > 15 * 1024 * 1024) return oops(new Error("That picture is too big. Try a smaller one."));
+  const data = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
   try { await api("/api/parent/chat/picture", { method: "POST", body: { data, text } }); $("#chatForm").text.value = ""; } catch (err) { return oops(err); }
   loadChat().catch(() => {});
 };
@@ -933,6 +945,7 @@ async function loadChatSettings() {
     ${sw("kids", "Brothers chat with each other", "A chat just for the kids. You can read it, but don't write in it.")}
     ${sw("friends", "Chat with invited friends", "Each friend with a link can type with that kid, from the same page as voice.")}
     ${sw("pictures", "Pictures", "Photos and screenshots. The hub strips hidden data such as where a photo was taken.")}
+    ${sw("videos", "Videos", "Clips up to 30 seconds. The hub keeps a small copy without location data, on your own server.")}
     ${sw("links", "Links", "Web links in messages. On the kids' PCs a link opens in Chrome, under the same web rules.")}
   </div>`;
   document.querySelectorAll("[data-chatset]").forEach((x) => (x.onchange = async () => {

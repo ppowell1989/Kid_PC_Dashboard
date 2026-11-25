@@ -285,7 +285,12 @@
 
             <!-- A picture from the chat, big. Click anywhere to close. -->
             <Border x:Name="PictureBig" Visibility="Collapsed" Background="{DynamicResource Scrim}" CornerRadius="{DynamicResource RButton}" MouseLeftButtonUp="ClosePictureBig" Cursor="Hand">
-              <Image x:Name="PictureBigImage" Margin="12" Stretch="Uniform"/>
+              <Grid>
+                <Image x:Name="PictureBigImage" Margin="12" Stretch="Uniform"/>
+                <!-- A chat clip plays here; clicking closes it like a picture -->
+                <MediaElement x:Name="VideoBig" Margin="12" Stretch="Uniform" LoadedBehavior="Manual" UnloadedBehavior="Stop" Visibility="Collapsed"
+                              MediaEnded="VideoEnded"/>
+              </Grid>
             </Border>
           </Grid>
         </Border>

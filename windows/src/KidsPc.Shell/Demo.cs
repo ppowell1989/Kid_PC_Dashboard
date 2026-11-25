@@ -55,8 +55,8 @@ internal sealed class DemoHelper(string scene) : IHelper
             [
                 new("family", "Family", "family", 5, 4, true),
                 new("kids", "Barrett", "kids", 12, 12, scene != "lock"),
-                new("friend-demo", "Max", "friend", 24, 23, scene != "lock", scene == "lock" ? "Off while the PC is locked" : ""),
-            ], true, true),
+                new("friend-demo", "Max", "friend", 25, 25, scene != "lock", scene == "lock" ? "Off while the PC is locked" : ""),
+            ], true, true, true),
             "chat" => req.Detail == "0" ? Chat(req.Ref ?? "family") : new List<ChatMessage>(),
             "chat_picture_get" => new ChatPicture(DemoPicture()),
             "chat_send" or "chat_picture" => new { sent = true },
@@ -108,6 +108,7 @@ internal sealed class DemoHelper(string scene) : IHelper
                 new(23, "Max", null, "this guide helped me www.example.com/boss-guide", At(9), false, "friend-demo", Friend: true,
                     Links: ["www.example.com/boss-guide"]),
                 new(24, "Adam", "adam", "cool, play at 4?", At(8), true, "friend-demo"),
+                new(25, "Max", null, "my best goal ever", At(5), false, "friend-demo", Friend: true, Picture: true, Video: true),
             ],
             _ =>
             [

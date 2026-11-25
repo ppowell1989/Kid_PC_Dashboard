@@ -74,7 +74,8 @@ TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
 def origin_allowed(settings: Settings, client_ip: str, path: str) -> bool:
     """Enforces the remote_access decision. Friend /join pages and the voice token
     endpoint are always reachable, because friends join from outside the house."""
-    if path.startswith("/join") or path.startswith("/api/voice/") or path == "/static/app.css" or path.startswith("/static/fonts/"):   # the join page's stylesheet and its font
+    # /media answers only to a signed link that an access-checked endpoint handed out (see media.py).
+    if path.startswith("/join") or path.startswith("/api/voice/") or path.startswith("/media/") or path == "/static/app.css" or path.startswith("/static/fonts/"):   # the join page's stylesheet and its font
         return True
     mode = settings.decisions.remote_access
     if mode == "public":

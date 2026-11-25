@@ -120,9 +120,25 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat", new { text = req.Detail, conv = req.Ref ?? "family" }, ct), ct);
 
             case "chat_picture":   // Detail = the picture as base64 (the shell has already made it small), Note = words with it
-                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 12_000_000) return new(false, "That picture is too big. Try a smaller one.");
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 21_000_000) return new(false, "That picture is too big. Try a smaller one.");
                 return await HubJson<object>(await http.PostAsJsonAsync("/api/device/chat/picture",
                     new { data = req.Detail, text = req.Note ?? "", conv = req.Ref ?? "family" }, ct), ct);
+
+            case "chat_video":   // Detail = the clip as base64 (at most 100 MB); the hub converts it, which can take a minute
+                if (string.IsNullOrEmpty(req.Detail) || req.Detail.Length > 140_000_000) return new(false, "That video is too big. Try a shorter one.");
+                byte[] clip;
+                try { clip = Convert.FromBase64String(req.Detail); } catch (FormatException) { return new(false, NotNow); }
+                using (var body = new ByteArrayContent(clip))
+                {
+                    body.Headers.ContentType = new("application/octet-stream");
+                    var url = $"/api/device/chat/video?conv={Uri.EscapeDataString(req.Ref ?? "family")}&text={Uri.EscapeDataString(req.Note ?? "")}";
+                    return await HubJson<object>(await Slow.PostAsync(url, body, ct), ct);
+                }
+
+            case "chat_video_get":   // Detail = message id; the hub answers with a signed link to the clip, which this follows
+                var vr = await Slow.GetAsync($"/api/device/chat/video/{(long.TryParse(req.Detail, out var vid) ? vid : 0)}", ct);
+                if (!vr.IsSuccessStatusCode) return new(false, "That video isn't there any more.");
+                return Ok(new ChatPicture(Convert.ToBase64String(await vr.Content.ReadAsByteArrayAsync(ct))));
 
             case "chat_picture_get":   // Detail = message id
                 var pr = await http.GetAsync($"/api/device/chat/picture/{(long.TryParse(req.Detail, out var pid) ? pid : 0)}", ct);
@@ -140,6 +156,11 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
                 return new(false, $"unknown op {req.Op}");
         }
     }
+
+    private HttpClient? _slow;
+    /// <summary>The hub, for chat videos: same address and device token, but minutes instead of 10 seconds.</summary>
+    private HttpClient Slow => _slow ??= new HttpClient { BaseAddress = http.BaseAddress, Timeout = TimeSpan.FromMinutes(5),
+        DefaultRequestHeaders = { Authorization = http.DefaultRequestHeaders.Authorization } };
 
     /// <summary>The hub's answer as data, or its "no" as the sentence it wrote for the kid
     /// ("This chat is off while the PC is locked."). A server error is not for his eyes.</summary>
