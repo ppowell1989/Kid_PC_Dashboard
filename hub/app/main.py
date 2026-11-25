@@ -1035,10 +1035,10 @@ async def parent_nintendo_finish(body: ConsoleFinish, parent: str = Depends(curr
     consoles_on(settings)
     try:
         token, label = await consoles.nintendo_finish_login(body.link)
-    except consoles.LoginExpired as e:
+    except (consoles.LoginExpired, consoles.LoginRefused) as e:
         raise HTTPException(400, str(e))
-    except Exception:
-        raise HTTPException(400, "Nintendo didn't accept that link. Tap Connect again and paste the newest link.")
+    except Exception as e:
+        raise HTTPException(400, f"Nintendo didn't accept that link ({type(e).__name__}). Tap Connect again and paste the new link.")
     now = rules.local_now(settings.timezone).isoformat()
     db.x("""INSERT INTO console_links(provider,token,label,linked_by,linked_at) VALUES(?,?,?,?,?)
             ON CONFLICT(provider) DO UPDATE SET token=excluded.token, label=excluded.label, linked_by=excluded.linked_by,

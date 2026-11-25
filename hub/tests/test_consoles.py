@@ -164,3 +164,72 @@ def test_target_limit_rules():
     assert consoles.needs_write(None, 30, 0)
     assert not consoles.needs_write(32, 30, 0)
     assert consoles.needs_write(25, 20, 20)             # time's up must be exact
+
+
+# The real sign-in steps, with Nintendo's server faked -----------------------------------------------------------
+
+class FakeAuth:
+    made: list = []
+
+    def __init__(self, *a, **k):
+        import secrets as s
+        self.state = s.token_hex(8)
+        self.login_url = f"https://accounts.nintendo.com/connect/1.0.0/authorize?client_id=x&state={self.state}"
+        self.session_token, self.account, self.got = None, {"nickname": "havitz"}, None
+        self.closed = False
+        FakeAuth.made.append(self)
+
+        class S:
+            async def close(_):
+                self.closed = True
+        self.client_session = S()
+
+    async def async_complete_login(self, link):
+        self.got = link
+        if "bad" in link:
+            raise RuntimeError("HTTP 400 invalid_grant")
+        self.session_token = f"TOKEN-{self.state}"
+
+
+def nlink(state, code="eyJcode", amp="&"):
+    return f"npf54789befb391a838://auth#session_token_code={code}{amp}state={state}{amp}session_state=abc"
+
+
+@pytest.fixture
+def fake_auth(monkeypatch):
+    import asyncio
+
+    import pynintendoparental
+    FakeAuth.made = []
+    consoles._pending_login.clear()
+    monkeypatch.setattr(pynintendoparental, "Authenticator", FakeAuth)
+    return asyncio.run
+
+
+def test_link_from_an_earlier_connect_tap_still_works(fake_auth):
+    run = fake_auth
+    run(consoles.nintendo_start_login())
+    run(consoles.nintendo_start_login())          # Connect tapped twice; he finishes in the first page
+    first = FakeAuth.made[0]
+    token, label = run(consoles.nintendo_finish_login(nlink(first.state)))
+    assert token == f"TOKEN-{first.state}" and label == "havitz" and first.closed
+
+
+def test_html_escaped_link_is_cleaned(fake_auth):
+    run = fake_auth
+    run(consoles.nintendo_start_login())
+    a = FakeAuth.made[0]
+    run(consoles.nintendo_finish_login("  " + nlink(a.state, amp="&amp;") + " "))
+    assert "&amp;" not in a.got and f"state={a.state}" in a.got
+
+
+def test_wrong_text_and_old_links_get_plain_answers(fake_auth):
+    run = fake_auth
+    with pytest.raises(consoles.LoginRefused, match="Copy Link Address"):
+        run(consoles.nintendo_finish_login("https://accounts.nintendo.com/whatever"))
+    run(consoles.nintendo_start_login())
+    run(consoles.nintendo_start_login())
+    with pytest.raises(consoles.LoginExpired, match="older Connect tap"):
+        run(consoles.nintendo_finish_login(nlink("not-a-state-we-made")))
+    with pytest.raises(consoles.LoginRefused, match="expired or was already used"):
+        run(consoles.nintendo_finish_login(nlink(FakeAuth.made[0].state, code="bad")))

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,36 +59,81 @@ class DeviceSnap:
 # Nintendo client --------------------------------------------------------------------------------------
 # Kept behind three small functions so tests (and later providers) can swap them out.
 
-_pending_login = {}   # provider -> Authenticator waiting for the parent's pasted link (one at a time)
+# Logins waiting for the parent's pasted link, keyed by the "state" Nintendo echoes back in that link. Several can be
+# open at once (Connect tapped twice, two tabs), so a link from any of them still works for 15 minutes.
+_pending_login: dict = {}   # state -> (Authenticator, unix time started)
+PENDING_SECONDS = 15 * 60
 _client: dict = {}    # cached signed-in client: {"token": ..., "np": NintendoParental}
 
 
 class LoginExpired(Exception):
-    """The hub restarted (or another parent started over) between Connect and pasting the link."""
+    """No Connect tap matches the pasted link (too old, or the hub restarted in between)."""
+
+
+class LoginRefused(Exception):
+    """Nintendo turned the link down; the message says why in plain words."""
+
+
+def _state_of(url: str) -> str:
+    from urllib.parse import parse_qs, urlparse
+    return (parse_qs(urlparse(url).query).get("state") or [""])[0]
+
+
+def clean_link(pasted: str) -> str:
+    """Copying the link off Nintendo's page in some browsers gives '&amp;' for '&'; chat apps add spaces or <>."""
+    return pasted.strip().strip("<>").replace("&amp;", "&").replace(" ", "")
+
+
+def link_fields(link: str) -> dict:
+    frag = link.split("#", 1)[1] if "#" in link else ""
+    return dict(p.split("=", 1) for p in frag.split("&") if "=" in p)
+
+
+async def _drop_stale_logins() -> None:
+    for state, (auth, at) in list(_pending_login.items()):
+        if time.time() - at > PENDING_SECONDS:
+            _pending_login.pop(state, None)
+            await auth.client_session.close()
 
 
 async def nintendo_start_login() -> str:
     from pynintendoparental import Authenticator
-    old = _pending_login.pop(NINTENDO, None)
-    if old is not None:
-        await old.client_session.close()
+    await _drop_stale_logins()
     auth = Authenticator()
-    _pending_login[NINTENDO] = auth
+    _pending_login[_state_of(auth.login_url)] = (auth, time.time())
     return auth.login_url
 
 
 async def nintendo_finish_login(pasted: str) -> tuple[str, str]:
-    """Returns (session_token, account label). The pasted text is the "Select this person" link."""
-    auth = _pending_login.pop(NINTENDO, None)
-    if auth is None:
-        raise LoginExpired("Start again: tap Connect, sign in, then paste the link.")
+    """Returns (session_token, account label). The pasted text is the "Select this account" link."""
+    link = clean_link(pasted)
+    fields = link_fields(link)
+    if not link.startswith("npf") or "session_token_code" not in fields:
+        raise LoginRefused("That isn't the Nintendo link. Right-click the red \"Select this account\" button, choose "
+                           "Copy Link Address, and paste that. It starts with npf54789befb391a838://auth.")
+    await _drop_stale_logins()
+    entry = _pending_login.pop(fields.get("state", ""), None)
+    if entry is None and len(_pending_login) == 1:   # Nintendo didn't echo the state: use the one open login
+        entry = _pending_login.popitem()[1]
+    if entry is None:
+        raise LoginExpired("That link belongs to an older Connect tap. Tap Connect Nintendo account again, sign in "
+                           "in the page it opens, and paste the new link.")
+    auth = entry[0]
     try:
-        await auth.async_complete_login(pasted.strip())
-        account = getattr(auth, "account", None) or {}
-        label = account.get("nickname") or account.get("screenName") or "Nintendo account"
-        return auth.session_token, label
+        await auth.async_complete_login(link)
+    except Exception as e:
+        log.warning("Nintendo login failed: %s: %s", type(e).__name__, e)
+        text = str(e)
+        if "invalid_grant" in text or "expired" in text.lower():
+            raise LoginRefused("Nintendo says that link has expired or was already used. Tap Connect Nintendo account "
+                               "again and paste the new link within a few minutes.") from e
+        raise LoginRefused(f"Nintendo didn't accept that link ({type(e).__name__}: {text[:150]}). "
+                           "Tap Connect Nintendo account again and paste the new link.") from e
     finally:
         await auth.client_session.close()
+    account = getattr(auth, "account", None) or {}
+    label = account.get("nickname") or account.get("screenName") or "Nintendo account"
+    return auth.session_token, label
 
 
 async def _nintendo(token: str, tz: str):
