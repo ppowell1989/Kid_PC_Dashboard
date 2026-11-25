@@ -1050,7 +1050,7 @@ async function connectNintendo() {
   window.open(login_url, "_blank", "noopener");
   const link = await sheet({
     title: "Paste the Nintendo link",
-    text: "Sign in on the page that just opened. On \"Linking an external account\", press and hold the red \"Select this person\" button, copy the link, and paste it here.",
+    text: "Sign in on the page that just opened. On \"Link an account\", don't click the red \"Select this account\" button (on a computer it does nothing). Right-click it, choose Copy Link Address, and paste it here. On a phone, press and hold it and copy the link.",
     input: "npf54789befb391a838://auth#…", ok: "Link",
   });
   if (!link) return;
