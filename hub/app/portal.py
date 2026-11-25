@@ -296,14 +296,34 @@ def add_kid(body: NewKid, parent: str = Depends(current_parent), db: DB = Depend
 
 @router.get("/api/parent/devices")
 def devices(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
-    """Each kid's devices: every computer a setup code was used on, newest first. All of one kid's devices share
-    his rules and his daily time."""
+    """Each kid's devices: every computer that has checked in as his (by its Windows name), plus any a setup code
+    was used on that hasn't checked in yet. All of one kid's devices share his rules and his daily time."""
     out = {}
     for k in settings.kids:
-        rows = db.q("""SELECT used_by AS computer, MAX(used_at) AS set_up_at FROM setup_codes
-                       WHERE kid_id=? AND used_at IS NOT NULL AND used_at != '' GROUP BY used_by ORDER BY set_up_at DESC""", (k.id,))
-        out[k.id] = {"devices": rows, "added_here": bool(db.one("SELECT 1 FROM kids_added WHERE id=?", (k.id,)))}
+        rows = {r["computer"]: {"computer": r["computer"], "name": r["name"], "set_up_at": r["first_seen"], "last_seen": r["last_seen"]}
+                for r in db.q("SELECT * FROM devices WHERE kid_id=? ORDER BY last_seen DESC", (k.id,))}
+        for r in db.q("""SELECT used_by AS computer, MAX(used_at) AS set_up_at FROM setup_codes
+                         WHERE kid_id=? AND used_at IS NOT NULL AND used_at != '' GROUP BY used_by""", (k.id,)):
+            if r["computer"] and r["computer"] not in rows:
+                rows[r["computer"]] = {"computer": r["computer"], "name": "", "set_up_at": r["set_up_at"], "last_seen": ""}
+        out[k.id] = {"devices": list(rows.values()), "added_here": bool(db.one("SELECT 1 FROM kids_added WHERE id=?", (k.id,)))}
     return out
+
+
+class DeviceName(BaseModel):
+    computer: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=40)
+
+
+@router.put("/api/parent/devices/{kid_id}/name")
+def name_device(kid_id: str, body: DeviceName, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+                settings: Settings = Depends(get_settings)):
+    """A parent's name for a device ("Adam's laptop"). Empty goes back to Windows' computer name."""
+    kid_or_404(settings, kid_id)
+    now = datetime.now().isoformat(timespec="seconds")
+    db.x("""INSERT INTO devices(kid_id,computer,name,first_seen,last_seen) VALUES(?,?,?,?,'')
+            ON CONFLICT(kid_id,computer) DO UPDATE SET name=excluded.name""", (kid_id, body.computer, body.name.strip(), now))
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- messages: approved friends
@@ -320,4 +340,32 @@ def friends(parent: str = Depends(current_parent), db: DB = Depends(get_db), set
         out.append({"code": inv["code"], "kid_id": inv["kid_id"], "friend_name": inv["friend_name"], "conv": conv,
                     "added": _local(inv["created_at"], settings.timezone), "messages": msgs["n"], "last_message": msgs["last"] or "",
                     "calls": call["n"], "last_call": call["last"] or ""})
+    return out
+
+
+# --------------------------------------------------------------------------- messages: voice calls
+
+@router.get("/api/parent/calls")
+def calls(kid: str = "", days: int = 30, parent: str = Depends(current_parent), db: DB = Depends(get_db),
+          settings: Settings = Depends(get_settings)):
+    """Voice calls, newest first: whose PC, which room, how long, and who else was in it (friends who joined
+    with their link, and brothers or sisters in the same room at the same time)."""
+    from .main import since
+    names = {k.id: k.name for k in settings.kids}
+    rows = db.q("SELECT * FROM sessions WHERE kind='voice' AND started_at >= ? ORDER BY started_at DESC LIMIT 200",
+                (since(settings, days),))
+    out = []
+    for r in rows:
+        if kid and r["kid_id"] != kid:
+            continue
+        start, end = r["started_at"][:19], r["ended_at"][:19]
+        early = (datetime.fromisoformat(start) - timedelta(minutes=3)).isoformat(timespec="seconds")
+        friends = [e["detail"] for e in db.q("""SELECT DISTINCT detail FROM events WHERE kid_id=? AND kind='friend_joined_voice'
+                                               AND substr(at,1,19) BETWEEN ? AND ?""", (r["kid_id"], early, end))]
+        others = [names.get(o["kid_id"], o["kid_id"]) for o in db.q(
+            """SELECT DISTINCT kid_id FROM sessions WHERE kind='voice' AND what=? AND kid_id!=?
+               AND substr(started_at,1,19) <= ? AND substr(ended_at,1,19) >= ?""", (r["what"], r["kid_id"], end, start))]
+        minutes = max(1, round((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() / 60))
+        out.append({"kid_id": r["kid_id"], "room": "Family voice" if r["what"] == "family" else "Friends' voice",
+                    "started_at": start, "ended_at": end, "minutes": minutes, "with": others + friends})
     return out

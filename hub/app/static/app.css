@@ -560,3 +560,20 @@ button.linkish { display: block; margin: 10px auto 0; }
 .chip:disabled { opacity: .5; text-decoration: line-through; cursor: default; }
 .tagline.rating { background: var(--well); color: var(--text); }
 .card.hub.attn .status { color: var(--bad-text); }
+
+/* A friend's page with more than one chat (a parent added them to a group) */
+.convpills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.convpills .pill { border: 0; cursor: pointer; padding: 6px 12px; font: inherit; font-size: .85rem; font-weight: 700; }
+.convpills .pill.on { background: var(--accent); color: #fff; }
+
+/* Screen time week: "today" is marked by its label and a blue date, not a border, so it never looks picked */
+.week .day.today { box-shadow: var(--shadow); }
+.week .day.today.changed { box-shadow: inset 4px 0 0 #f28c28, var(--shadow); }
+.week .day.today .dayhead b { color: var(--accent); }
+.week .day .tagline { background: var(--accent-soft); color: var(--accent); }
+
+/* Messages: chats list, add-someone picker */
+.list.chats .lastmsg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list.chats .chips .chip button { padding: 0 4px; min-height: 0; margin-left: 2px; }
+.addpick { display: grid; gap: 6px; margin: 6px 0 12px; max-height: 260px; overflow: auto; }
+#msgWho { margin: 4px 0 8px; }

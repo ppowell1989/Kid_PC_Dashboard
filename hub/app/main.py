@@ -310,6 +310,7 @@ class Heartbeat(BaseModel):
     offline_minutes: int = Field(default=0, ge=0, le=24 * 60)
     games: dict[int, GameInstallState] = Field(default_factory=dict)   # approved games by catalogue id: where each stands on this PC
     disk_free_gb: float | None = Field(default=None, ge=0)              # free space on the drive games go to
+    computer: str = Field(default="", max_length=64)                    # Windows' computer name, for Family & Devices
 
 
 class KidRequest(BaseModel):
@@ -400,6 +401,10 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
         db.x("""INSERT INTO game_play(kid_id,game_id,minutes,last_at) VALUES(?,?,?,?)
                 ON CONFLICT(kid_id,game_id) DO UPDATE SET minutes = minutes + excluded.minutes, last_at = excluded.last_at""",
              (kid.id, game_id, counted, now.isoformat()))
+    if hb.computer.strip():
+        db.x("""INSERT INTO devices(kid_id,computer,first_seen,last_seen) VALUES(?,?,?,?)
+                ON CONFLICT(kid_id,computer) DO UPDATE SET last_seen=excluded.last_seen""",
+             (kid.id, hb.computer.strip(), now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds")))
     if hb.running and hb.active:
         track_session(db, kid.id, "play", hb.running[:80], now)
     if hb.voice and not st.locked:
