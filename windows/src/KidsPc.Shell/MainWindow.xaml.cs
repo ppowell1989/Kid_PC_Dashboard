@@ -307,8 +307,20 @@ public partial class MainWindow : Window
         if (small) { b.Width = 262; b.Height = 200; b.Margin = new Thickness(0, 0, 18, 18); }
         if (art is not null) b.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill };
         else b.Tag = glyph ?? "\uE7FC";   // no art: a game controller
+        if (art is BitmapImage { IsDownloading: true } pending)
+            pending.DownloadFailed += (_, _) => NoArt(b, glyph);   // a picture that won't load: the plain tile, not an empty one
         b.Click += (_, _) => onClick();
         return b;
+    }
+
+    /// <summary>Turns a tile whose picture failed to load into the plain tile: the theme's poster colour and a game controller.</summary>
+    private static void NoArt(Button b, string? glyph)
+    {
+        b.Tag = glyph ?? "\uE7FC";
+        var posters = b.TryFindResource("PosterColours") as Color[] ?? [Color.FromRgb(0x3D, 0x6B, 0xF5)];
+        var c = posters[(int)((uint)(b.Content?.GetHashCode() ?? 0) % (uint)posters.Length)];
+        var light = Color.FromRgb((byte)(c.R + (255 - c.R) / 4), (byte)(c.G + (255 - c.G) / 4), (byte)(c.B + (255 - c.B) / 4));
+        b.Background = new LinearGradientBrush(light, c, 45);
     }
 
     /// <summary>Dresses a row of tiles for the current theme: tiles with no art take the theme's poster colours in

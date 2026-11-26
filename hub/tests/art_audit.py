@@ -41,13 +41,18 @@ PAGES = {
     "battlenet:D3": ["https://diablo3.blizzard.com/en-us/"],
     "battlenet:OSI": ["https://diablo2.blizzard.com/en-us/"],
     "battlenet:ANBS": ["https://diabloimmortal.blizzard.com/en-us/"],
-    "battlenet:RTRO": ["https://www.blizzard.com/en-us/games/arcade-collection", "https://blizzardarcadecollection.blizzard.com/en-us/"],
+    "battlenet:RTRO": ["https://www.blizzard.com/en-us/games/arcade-collection", "https://blizzardarcadecollection.blizzard.com/en-us/",
+                       "https://us.shop.battle.net/en-us/product/blizzard-arcade-collection", "https://news.blizzard.com/en-us/article/23606232/blizzard-arcade-collection-now-available"],
     "battlenet:Pro": ["https://overwatch.blizzard.com/en-us/"],
     "battlenet:Fen": ["https://diablo4.blizzard.com/en-us/"],
     "epic:Fortnite": ["https://www.fortnite.com/", "https://store.epicgames.com/en-US/p/fortnite"],
     "epic:Sugar": ["https://www.rocketleague.com/en"],
     "epic:0a2d9f6403244d12969e11da6713137b": ["https://www.fallguys.com/en-US"],
 }
+
+
+# Curated games with no art we can link to: they show the plain tile, and that's expected.
+NO_ART_OK = {"battlenet:RTRO"}
 
 
 def curated() -> list[dict]:
@@ -62,7 +67,14 @@ def curated() -> list[dict]:
     for e in gamesearch.EPIC:
         out.append({"key": f"epic:{e['app']}", "title": e["title"], "where": "Epic list", "launcher": "epic",
                     "ref": e["app"], "steam": e.get("steam")})
-    out = list({g["key"].lower(): g for g in reversed(out)}.values())[::-1]   # once each, first place it appears
+    once: dict[str, dict] = {}
+    for g in out:   # once each, where it first appears, keeping the Steam twin from the store lists
+        k = g["key"].lower()
+        if k in once:
+            once[k]["steam"] = once[k].get("steam") or g.get("steam")
+        else:
+            once[k] = g
+    out = list(once.values())
     for g in out:
         g["url"] = gamesearch.art_for(g["launcher"], g["ref"])
     return out
@@ -85,6 +97,8 @@ async def fetch_image(c: httpx.AsyncClient, url: str) -> tuple[str, Image.Image 
         im.load()
     except Exception:
         return "won't decode", None
+    if im.format not in ("JPEG", "PNG"):
+        return f"{im.format} picture (the Windows tiles need JPEG or PNG)", im.convert("RGB")
     if im.width < 200 or im.height < 90:
         return f"too small ({im.width}x{im.height})", im
     return "", im.convert("RGB")
@@ -169,9 +183,14 @@ async def main(out: Path, discover_mode: bool) -> int:
         for g, (problem, im), sname in zip(games, results, names):
             if sname and gamesearch.norm(sname).split()[:1] != gamesearch.norm(g["title"]).split()[:1]:
                 problem = problem or f"Steam name is '{sname}'"
-            failed |= bool(problem)
+            failed |= bool(problem) and g["key"] not in NO_ART_OK
             report["curated"].append({**g, "problem": problem, "steam_name": sname, "size": im.size if im else None})
             rows.append((f"{g['title']} [{g['key'].split(':')[0]}]", problem, im))
+            if im is not None:   # a copy, for screenshots made where these sites can't be reached
+                (out / "img").mkdir(exist_ok=True)
+                t = im.convert("RGB")
+                t.thumbnail((920, 520))
+                t.save(out / "img" / (re.sub(r"[^A-Za-z0-9]+", "_", g["key"]) + ".jpg"), quality=88)
             lines.append(f"| {g['title']} | {g['where']} | {problem or 'ok'} | {sname} |")
         sheet(rows, out / "sheet-curated.png")
 
@@ -194,8 +213,8 @@ async def main(out: Path, discover_mode: bool) -> int:
         if discover_mode:
             cand_rows = []
             for g in games:
-                if g["launcher"] == "steam":
-                    continue
+                if g["launcher"] == "steam" or (g["url"] and g["key"] not in NO_ART_OK):
+                    continue   # only look for art for games that have none
                 urls = []
                 for page in PAGES.get(g["key"], []):
                     urls += await og_images(c, page)

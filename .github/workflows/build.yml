@@ -119,6 +119,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { name: kidspc-win-x64, path: bundle }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Game art for the "art" scenes
+        shell: pwsh
+        run: |
+          pip install -q httpx==0.28.1
+          python -m hub.tests.art_demo "$env:RUNNER_TEMP\art-demo.json"
+          "KIDSPC_DEMO_ART=$env:RUNNER_TEMP\art-demo.json" | Out-File -Append $env:GITHUB_ENV
       - name: Screenshot every shell screen
         shell: pwsh
         run: ./windows/tests/Screenshots.ps1 -BuildDir bundle -Out shots
@@ -173,7 +181,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             if git fetch -q --depth 1 "$url" ci-screenshots; then git checkout -q -b ci-screenshots FETCH_HEAD; else git checkout -q --orphan ci-screenshots; fi
-            rm -rf "$slug" && mkdir -p "$slug" && cp ../art-audit/* "$slug/"
+            rm -rf "$slug" && mkdir -p "$slug" && cp -r ../art-audit/. "$slug/"
             git add -A
             git commit -q -m "Art audit: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}" || { echo "No change"; exit 0; }
             if git push -q "$url" ci-screenshots; then exit 0; fi

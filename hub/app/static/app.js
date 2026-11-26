@@ -250,7 +250,7 @@ async function loadRequests() {
     group.innerHTML = hits.map((h) => `<option value="${esc(refOf(h))}" data-img="${esc(h.image_url)}">${esc(h.title)} · ${esc(platOf(h).label)}${h.esrb ? ` (${esc(h.esrb)})` : ""}${refOf(h) === picked ? " ← the one he picked" : ""}</option>`).join("");
     const showArt = () => {
       const o = sel.selectedOptions[0]; const src = o?.dataset.img || games.find((g) => String(g.id) === sel.value)?.image_url;
-      img.hidden = !src; if (src) img.src = src;
+      img.hidden = !src; if (src) { img.onerror = () => { img.hidden = true; }; img.src = src; }
       const h = byRef[sel.value];
       info.innerHTML = h ? gameFacts(h, platOf(h)) : "";
     };
@@ -360,7 +360,7 @@ function renderGameHits() {
     if (overCap(h)) return "";
     const p = h.platforms[h.pick ?? h.default ?? 0];
     const kids = state.kids.map((k) => `<label><input type="checkbox" data-hitkid="${i}" value="${k.id}" checked> ${esc(k.name)}</label>`).join("");
-    return `<li>${h.image_url ? `<img class="art" src="${esc(h.image_url)}" alt="" loading="lazy">` : ""}
+    return `<li>${h.image_url ? `<img class="art" src="${esc(h.image_url)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
       <b>${esc(h.title)}</b> ${h.esrb ? `<span class="tagline rating">${esc(h.esrb)}</span>` : ""} ${h.adult ? `<span class="tagline bad">Adult</span>` : ""}
       <div class="chips">${h.platforms.map((x, j) => `<button type="button" class="chip${x === p && x.addable ? " on" : ""}" data-hit="${i}" data-plat="${j}" ${x.addable ? "" : "disabled"}>${esc(x.label)}</button>`).join("")}</div>
       <div class="muted">${p.addable ? gameFacts(h, p) : esc(p.note)}</div>
