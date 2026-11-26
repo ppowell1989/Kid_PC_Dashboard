@@ -52,7 +52,7 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             () => Epic.LauncherExe,
             () => "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download/EpicGamesLauncherInstaller.msi",
             "EpicGamesLauncherInstaller.msi",
-            f => new ProcessStartInfo("msiexec.exe", $"/i \"{f}\" /qn /norestart"),
+            f => new ProcessStartInfo("msiexec.exe", $"/i \"{f}\" /qn /norestart /L*v \"{Path.Combine(Path.GetDirectoryName(f)!, "epic-msi.log")}\""),
             ByHand: "The Epic Games app would not install by itself. Sign in to an admin account on this PC and install it from store.epicgames.com."),
     };
 
@@ -162,8 +162,8 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             for (var i = 0; i < 30 && !File.Exists(def.InstalledPath()); i++) await Task.Delay(2000);
             _status[def.Name] = File.Exists(def.InstalledPath())
                 ? new("installed")
-                : new("failed", def.ByHand != "" ? def.ByHand
-                    : $"installer exited {(p.HasExited ? p.ExitCode : -1)} but {Path.GetFileName(def.InstalledPath())} is missing");
+                : new("failed", (def.ByHand != "" ? def.ByHand + " " : "")
+                    + $"(installer exited {(p.HasExited ? p.ExitCode : -1)} but {Path.GetFileName(def.InstalledPath())} is missing)");
             events.Add(_status[def.Name].State == "installed" ? "app_installed" : "app_install_failed", def.Name);
         }
         catch (Exception ex)

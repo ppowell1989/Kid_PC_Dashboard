@@ -310,6 +310,8 @@ if ($LauncherInstall) {
     Start-Sleep 5
   }
   Write-Host "INFO  Epic: state=$($epApp.state) detail=$($epApp.detail) after $([int]((Get-Date) - $began).TotalSeconds)s exe=$(@($epicExes | Where-Object { Test-Path $_ }) -join ',')"
+  Get-ChildItem "${env:ProgramFiles(x86)}\Epic Games", "$env:ProgramFiles\Epic Games" -Recurse -Depth 4 -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 10 | ForEach-Object { Write-Host "INFO    $($_.FullName)" }
+  Get-Content "$env:ProgramData\KidsPc\downloads\epic-msi.log" -ErrorAction SilentlyContinue | Select-String -Pattern "error|return value 3|Installation success|INSTALLDIR|exit" | Select-Object -Last 25 | ForEach-Object { Write-Host "INFO    msi: $_" }
   Check "helper installed the Epic Games app by itself and reported it" ($epApp.state -eq "installed" -and @($epicExes | Where-Object { Test-Path $_ }).Count -gt 0) ($epApp | ConvertTo-Json)
   Check "the Epic games folder is there for the kid's games" (Test-Path "$env:ProgramFiles\Epic Games") ""
   $ep = Pipe @{ op = "install"; gameId = $fn.id }
