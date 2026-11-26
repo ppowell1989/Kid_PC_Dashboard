@@ -10,6 +10,7 @@ public partial class MainWindow
         switch (scene)
         {
             case "catalogue":   // shelves to browse, nothing typed
+            case "art-catalogue":
                 ShowCatalogue(this, new RoutedEventArgs());
                 await LoadDiscoverAsync(force: true);
                 break;

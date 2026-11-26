@@ -68,6 +68,43 @@ EPIC = [
 EPIC_BY_APP = {g["app"].lower(): g for g in EPIC}
 EPIC_APP_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
+
+# Cover art for curated games that aren't on Steam, wide like a Steam header (tiles crop to fill).
+# Each was looked at by a person and is checked by CI (hub/tests/art_audit.py). Key: "launcher:ref", lower case.
+# Blizzard's own pages (blz-contentstack) and the Microsoft Store catalogue. Every World of Warcraft version shows
+# WoW's key art: Blizzard has no separate wide art for the Classic versions, and the tile's title says which one.
+# Blizzard Arcade Collection has no art anywhere we can link to: it gets the plain tile.
+ART: dict[str, str] = {
+    "battlenet:wow": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+    "battlenet:wowf": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+    "battlenet:wowc": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+    "battlenet:wowce": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+    "battlenet:wowa": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+    "battlenet:wtcg": "https://d39zum0jwvcigt.cloudfront.net/_next/static/images/default-475d770302527dbab7708dca2af05afd.jpg",
+    "battlenet:hero": "https://store-images.s-microsoft.com/image/apps.38378.14113515594390646.9e638c04-e7d6-468d-8441-ec0f6cc4f7b7.674600de-b6eb-4b18-8c64-ad133a32434e?w=460",
+    "battlenet:s2": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltbe2068a317e02d9f/6966bac0fb2fd910dbda4a26/og_image.webp?format=jpg",
+    "battlenet:s1": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt9cbae43d0642e6ba/6a9b42028102310ecb81e0e3/OG_Image.png",
+    "battlenet:w3": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt806d59ff0b4e0508/6aa88158ad9209ba7f5629ef/rebirth_og.png",
+    "battlenet:d3": "https://store-images.s-microsoft.com/image/apps.46364.64140138686919815.d9e5eb6a-300a-42c9-ad36-95f5a7005152.86c286a6-7528-42fe-bf96-c6d007f180f4?w=460",
+    "battlenet:osi": "https://store-images.s-microsoft.com/image/apps.36735.13762945046819896.a6fd9d59-7e4a-4d04-9ffd-42dcbbe9a791.7ecac3c2-f946-4316-90f8-c3fba6772ca2?w=460",
+    "battlenet:anbs": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt47deaa9e2be4b752/6a1f4beaeb54a6907d694fb8/DI_Warlock_OG-Image@2x_enUS.jpg",
+    "epic:fortnite": "https://store-images.s-microsoft.com/image/apps.21491.70702278257994163.f7265b8a-f10e-49c4-8115-73c4d800af63.a3060383-ea77-4eac-8882-c5c52237b18b?w=460",
+}
+
+
+def art_for(launcher: str, ref: str) -> str:
+    """The cover art the hub shows for a game when nobody has set one: Steam's store header for Steam games
+    and for Battle.net/Epic games that are also on Steam, else the curated picture above, else ""."""
+    if launcher == "steam":
+        return STEAM_ART.format(ref) if ref.isdigit() else ""
+    art = ART.get(f"{launcher}:{ref}".lower())
+    if art:
+        return art
+    twin = (BATTLENET_BY_CODE if launcher == "battlenet" else EPIC_BY_APP if launcher == "epic" else {}).get(ref.lower(), {})
+    return STEAM_ART.format(twin["steam"]) if twin.get("steam") else ""
+
+
 GAMEPASS_PC_LIST = "fdd9e2a7-0fee-49f6-ad69-4354098401ff"   # Microsoft's public id for the PC Game Pass list
 XBOX_CACHE_SECONDS = 7 * 24 * 3600
 XBOX_KEY = "xbox:gamepass_pc"
@@ -207,13 +244,15 @@ def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], ga
         r = steam_by_id.get(b.get("steam")) or row(b["title"])
         if not r["esrb"]:
             r["esrb"] = b["esrb"]
+        if not r["image_url"]:
+            r["image_url"] = art_for("battlenet", b["code"])
         add_platform(r, "battlenet", "battlenet", b["code"])
     for e in epic:
         r = steam_by_id.get(e.get("steam")) or row(e["title"])
         if not r["esrb"]:
             r["esrb"] = e.get("esrb", "")
         if not r["image_url"]:
-            r["image_url"] = e.get("image_url", "")
+            r["image_url"] = art_for("epic", e["app"]) or e.get("image_url", "")
         add_platform(r, "epic", "epic", e["app"], note="On his Epic account" if e.get("owned") else "")
         if e.get("prefer"):
             r["prefer"] = "epic"

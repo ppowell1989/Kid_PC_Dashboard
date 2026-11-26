@@ -12,6 +12,8 @@ $shots = "home", "catalogue", "search", "ask", "chat", "chat-friend", "voice", "
          "royale/home", "royale/catalogue", "royale/chat", "royale/chat-friend", "royale/lock",
          "speedway/home", "speedway/catalogue", "speedway/warning",
          "retro/home", "retro/catalogue", "retro/voice", "retro/lock", "retro/power"
+# Every Battle.net and Epic game's real art, when the art data file is there (hub/tests/art_demo.py, see build.yml).
+if ($env:KIDSPC_DEMO_ART -and (Test-Path $env:KIDSPC_DEMO_ART)) { $shots += "art", "art-catalogue" }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $exe = (Resolve-Path "$BuildDir\Shell\KidsPcShell.exe").Path
 $env:KIDSPC_DEMO_OUT = (Resolve-Path $Out).Path

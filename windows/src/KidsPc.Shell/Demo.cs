@@ -39,6 +39,12 @@ internal sealed class DemoHelper(string scene) : IHelper
         (1097150, "Fall Guys", "E"),
     ];
 
+    /// <summary>Scenes "art" and "art-catalogue": the hub's real game art for every Battle.net and Epic game, from the
+    /// JSON file in KIDSPC_DEMO_ART (hub/tests/art_demo.py writes it), so CI shows each picture on real Windows tiles.</summary>
+    private sealed record DemoArt(List<Game> Games, Discover Discover);
+    private readonly DemoArt? _art = scene.StartsWith("art") && Environment.GetEnvironmentVariable("KIDSPC_DEMO_ART") is { Length: > 0 } f && File.Exists(f)
+        ? System.Text.Json.JsonSerializer.Deserialize<DemoArt>(File.ReadAllText(f), Json.Options) : null;
+
     public Task<T?> GetAsync<T>(PipeRequest req, CancellationToken ct = default)
     {
         object? result = req.Op switch
@@ -51,7 +57,7 @@ internal sealed class DemoHelper(string scene) : IHelper
                 new("steam:220200", "Kerbal Space Program", ArtFor(220200), "E", "Take charge of the space program for the alien race known as the Kerbals. Build spacecraft that fly (or don't) based on realistic physics."),
                 new("steam:275850", "No Man's Sky", ArtFor(275850), "T", "A game about exploration and survival in an infinite procedurally generated universe."),
             },
-            "game_discover" => DemoShelves(),
+            "game_discover" => _art?.Discover ?? DemoShelves(),
             "buy_time" => new BoughtTime(15, 10, 32),
             "chat_convs" => new ChatList(
             [
@@ -84,7 +90,7 @@ internal sealed class DemoHelper(string scene) : IHelper
             [291550] = DateTimeOffset.Now.AddDays(-1).ToString("o"),
             [620] = DateTimeOffset.Now.AddDays(-3).ToString("o"),
         };
-        var games = Catalogue.Select((g, i) => new Game(i + 1, g.Title, "steam", g.Appid.ToString(), g.Rating, ArtFor(g.Appid),
+        var games = _art?.Games ?? Catalogue.Select((g, i) => new Game(i + 1, g.Title, "steam", g.Appid.ToString(), g.Rating, ArtFor(g.Appid),
             played.GetValueOrDefault(g.Appid, ""), New: g.Appid == 105600)).ToList();
         var rules = new Rules(new KidInfo("adam", "Adam"), time, 10, games, new WebRules("filtered", []), false,
             scene == "lock" ? new List<PendingRequest> { new(1, "time", "15", "pending", DateTime.UtcNow.ToString("u")) }
@@ -95,6 +101,7 @@ internal sealed class DemoHelper(string scene) : IHelper
             Points: new PointsOffer(42, 10, 15, true, "", 30));   // Skylight chore points he can spend on time
         var messages = scene == "warning" ? new List<ParentMessage> { new(1, "Mom", "Dinner in 10 minutes!", DateTimeOffset.Now) } : null;
         // Two games a parent approved, installing by themselves (the catalogue shows how far along).
+        if (_art is not null) return new ShellState(rules, games.Select(g => g.Id).ToList(), time.Locked, true, DateTimeOffset.Now, null);
         return new ShellState(rules, [1, 2, 3, 4], time.Locked, true, DateTimeOffset.Now, messages,
             Installing: new Dictionary<int, string> { [5] = "Downloading 45%", [6] = "Waiting for Steam" },
             InstallPercent: new Dictionary<int, int> { [5] = 45 });
