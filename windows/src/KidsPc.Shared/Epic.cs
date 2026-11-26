@@ -10,18 +10,28 @@ namespace KidsPc.Shared;
 /// </summary>
 public static class Epic
 {
+    private static readonly string Pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
     private static readonly string Pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
     private static readonly string CommonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
 
-    /// <summary>The launcher's own folder. Nothing in here is a game.</summary>
-    public static string LauncherFolder => Path.Combine(Pf86, "Epic Games", "Launcher");
+    /// <summary>Where the launcher may live. Today's installer puts it in C:\Program Files\Epic Games\Launcher
+    /// (seen on CI, launcher 1.3.210); older ones used Program Files (x86). Nothing in these folders is a game.</summary>
+    public static readonly string[] LauncherFolders = [Path.Combine(Pf, "Epic Games", "Launcher"), Path.Combine(Pf86, "Epic Games", "Launcher")];
 
-    private static string Bin(string arch) => Path.Combine(LauncherFolder, "Portal", "Binaries", arch, "EpicGamesLauncher.exe");
+    /// <summary>Folders beside the games that Epic's installer fills with its own tools (never a game).</summary>
+    public static readonly string[] ToolFolders = ["Launcher", "DirectXRedist", "Epic Online Services"];
 
-    /// <summary>EpicGamesLauncher.exe. Newer launchers ship a Win64 build next to the old Win32 one.</summary>
-    public static string LauncherExe => File.Exists(Bin("Win64")) ? Bin("Win64") : File.Exists(Bin("Win32")) ? Bin("Win32") : Bin("Win64");
+    private static IEnumerable<string> Candidates() =>
+        LauncherFolders.SelectMany(f => new[] { "Win64", "Win32" }.Select(arch => Path.Combine(f, "Portal", "Binaries", arch, "EpicGamesLauncher.exe")));
 
-    public static bool LauncherInstalled => File.Exists(Bin("Win64")) || File.Exists(Bin("Win32"));
+    /// <summary>EpicGamesLauncher.exe, wherever this PC's installer put it.</summary>
+    public static string LauncherExe => Candidates().FirstOrDefault(File.Exists) ?? Candidates().First();
+
+    public static bool LauncherInstalled => Candidates().Any(File.Exists);
+
+    /// <summary>A path inside the launcher's own folders.</summary>
+    public static bool IsLauncherPath(string path) =>
+        LauncherFolders.Any(f => path.StartsWith(f + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>C:\ProgramData\Epic\EpicGamesLauncher\Data: install records and the account's library cache.</summary>
     public static string DataDir => Path.Combine(CommonData, "Epic", "EpicGamesLauncher", "Data");

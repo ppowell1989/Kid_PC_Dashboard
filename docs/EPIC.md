@@ -7,8 +7,8 @@ a parent approves a game on the hub, and the kid's PC puts it on by itself.
 
 - **Installs the Epic Games app** the first time a kid has an approved Epic game. Epic ships a normal
   Windows installer package, so the helper installs it silently as SYSTEM (no one at the PC).
-- **Makes the games folder writable for the kid** (`C:\Program Files\Epic Games`, and the launcher's
-  records in `C:\ProgramData\Epic`), so the Epic app, which runs as his standard account, can install games
+- **Lets the kid add game folders** in `C:\Program Files\Epic Games` (never the launcher's own folder there), and write the launcher's
+  records in `C:\ProgramData\Epic`, so the Epic app, which runs as his standard account, can install games
   without asking for an admin password.
 - **Starts the install.** Epic has no way to be told "install this game" from outside. The PC opens the
   Epic app's own Install box for the game on the kid's screen (`com.epicgames.launcher://apps/<app>?action=install`),

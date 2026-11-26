@@ -60,7 +60,7 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
 
     /// <summary>The Epic launcher runs as the kid, a standard account, and puts games in C:\Program Files\Epic Games,
     /// which only an admin may create or write to. So the helper makes that folder (and the launcher's records folder
-    /// in ProgramData) and lets the kid's account write there, once per start. GUESS: without this the launcher asks
+    /// in ProgramData) and lets the kid's account add game folders there, once per start. GUESS: without this the launcher asks
     /// for an admin password (a Windows prompt the kid can't answer) when it installs his first game.
     /// Anything he could put there himself is still closed on sight unless a parent approved it (Enforcer).</summary>
     private void PrepareEpicFolders()
@@ -72,13 +72,20 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             var dirs = new[] { cfg.EpicGamesRoot, Epic.DataDir }.Select(d => Directory.CreateDirectory(d)).ToList();
             if (string.IsNullOrEmpty(cfg.KidUser)) return;
             var sid = (SecurityIdentifier)new NTAccount(cfg.KidUser).Translate(typeof(SecurityIdentifier));
-            foreach (var di in dirs)
-            {
-                var acl = di.GetAccessControl();
-                acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify,
-                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-                di.SetAccessControl(acl);
-            }
+            // The games folder also holds the launcher itself (and its updater, which runs elevated), so the kid gets only
+            // the right to make new folders in it, on that folder alone. Windows makes him the owner of each game folder
+            // he (his launcher) creates, so he can fill it, and the launcher's own folder stays admin-only.
+            var root = dirs[0];
+            var acl = root.GetAccessControl();
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.ReadAndExecute | FileSystemRights.CreateDirectories,
+                InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+            root.SetAccessControl(acl);
+            // The launcher's records (install manifests, library cache) in ProgramData: his to write.
+            var data = dirs[1];
+            acl = data.GetAccessControl();
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            data.SetAccessControl(acl);
             log.LogInformation("Epic games folder ready for {Kid}", cfg.KidUser);
         }
         catch (Exception ex) { log.LogWarning("could not prepare the Epic games folder: {Msg}", ex.Message); }

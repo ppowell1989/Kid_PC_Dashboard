@@ -64,7 +64,7 @@ $bnExe = "${env:ProgramFiles(x86)}\Battle.net\Battle.net.exe"
 # The same for Epic Games: an approved Epic game is what puts the Epic Games app on the PC.
 $fn = Invoke-RestMethod "$hub/api/parent/games/from-search" -Method Post -WebSession $s -ContentType application/json `
   -Body '{"ref":"epic:Fortnite","approved_for":["adam"]}'
-$epicExes = "Win64", "Win32" | ForEach-Object { "${env:ProgramFiles(x86)}\Epic Games\Launcher\Portal\Binaries\$_\EpicGamesLauncher.exe" }
+$epicExes = foreach ($pf in $env:ProgramFiles, ${env:ProgramFiles(x86)}) { foreach ($a in "Win64", "Win32") { "$pf\Epic Games\Launcher\Portal\Binaries\$a\EpicGamesLauncher.exe" } }
 
 # ------------------------------------------------------------------ helper (console mode)
 $dataDir = "$env:ProgramData\KidsPc"

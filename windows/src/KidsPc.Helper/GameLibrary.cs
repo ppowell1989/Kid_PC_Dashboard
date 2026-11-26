@@ -156,12 +156,12 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
     /// The launcher's own programs are never a game.</summary>
     private (string? AppName, string? Title)? EpicGameAt(string path, List<EpicInstall> epic)
     {
-        if (path.StartsWith(Epic.LauncherFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+        if (Epic.IsLauncherPath(path)) return null;
         foreach (var e in epic)
             if (path.StartsWith(e.Folder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return (e.AppName, e.Title);
         var root = cfg.EpicGamesRoot.TrimEnd('\\');
         if (root != "" && path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            && !path.StartsWith(Path.Combine(root, "Launcher") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !Epic.ToolFolders.Any(t => path.StartsWith(Path.Combine(root, t) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             && !path.Contains(@"\Epic Online Services\", StringComparison.OrdinalIgnoreCase))
             return (null, null);
         return null;
