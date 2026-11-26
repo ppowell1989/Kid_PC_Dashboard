@@ -1,6 +1,6 @@
 """Every curated game has cover art (checked on the real internet by art_audit.py on CI)."""
-from hub.app import discover, gamesearch
-from hub.app.main import with_art
+from app import discover, gamesearch
+from app.main import with_art
 
 
 def test_every_curated_game_has_art_except_the_arcade_collection():
