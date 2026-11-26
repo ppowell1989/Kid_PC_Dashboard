@@ -68,6 +68,26 @@ EPIC = [
 EPIC_BY_APP = {g["app"].lower(): g for g in EPIC}
 EPIC_APP_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
+
+# Cover art for curated games that aren't on Steam, wide like a Steam header (tiles crop to fill).
+# Each was looked at by a person and is checked by CI (hub/tests/art_audit.py). Key: "launcher:ref", lower case.
+ART: dict[str, str] = {
+}
+
+
+def art_for(launcher: str, ref: str) -> str:
+    """The cover art the hub shows for a game when nobody has set one: Steam's store header for Steam games
+    and for Battle.net/Epic games that are also on Steam, else the curated picture above, else ""."""
+    if launcher == "steam":
+        return STEAM_ART.format(ref) if ref.isdigit() else ""
+    art = ART.get(f"{launcher}:{ref}".lower())
+    if art:
+        return art
+    twin = (BATTLENET_BY_CODE if launcher == "battlenet" else EPIC_BY_APP if launcher == "epic" else {}).get(ref.lower(), {})
+    return STEAM_ART.format(twin["steam"]) if twin.get("steam") else ""
+
+
 GAMEPASS_PC_LIST = "fdd9e2a7-0fee-49f6-ad69-4354098401ff"   # Microsoft's public id for the PC Game Pass list
 XBOX_CACHE_SECONDS = 7 * 24 * 3600
 XBOX_KEY = "xbox:gamepass_pc"
@@ -207,13 +227,15 @@ def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], ga
         r = steam_by_id.get(b.get("steam")) or row(b["title"])
         if not r["esrb"]:
             r["esrb"] = b["esrb"]
+        if not r["image_url"]:
+            r["image_url"] = art_for("battlenet", b["code"])
         add_platform(r, "battlenet", "battlenet", b["code"])
     for e in epic:
         r = steam_by_id.get(e.get("steam")) or row(e["title"])
         if not r["esrb"]:
             r["esrb"] = e.get("esrb", "")
         if not r["image_url"]:
-            r["image_url"] = e.get("image_url", "")
+            r["image_url"] = art_for("epic", e["app"]) or e.get("image_url", "")
         add_platform(r, "epic", "epic", e["app"], note="On his Epic account" if e.get("owned") else "")
         if e.get("prefer"):
             r["prefer"] = "epic"

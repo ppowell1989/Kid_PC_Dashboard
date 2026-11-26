@@ -144,6 +144,43 @@ jobs:
           done
           exit 1
 
+  art-audit:
+    # Every game's cover art, checked on the real internet: curated games (idea shelves, Battle.net, Epic) must
+    # have art that loads and is the right game; the PC Game Pass catalogue's art is checked too.
+    # Contact sheets to look at by eye go to the ci-screenshots branch as <branch>-art/.
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q fastapi==0.165.0 pydantic==2.14.4 PyYAML==6.0.4 PyJWT==2.15.1 httpx==0.28.1 tzdata==2025.2 Pillow==13.0.0
+      - name: Check every game's art
+        id: audit
+        run: python -m hub.tests.art_audit art-audit --discover
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: art-audit, path: art-audit }
+      - name: Publish to the ci-screenshots branch
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          slug="${GITHUB_REF_NAME//\//-}-art"
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for try in 1 2 3; do
+            rm -rf pub && git init -q pub && cd pub
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            if git fetch -q --depth 1 "$url" ci-screenshots; then git checkout -q -b ci-screenshots FETCH_HEAD; else git checkout -q --orphan ci-screenshots; fi
+            rm -rf "$slug" && mkdir -p "$slug" && cp ../art-audit/* "$slug/"
+            git add -A
+            git commit -q -m "Art audit: ${GITHUB_REF_NAME} @ ${GITHUB_SHA::7}" || { echo "No change"; exit 0; }
+            if git push -q "$url" ci-screenshots; then exit 0; fi
+            cd .. && sleep $((try * 5))
+          done
+          exit 1
+
   hub-image:
     runs-on: ubuntu-latest
     steps:

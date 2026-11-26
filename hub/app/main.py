@@ -145,7 +145,7 @@ def day_rule(db: DB, kid: Kid, day) -> rules.DayRule:
     return rule_for(db, kid, day.weekday())
 
 
-STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
+STEAM_ART = gamesearch.STEAM_ART
 
 
 def epic_library(db: DB, kid_ids: list[str]) -> list[dict]:
@@ -161,9 +161,9 @@ def epic_library(db: DB, kid_ids: list[str]) -> list[dict]:
 
 
 def with_art(g: dict) -> dict:
-    """Steam games get their store header image unless the parent set one."""
-    if not g.get("image_url") and g["launcher"] == "steam" and g["launch_ref"].isdigit():
-        g["image_url"] = STEAM_ART.format(g["launch_ref"])
+    """Games get their store art (gamesearch.art_for) unless the parent set a picture."""
+    if not g.get("image_url"):
+        g["image_url"] = gamesearch.art_for(g["launcher"], g["launch_ref"])
     return g
 
 
@@ -1479,7 +1479,7 @@ async def ideas_with_details(db: DB) -> list[dict]:
     if not quiet and not any(found):
         _steam_quiet_until = time.time() + 600
     for i, d in zip(ideas, found):
-        i["image_url"] = (d or {}).get("image_url") or (STEAM_ART.format(i["launch_ref"]) if i["launcher"] == "steam" else "")
+        i["image_url"] = (d or {}).get("image_url") or gamesearch.art_for(i["launcher"], i["launch_ref"])
         i["title"] = (d or {}).get("name") or i["title"]
         i["esrb"] = (d or {}).get("esrb") or i["esrb"]
         i["description"] = (d or {}).get("description", "")
