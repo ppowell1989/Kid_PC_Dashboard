@@ -15,7 +15,7 @@ STATES = (
     "waiting",        # the PC has it on its list but something else has to happen first (see detail)
     "installing",     # downloading or unpacking; done_bytes/total_bytes say how far
     "installed",
-    "needs_signin",   # the store app (Steam, Battle.net) has to be signed in on that PC once
+    "needs_signin",   # the store app (Steam, Battle.net, Epic Games) has to be signed in on that PC once
     "not_owned",      # the store says the kid's account doesn't have this game
     "no_space",       # the PC's drive is too full
     "stuck",          # the store didn't start it; Try again usually does
@@ -26,7 +26,7 @@ STATES = (
 )
 REPORTABLE = tuple(s for s in STATES if s != "queued")
 
-STORE = {"steam": "Steam", "battlenet": "Battle.net", "gamepass": "the Xbox app", "direct": "the home server"}
+STORE = {"steam": "Steam", "battlenet": "Battle.net", "epic": "the Epic Games app", "gamepass": "the Xbox app", "direct": "the home server"}
 
 
 def size(n: int) -> str:
@@ -106,7 +106,7 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
         return removing(row, state, detail, stage, pc, online)
     if state == "installed":
         return {"label": "Installed", "text": f"Ready to play on {pc}.", "tone": "ok", "fix": "",
-                "can_remove": row.get("launcher") in ("steam", "battlenet")}
+                "can_remove": row.get("launcher") in ("steam", "battlenet", "epic")}
     if not row.get("install"):
         return {"label": "Not on the PC", "text": f"Approved, so {kid_name} can install it himself from Get more games. "
                 "Or press Install to put it on his PC now.", "tone": "off", "fix": "install"}

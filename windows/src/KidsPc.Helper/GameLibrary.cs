@@ -1,4 +1,6 @@
 using System.Management;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using KidsPc.Shared;
 
@@ -11,12 +13,20 @@ public sealed record Activity(string Title, bool Active, List<GameProcess> Proce
 public sealed record SteamManifest(string AppId, long Flags, long BytesToDownload, long BytesDownloaded, long BytesToStage, long BytesStaged, string File, string InstallDir = "");
 
 /// <summary>A running process the helper recognises, and the catalogue game it belongs to (if any).</summary>
-public sealed record GameProcess(int Pid, string Path, string Kind, string? SteamAppId, Game? Approved);
+/// Name is the store's own title for an unapproved game, where the store has one (Epic's install record).
+public sealed record GameProcess(int Pid, string Path, string Kind, string? SteamAppId, Game? Approved, string? Name = null);
+
+/// <summary>One game in the Epic launcher's install records. Complete is false while it is still downloading.</summary>
+public sealed record EpicInstall(string AppName, string Title, string Folder, bool Complete, long Size, string File);
+
+/// <summary>A game on the Epic account signed in on this PC, from the launcher's library cache.</summary>
+public sealed record EpicOwned(string AppName, string Title, string ImageUrl);
 
 /// <summary>
 /// Knows what is installed and what is running.
 /// Steam: reads steamapps\appmanifest_*.acf to map install folders to app ids.
 /// Battle.net: GUESS, matches catalogue launch_ref to a folder under BattleNetGamesRoot by a small table.
+/// Epic: reads the launcher's .item install records (one JSON file per game) for each game's folder and app name.
 /// </summary>
 public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> log)
 {
@@ -107,6 +117,99 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
 
     public string SteamApps => Path.Combine(cfg.SteamPath, "steamapps");
 
+    // ------------------------------------------------------------------ Epic
+
+    /// <summary>Every game in the Epic launcher's install records, finished or not. GUESS at the fields: AppName,
+    /// DisplayName, InstallLocation, InstallSize, bIsIncompleteInstall (what the launcher has written for years).</summary>
+    public List<EpicInstall> EpicInstalls()
+    {
+        var found = new Dictionary<string, EpicInstall>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (dir, pending) in new[] { (Epic.Manifests, false), (Path.Combine(Epic.Manifests, "Pending"), true) })
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.item"))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(f));
+                    var r = doc.RootElement;
+                    string S(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+                    var app = S("AppName");
+                    var folder = S("InstallLocation");
+                    if (app == "" || folder == "" || found.ContainsKey(app)) continue;   // the finished record (read first) wins over a pending one
+                    var incomplete = pending || (r.TryGetProperty("bIsIncompleteInstall", out var inc) && inc.ValueKind == JsonValueKind.True);
+                    var size = r.TryGetProperty("InstallSize", out var sz) && sz.ValueKind == JsonValueKind.Number && sz.TryGetInt64(out var n) ? n : 0;
+                    found[app] = new(app, S("DisplayName") is { Length: > 0 } t ? t : app, folder.Replace('/', '\\').TrimEnd('\\'),
+                        !incomplete && Directory.Exists(folder), size, f);
+                }
+                catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+                {
+                    log.LogDebug("skip {Item}: {Msg}", f, ex.Message);
+                }
+            }
+        }
+        return found.Values.ToList();
+    }
+
+    /// <summary>The Epic game a running program belongs to: (app name, title) from its install record, or (null, null)
+    /// for something under the Epic games folder that has no record yet. Null when it isn't an Epic game at all.
+    /// The launcher's own programs are never a game.</summary>
+    private (string? AppName, string? Title)? EpicGameAt(string path, List<EpicInstall> epic)
+    {
+        if (path.StartsWith(Epic.LauncherFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+        foreach (var e in epic)
+            if (path.StartsWith(e.Folder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return (e.AppName, e.Title);
+        var root = cfg.EpicGamesRoot.TrimEnd('\\');
+        if (root != "" && path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !path.StartsWith(Path.Combine(root, "Launcher") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !path.Contains(@"\Epic Online Services\", StringComparison.OrdinalIgnoreCase))
+            return (null, null);
+        return null;
+    }
+
+    /// <summary>The games on the Epic account signed in on this PC, from the launcher's library cache (catcache.bin:
+    /// base64 of a JSON list of catalogue items). Add-ons are left out. GUESS at the format, as Playnite reads it.
+    /// Empty when the launcher hasn't been signed in or the file can't be read.</summary>
+    public List<EpicOwned> EpicLibrary()
+    {
+        var list = new List<EpicOwned>();
+        try
+        {
+            if (!File.Exists(Epic.CatalogCache)) return list;
+            var json = Encoding.UTF8.GetString(Convert.FromBase64String(File.ReadAllText(Epic.CatalogCache).Trim()));
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return list;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.TryGetProperty("mainGameItem", out var main) && main.ValueKind == JsonValueKind.Object) continue;   // DLC
+                var title = item.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+                string? app = null;
+                if (item.TryGetProperty("releaseInfo", out var rel) && rel.ValueKind == JsonValueKind.Array)
+                    foreach (var ri in rel.EnumerateArray())
+                        if (ri.TryGetProperty("appId", out var a) && a.GetString() is { Length: > 0 } s) { app = s; break; }
+                if (app is null || title == "" || !Epic.IsAppName(app) || !seen.Add(app)) continue;
+                if (item.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array
+                    && cats.EnumerateArray().Any(c => c.TryGetProperty("path", out var p) && p.GetString() is "addons" or "digitalextras" or "engines" or "assets"))
+                    continue;
+                var image = "";
+                if (item.TryGetProperty("keyImages", out var imgs) && imgs.ValueKind == JsonValueKind.Array)
+                {
+                    var byType = imgs.EnumerateArray()
+                        .Where(i => i.TryGetProperty("type", out _) && i.TryGetProperty("url", out _))
+                        .GroupBy(i => i.GetProperty("type").GetString() ?? "")
+                        .ToDictionary(g => g.Key, g => g.First().GetProperty("url").GetString() ?? "");
+                    image = new[] { "DieselGameBox", "OfferImageWide", "DieselStoreFrontWide", "DieselGameBoxTall", "Thumbnail" }
+                        .Select(k => byType.GetValueOrDefault(k)).FirstOrDefault(u => !string.IsNullOrEmpty(u)) ?? "";
+                }
+                list.Add(new(app, title.Length > 120 ? title[..120] : title, image.StartsWith("https://") && image.Length < 500 ? image : ""));
+                if (list.Count >= 300) break;
+            }
+        }
+        catch (Exception ex) { log.LogDebug("Epic library: {Msg}", ex.Message); }
+        return list;
+    }
+
     [GeneratedRegex("^\\s*\"(\\w+)\"\\s+\"([^\"]*)\"", RegexOptions.Multiline)]
     private static partial Regex AcfAny();
 
@@ -137,9 +240,11 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
         if (rules is null) return [];
         var steamIds = SteamInstalls().Values.Select(v => v.AppId)
             .Where(id => SteamManifest(id) is not { } m || (m.Flags & SteamFullyInstalled) != 0).ToHashSet();
+        var epicDone = EpicInstalls().Where(e => e.Complete).Select(e => e.AppName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return rules.Games.Where(g => g.Launcher switch
         {
             "steam" => steamIds.Contains(g.LaunchRef),
+            "epic" => epicDone.Contains(g.LaunchRef),
             "battlenet" => BattleNetFolders.TryGetValue(g.LaunchRef, out var f) && Directory.Exists(Path.Combine(cfg.BattleNetGamesRoot, f)),
             "direct" => File.Exists(g.LaunchRef),
             "gamepass" => true,   // TODO: query installed packages (PackageManager.FindPackagesForUser) for the kid's SID
@@ -154,6 +259,7 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
     public Activity CurrentActivity(Rules? rules, uint sessionId)
     {
         var steam = SteamInstalls();
+        var epic = EpicInstalls();
         var approved = rules?.Games ?? [];
         var found = new List<GameProcess>();
 
@@ -171,6 +277,13 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
                 var appId = steamHit.Value.AppId;
                 if (SteamToolAppIds.Contains(appId)) continue;
                 found.Add(new(pid, path, "steam", appId, approved.FirstOrDefault(g => g.Launcher == "steam" && g.LaunchRef == appId)));
+                continue;
+            }
+            if (EpicGameAt(path, epic) is { } ep)
+            {
+                // Anything under an Epic game's folder, or the Epic games folder itself, is an Epic game. One that isn't
+                // approved (a free game he picked up in the Epic store) is closed like an unapproved Steam game.
+                found.Add(new(pid, path, "epic", null, ep.AppName is { } an ? approved.FirstOrDefault(g => g.Launcher == "epic" && g.LaunchRef.Equals(an, StringComparison.OrdinalIgnoreCase)) : null, ep.Title));
                 continue;
             }
             foreach (var (code, folder) in BattleNetFolders)
@@ -194,6 +307,7 @@ public sealed partial class GameLibrary(DeviceConfig cfg, ILogger<GameLibrary> l
 
         var game = found.FirstOrDefault(p => p.Kind is not ("chrome" or "browser" or "tool"));
         var title = game?.Approved?.Title
+                    ?? game?.Name
                     ?? (game?.SteamAppId is { } id ? steam.Values.FirstOrDefault(v => v.AppId == id).Name : null)
                     ?? (found.Any(p => p.Kind == "chrome") ? "Chrome" : "");
         return new Activity(title ?? "", found.Any(p => p.Kind != "tool"), found, game?.Approved?.Id);

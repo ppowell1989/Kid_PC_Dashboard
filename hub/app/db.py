@@ -9,8 +9,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
     id          INTEGER PRIMARY KEY,
     title       TEXT NOT NULL,
-    launcher    TEXT NOT NULL CHECK (launcher IN ('steam','battlenet','gamepass','direct')),
-    launch_ref  TEXT NOT NULL,          -- steam appid, battle.net product code, gamepass AUMID, or exe path
+    launcher    TEXT NOT NULL CHECK (launcher IN ('steam','battlenet','gamepass','direct','epic')),
+    launch_ref  TEXT NOT NULL,          -- steam appid, battle.net product code, gamepass AUMID, exe path, or Epic app name
     rating      TEXT DEFAULT '',        -- ESRB, informational
     image_url   TEXT DEFAULT ''
 );
@@ -297,7 +297,28 @@ class DB:
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         self._conn.execute("CREATE INDEX IF NOT EXISTS chat_conv_id ON chat(conv, id)")
+        self._widen_launchers()
         self._lock = threading.Lock()
+
+    def _widen_launchers(self) -> None:
+        """Hubs made before Epic Games was a launcher have a games table whose CHECK only allows the first four.
+        SQLite can't ALTER a CHECK, but widening one may be done by editing the stored table definition: every
+        existing row already passes the wider check (sqlite.org/lang_altertable.html, "other kinds of changes")."""
+        row = self._conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='games'").fetchone()
+        old = "'gamepass','direct')"
+        if not row or "'epic'" in row["sql"] or old not in row["sql"]:
+            return
+        version = self._conn.execute("PRAGMA schema_version").fetchone()[0]
+        self._conn.execute("PRAGMA writable_schema = ON")
+        try:
+            self._conn.execute("UPDATE sqlite_master SET sql = replace(sql, ?, ?) WHERE type='table' AND name='games'",
+                               (old, "'gamepass','direct','epic')"))
+            self._conn.execute(f"PRAGMA schema_version = {int(version) + 1}")
+        finally:
+            self._conn.execute("PRAGMA writable_schema = OFF")
+        ok = self._conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if ok != "ok":
+            raise RuntimeError(f"games table check widening failed: {ok}")
 
     @contextmanager
     def tx(self):

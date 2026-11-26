@@ -61,6 +61,10 @@ Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -ContentTy
 $wow = Invoke-RestMethod "$hub/api/parent/games" -Method Post -WebSession $s -ContentType application/json `
   -Body '{"title":"World of Warcraft","launcher":"battlenet","launch_ref":"WoW","approved_for":["adam"]}'
 $bnExe = "${env:ProgramFiles(x86)}\Battle.net\Battle.net.exe"
+# The same for Epic Games: an approved Epic game is what puts the Epic Games app on the PC.
+$fn = Invoke-RestMethod "$hub/api/parent/games/from-search" -Method Post -WebSession $s -ContentType application/json `
+  -Body '{"ref":"epic:Fortnite","approved_for":["adam"]}'
+$epicExes = "Win64", "Win32" | ForEach-Object { "${env:ProgramFiles(x86)}\Epic Games\Launcher\Portal\Binaries\$_\EpicGamesLauncher.exe" }
 
 # ------------------------------------------------------------------ helper (console mode)
 $dataDir = "$env:ProgramData\KidsPc"
@@ -120,7 +124,8 @@ function Pipe($obj) {
 $st = Pipe @{ op = "state" }
 Check "pipe: state ok" $st.ok ($st | ConvertTo-Json -Depth 6)
 Check "pipe: rules came from hub (kid name)" ($st.data.rules.kid.name -eq "Adam")
-Check "pipe: only Adam's approved games listed" ((@($st.data.rules.games.title) -join ",") -eq "Portal 2,World of Warcraft") ($st.data.rules.games | ConvertTo-Json)
+Check "pipe: only Adam's approved games listed" ((@($st.data.rules.games.title | Sort-Object) -join ",") -eq "Fortnite,Portal 2,World of Warcraft") ($st.data.rules.games | ConvertTo-Json)
+Check "pipe: an approved Epic game puts the Epic Games app on the list of apps to install" (@($st.data.rules.managed_apps) -contains "epic") ($st.data.rules.managed_apps -join ",")
 Check "pipe: an approved Battle.net game puts Battle.net on the list of apps to install" (@($st.data.rules.managed_apps) -contains "battlenet") ($st.data.rules.managed_apps -join ",")
 Check "pipe: not locked with time left" ($st.data.locked -eq $false)
 Check "pipe: hub reachable" ($st.data.hubReachable -eq $true)
@@ -138,6 +143,12 @@ $bn = Pipe @{ op = "install"; gameId = $wow.id }
 $bnWaited = $bn.data.action -eq "wait"
 if ($bnWaited) {
   Check "install a Battle.net game without Battle.net -> wait, in plain words" ($bn.data.action -eq "wait" -and -not $bn.data.uri -and $bn.data.message -match "Battle.net (is being set up|needs a parent)") ($bn | ConvertTo-Json)
+}
+$ep = Pipe @{ op = "install"; gameId = $fn.id }
+if ($ep.data.action -eq "wait") {
+  Check "install an Epic game without the Epic app -> wait, in plain words" (-not $ep.data.uri -and $ep.data.message -match "Epic Games (is being set up|needs a parent)") ($ep | ConvertTo-Json)
+} else {
+  Check "install an Epic game -> the Epic app's own install link" ($ep.data.uri -eq "com.epicgames.launcher://apps/Fortnite?action=install") ($ep | ConvertTo-Json)
 }
 $oops = Pipe @{ op = "problem"; detail = "Chrome could not start: The system cannot find the file specified." }
 Check "the shell can report something that would not start" $oops.ok ($oops | ConvertTo-Json)
@@ -289,6 +300,20 @@ if ($LauncherInstall) {
   Check "the install left no Battle.net window or installer running" (@(Get-Process "Battle.net", "Battle.net-Setup" -ErrorAction SilentlyContinue).Count -eq 0) ((Get-Process "Battle.net*" -ErrorAction SilentlyContinue | ForEach-Object Name) -join ",")
   $bn = Pipe @{ op = "install"; gameId = $wow.id }
   Check "install a Battle.net game once Battle.net is there -> starts Battle.net" ($bn.data.action -eq "exec" -and $bn.data.uri -eq $bnExe) ($bn | ConvertTo-Json)
+
+  # Epic ships a Windows installer package, so the helper installs it silently as SYSTEM.
+  $epApp = $null; $began = Get-Date
+  for ($i = 0; $i -lt 180; $i++) {
+    try { $ov = Invoke-RestMethod "$hub/api/parent/overview" -WebSession $s } catch { Start-Sleep 5; continue }
+    $epApp = @($ov.kids[0].apps) | Where-Object { $_.app -eq "epic" }
+    if ($epApp.state -in "installed", "failed") { break }
+    Start-Sleep 5
+  }
+  Write-Host "INFO  Epic: state=$($epApp.state) detail=$($epApp.detail) after $([int]((Get-Date) - $began).TotalSeconds)s exe=$(@($epicExes | Where-Object { Test-Path $_ }) -join ',')"
+  Check "helper installed the Epic Games app by itself and reported it" ($epApp.state -eq "installed" -and @($epicExes | Where-Object { Test-Path $_ }).Count -gt 0) ($epApp | ConvertTo-Json)
+  Check "the Epic games folder is there for the kid's games" (Test-Path "$env:ProgramFiles\Epic Games") ""
+  $ep = Pipe @{ op = "install"; gameId = $fn.id }
+  Check "install an Epic game once the Epic app is there -> its install link" ($ep.data.action -eq "uri" -and $ep.data.uri -eq "com.epicgames.launcher://apps/Fortnite?action=install") ($ep | ConvertTo-Json)
 }
 
 # Remove from PC: a parent takes Portal 2 back off. With Steam closed the helper deletes Steam's record of it

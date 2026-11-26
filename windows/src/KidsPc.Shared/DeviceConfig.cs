@@ -14,6 +14,7 @@ public sealed class DeviceConfig
     public string SteamPath { get; set; } = @"C:\Program Files (x86)\Steam";
     public string BattleNetPath { get; set; } = @"C:\Program Files (x86)\Battle.net\Battle.net.exe";
     public string BattleNetGamesRoot { get; set; } = @"C:\Program Files (x86)";
+    public string EpicGamesRoot { get; set; } = @"C:\Program Files\Epic Games";   // where the Epic launcher puts games by default
     public string InstallerShare { get; set; } = "";                    // optional: \\truenas\kidspc-installers for "direct" games
     public int PollSeconds { get; set; } = 10;
     public int HistorySeconds { get; set; } = 120;                       // how often Chrome history is sent to the hub

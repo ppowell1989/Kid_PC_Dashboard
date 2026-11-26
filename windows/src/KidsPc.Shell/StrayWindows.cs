@@ -15,10 +15,11 @@ namespace KidsPc.Shell;
 /// </summary>
 internal static class StrayWindows
 {
-    // Process name -> store. GUESS: these are the processes that own Steam's and Battle.net's windows.
+    // Process name -> store. GUESS: these are the processes that own Steam's, Battle.net's and Epic's windows.
     private static readonly Dictionary<string, string> Owners = new(StringComparer.OrdinalIgnoreCase)
     {
         ["steam"] = "steam", ["steamwebhelper"] = "steam", ["Battle.net"] = "battlenet",
+        ["EpicGamesLauncher"] = "epic", ["EpicWebHelper"] = "epic",
     };
 
     // Words in a window title that mean a person has to type something there. GUESS at the titles.

@@ -148,6 +148,18 @@ def day_rule(db: DB, kid: Kid, day) -> rules.DayRule:
 STEAM_ART = "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/{}/header.jpg"
 
 
+def epic_library(db: DB, kid_ids: list[str]) -> list[dict]:
+    """Games on these kids' Epic accounts, as their PCs last read them from the Epic launcher. No duplicates."""
+    out, seen = [], set()
+    for k in kid_ids:
+        row = db.one("SELECT value FROM kv WHERE key=?", (f"epic_library:{k}",))
+        for g in json.loads(row["value"]) if row else []:
+            if g.get("app", "").lower() not in seen:
+                seen.add(g["app"].lower())
+                out.append(g)
+    return out
+
+
 def with_art(g: dict) -> dict:
     """Steam games get their store header image unless the parent set one."""
     if not g.get("image_url") and g["launcher"] == "steam" and g["launch_ref"].isdigit():
@@ -310,6 +322,13 @@ class GameInstallState(BaseModel):
     store_log: str = Field(default="", max_length=300)   # the store's own last log lines about this game, as it wrote them
 
 
+class EpicGameIn(BaseModel):
+    """One game on the Epic account signed in on the PC, read from the Epic launcher's library cache there."""
+    app: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    title: str = Field(min_length=1, max_length=120)
+    image_url: str = Field(default="", max_length=500)
+
+
 class SteamAccountIn(BaseModel):
     """The Steam account signed in on the PC, read from Steam's own files there."""
     id: str = Field(pattern=r"^7656\d{13}$")
@@ -330,13 +349,16 @@ class Heartbeat(BaseModel):
     disk_free_gb: float | None = Field(default=None, ge=0)              # free space on the drive games go to
     computer: str = Field(default="", max_length=64)                    # Windows' computer name, for Family & Devices
     steam_account: SteamAccountIn | None = None                         # who Steam on the PC is signed in as
+    # Games on the PC's Epic account, sent when the list changes. Checked one by one (EpicGameIn) in the heartbeat,
+    # so one odd entry from Epic's files never makes the PC's whole check-in fail.
+    epic_library: list | None = Field(default=None, max_length=300)
 
 
 class KidRequest(BaseModel):
     kind: Literal["game", "time", "site"]
     detail: str = Field(min_length=1, max_length=200)
     note: str = Field(default="", max_length=500)
-    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")   # the exact game (and store) the kid picked from search
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass|epic):[A-Za-z0-9_-]{1,64})?$")   # the exact game (and store) the kid picked from search
 
 
 class Visit(BaseModel):
@@ -354,10 +376,10 @@ def auto_update(db: DB, kid_id: str) -> bool:
 def device_rules(kid: Kid = Depends(current_device), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
     st = today_state(db, settings, kid)
     games = games_for(db, settings, kid.id)
-    # A game is no use without the program it installs through, so approving a Battle.net game is
-    # enough to get Battle.net put on the PC. Nobody has to remember to list it in managed_apps.
+    # A game is no use without the program it installs through, so approving a Battle.net (or Epic) game is
+    # enough to get that launcher put on the PC. Nobody has to remember to list it in managed_apps.
     managed = list(settings.managed_apps)
-    for launcher in ("steam", "battlenet"):
+    for launcher in ("steam", "battlenet", "epic"):
         if launcher not in managed and any(g["launcher"] == launcher for g in games):
             managed.append(launcher)
     # The PC's install list: approved games the hub puts there by itself, and the "Try again" round of each.
@@ -427,6 +449,16 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
     save_install_reports(db, kid, hb, now)
     if hb.steam_account:
         steamlink.seen_on_pc(db, kid.id, hb.steam_account.model_dump())
+    if hb.epic_library is not None:
+        lib = []
+        for raw in hb.epic_library:
+            try:
+                g = EpicGameIn.model_validate(raw)
+            except ValueError:
+                continue
+            lib.append({"app": g.app, "title": g.title, "image_url": g.image_url if g.image_url.startswith("https://") else ""})
+        db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+             (f"epic_library:{kid.id}", json.dumps(lib)))
     if hb.disk_free_gb is not None:
         db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
              (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
@@ -524,7 +556,8 @@ async def device_game_search(q: str, kid: Kid = Depends(current_device), db: DB 
     gp = settings.decisions.game_pass_enabled
     steam, xbox_cat = await asyncio.gather(steam_search(q, db, kid_safe=True),
                                            gamesearch.gamepass_catalogue(db) if gp else asyncio.sleep(0, None))
-    rows = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []), gp, {})
+    rows = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []), gp, {},
+                            gamesearch.epic_search(q, epic_library(db, [kid.id])))
     out = []
     for r in rows:
         if r["default"] is None or r["adult"]:
@@ -694,7 +727,7 @@ def family_for(db: DB, settings: Settings, kid: Kid) -> list[dict]:
         p["join_game"] = mine.get(p["game_id"]) if fam["join"] and p["game_id"] and not p["locked"] else None
         # Not approved for him: the shell can turn the Join into a request to Mom or Dad.
         p["ask_ref"] = (f"{game['launcher']}:{game['launch_ref']}" if game and not p["join_game"]
-                        and game["launcher"] in ("steam", "battlenet", "gamepass") else "")
+                        and game["launcher"] in ("steam", "battlenet", "gamepass", "epic") else "")
         del p["game_id"]
         out.append(p)
     return out
@@ -859,7 +892,7 @@ class Decision(BaseModel):
     minutes: int | None = Field(default=None, ge=1, le=240)     # for time requests, override the requested minutes
     game_id: int | None = None     # for game requests, the catalogue game to approve
     steam_appid: str | None = None  # ...or a Steam app to add to the catalogue and approve in one step
-    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass):[A-Za-z0-9]{1,20})?$")  # ...or any search result
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass|epic):[A-Za-z0-9_-]{1,64})?$")  # ...or any search result
     reason: str = Field(default="", max_length=200)   # shown to the kid, e.g. why it's a no
 
 
@@ -1188,7 +1221,7 @@ def parent_command(kid_id: str, c: CommandIn, parent: str = Depends(current_pare
     if c.kind == "message" and not c.arg.strip():
         raise HTTPException(422, "message is empty")
     # "kidspc" is the kid shell and helper themselves: put the waiting build in now.
-    if c.kind == "install_app" and c.arg not in ("steam", "chrome", "battlenet", "kidspc"):
+    if c.kind == "install_app" and c.arg not in ("steam", "chrome", "battlenet", "epic", "kidspc"):
         raise HTTPException(422, "unknown app")
     cid = db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)", (kid.id, c.kind, c.arg.strip(), parent))
     return {"id": cid}
@@ -1259,7 +1292,7 @@ def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
     return {"id": kid.id, "name": kid.name, "online": on, "seen_at": s["seen_at"] if s else None,
             "disk_free_gb": float(free) if free else None,
             "launchers": [{"app": k, "state": v["state"], "detail": v["detail"]} for k, v in sorted(launchers.items())
-                          if k in ("steam", "battlenet", "chrome")],
+                          if k in ("steam", "battlenet", "epic", "chrome")],
             "steam": installs.steam_line(acct, steamlink.owned_info(db, kid.id), steamlink.has_key(db), kid.name),
             "games": games}
 
@@ -1392,7 +1425,7 @@ def parent_retry_install(kid_id: str, gid: int, parent: str = Depends(current_pa
 
 class Game(BaseModel):
     title: str = Field("", max_length=120)  # blank for a Steam game: looked up from the store
-    launcher: Literal["steam", "battlenet", "gamepass", "direct"]
+    launcher: Literal["steam", "battlenet", "gamepass", "direct", "epic"]
     launch_ref: str = Field(min_length=1, max_length=300)
     rating: str = ""
     image_url: str = ""
@@ -1455,7 +1488,7 @@ async def ideas_with_details(db: DB) -> list[dict]:
     return [i for i in ideas if not i["adult"]]
 
 
-STORE_LABEL = {"steam": "Steam", "battlenet": "Battle.net", "gamepass": "PC Game Pass"}
+STORE_LABEL = {"steam": "Steam", "battlenet": "Battle.net", "epic": "Epic Games", "gamepass": "PC Game Pass"}
 
 
 @app.get("/api/device/games/discover")
@@ -1543,6 +1576,12 @@ async def add_game(db: DB, g: Game) -> int:
     if g.launcher == "battlenet" and g.launch_ref.lower() in gamesearch.BATTLENET_BY_CODE:
         b = gamesearch.BATTLENET_BY_CODE[g.launch_ref.lower()]   # known product code: canonical case, title and rating
         g.launch_ref, g.title, g.rating = b["code"], g.title.strip() or b["title"], g.rating or b["esrb"]
+    if g.launcher == "epic":
+        if not gamesearch.EPIC_APP_RE.match(g.launch_ref):
+            raise HTTPException(400, "Epic games need the app name the Epic launcher uses (letters and digits, like Fortnite)")
+        known = gamesearch.EPIC_BY_APP.get(g.launch_ref.lower())
+        if known:   # a known game: canonical case, title and rating
+            g.launch_ref, g.title, g.rating = known["app"], g.title.strip() or known["title"], g.rating or known["esrb"]
     existing = db.one("SELECT id FROM games WHERE launcher=? AND launch_ref=?", (g.launcher, g.launch_ref))
     if existing:
         return existing["id"]
@@ -1558,7 +1597,7 @@ async def add_game(db: DB, g: Game) -> int:
 
 
 async def add_game_from_ref(db: DB, settings: Settings, ref: str) -> int:
-    """Add a game picked from search, by "steam:620", "battlenet:WoW" or "gamepass:9NBLGGH4R315"."""
+    """Add a game picked from search, by "steam:620", "battlenet:WoW", "epic:Fortnite" or "gamepass:9NBLGGH4R315"."""
     launcher, _, code = ref.partition(":")
     if launcher == "steam":
         return await add_game(db, Game(launcher="steam", launch_ref=code))
@@ -1566,6 +1605,13 @@ async def add_game_from_ref(db: DB, settings: Settings, ref: str) -> int:
         if code.lower() not in gamesearch.BATTLENET_BY_CODE:
             raise HTTPException(400, "That isn't a Battle.net game the hub knows")
         return await add_game(db, Game(launcher="battlenet", launch_ref=code))
+    if launcher == "epic":
+        if code.lower() in gamesearch.EPIC_BY_APP:
+            return await add_game(db, Game(launcher="epic", launch_ref=code))
+        hit = next((g for g in epic_library(db, [k.id for k in settings.kids]) if g["app"].lower() == code.lower()), None)
+        if not hit:
+            raise HTTPException(400, "That isn't an Epic game the hub knows. It shows up once it's on a kid's Epic account.")
+        return await add_game(db, Game(launcher="epic", launch_ref=hit["app"], title=hit["title"], image_url=hit.get("image_url", "")))
     if not settings.decisions.game_pass_enabled:
         raise HTTPException(400, "Game Pass is switched off on the hub (decisions.game_pass_enabled)")
     hit = next((x for x in await gamesearch.gamepass_catalogue(db) or [] if x["id"] == code), None)
@@ -1584,12 +1630,13 @@ async def parent_game_search(q: str, parent: str = Depends(current_parent), db: 
     steam, xbox_cat = await asyncio.gather(steam_search(q, db, kid_safe=False), gamesearch.gamepass_catalogue(db))
     in_cat = {(g["launcher"], g["launch_ref"]): g["id"] for g in db.q("SELECT id, launcher, launch_ref FROM games")}
     results = gamesearch.merge(q, steam, gamesearch.battlenet_search(q), gamesearch.xbox_search(q, xbox_cat or []),
-                               settings.decisions.game_pass_enabled, in_cat)
+                               settings.decisions.game_pass_enabled, in_cat,
+                               gamesearch.epic_search(q, epic_library(db, [k.id for k in settings.kids])))
     return {"results": results, "xbox": "ok" if xbox_cat is not None else "unavailable"}
 
 
 class FromSearch(BaseModel):
-    ref: str = Field(pattern=r"^(steam|battlenet|gamepass):[A-Za-z0-9]{1,20}$")   # a platform's launcher:launch_ref
+    ref: str = Field(pattern=r"^(steam|battlenet|gamepass|epic):[A-Za-z0-9_-]{1,64}$")   # a platform's launcher:launch_ref
     approved_for: list[str] = Field(default_factory=list)
 
 

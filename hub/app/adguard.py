@@ -18,6 +18,7 @@ log = logging.getLogger("hub.adguard")
 # Domains that are noise rather than "a site he visited".
 NOISE_SUFFIXES = (
     "steamserver.net", "steamcontent.com", "steampowered.com", "blizzard.com", "battle.net",
+    "epicgames.com", "epicgames.dev", "unrealengine.com",
     "microsoft.com", "windowsupdate.com", "msftconnecttest.com", "nvidia.com", "gstatic.com",
     "googleapis.com", "doubleclick.net", "local", "arpa",
 )

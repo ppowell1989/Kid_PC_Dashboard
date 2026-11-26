@@ -87,7 +87,8 @@ public sealed record BoughtTime(int Minutes, int Points, int Balance);
 public sealed record InstallItem([property: JsonPropertyName("game_id")] int GameId, int Retry = 0, bool? Owned = null, bool Free = false);
 
 /// <summary>Something the helper needs done in the kid's own session, where Steam and Battle.net run as him:
-/// steam_start, steam_restart (so Steam reads a game it was just given), battlenet_install (Arg = product code).
+/// steam_start, steam_restart (so Steam reads a game it was just given), battlenet_install (Arg = product code),
+/// epic_install (Arg = Epic app name: opens the Epic launcher's Install box for it).
 /// The shell carries out each Id once.</summary>
 public sealed record Nudge(string Id, string Kind, string Arg = "");
 
@@ -106,7 +107,7 @@ public sealed record ShellState(Rules? Rules, List<int> InstalledGameIds, bool L
     List<Nudge>? Nudges = null,
     Dictionary<int, string>? Installing = null,    // game id -> a few words for its tile while it installs by itself, e.g. "Downloading 45%"
     Dictionary<int, int>? InstallPercent = null,   // game id -> how far its download is, for the bar on its tile (only when known)
-    List<string>? SignInNeeded = null);            // stores (steam, battlenet) waiting for a grown-up to sign in: their windows stay on screen
+    List<string>? SignInNeeded = null);            // stores (steam, battlenet, epic) waiting for someone at the PC (sign in, or press Install): their windows stay on screen
 
 /// <summary>Reply to an install request: either the helper did it, or the shell should open a launcher URI.</summary>
 public sealed record InstallResult(string Action, string? Uri, string Message, string? Args = null);

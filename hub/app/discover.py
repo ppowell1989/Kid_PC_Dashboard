@@ -59,6 +59,11 @@ SHELVES: list[tuple[str, list[tuple[str, str, str, str]]]] = [
         ("battlenet", "WTCG", "Hearthstone", "T"),
         ("battlenet", "S2", "StarCraft II", "T"),
     ]),
+    ("On Epic Games", [
+        ("epic", "Sugar", "Rocket League", "E"),
+        ("epic", "0a2d9f6403244d12969e11da6713137b", "Fall Guys", "E"),
+        ("epic", "Fortnite", "Fortnite", "T"),
+    ]),
 ]
 
 
