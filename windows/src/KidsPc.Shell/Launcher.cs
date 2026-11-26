@@ -34,7 +34,7 @@ public static class Launcher
 
     public static bool LaunchGame(Game g)
     {
-        if (g.Launcher is "steam" or "battlenet") KidOpenedStoreAt = DateTimeOffset.Now;
+        if (g.Launcher is "steam" or "battlenet" or "epic") KidOpenedStoreAt = DateTimeOffset.Now;
         return Try(g.Title, () => StartGame(g));
     }
 
@@ -48,6 +48,11 @@ public static class Launcher
                 break;
             case "battlenet":
                 Process.Start(new ProcessStartInfo(BattleNet, $"--exec=\"launch {g.LaunchRef}\"") { UseShellExecute = false });
+                break;
+            case "epic":
+                // Straight to the launcher with its own link, like steam:// to steam.exe: the protocol may be registered
+                // only for the account that installed it. silent=true keeps the launcher in the background.
+                StartEpic(Epic.LaunchUri(g.LaunchRef));
                 break;
             case "gamepass":
                 // launch_ref is the app's AUMID, e.g. Microsoft.MinecraftUWP_8wekyb3d8bbwe!App
@@ -107,6 +112,10 @@ public static class Launcher
                     // A free game that isn't on his Steam account yet: Steam's own Install box, which adds it in one press.
                     OpenUri($"steam://install/{n.Arg}", "Steam");
                     break;
+                case "epic_install" when Epic.LauncherInstalled && !string.IsNullOrWhiteSpace(n.Arg) && Epic.IsAppName(n.Arg):
+                    // The Epic launcher's own Install box for a game a parent approved. Someone at the PC presses Install once.
+                    StartEpic(Epic.InstallUri(n.Arg));
+                    break;
                 case "battlenet_install" when File.Exists(BattleNet) && !string.IsNullOrWhiteSpace(n.Arg):
                     Process.Start(new ProcessStartInfo(BattleNet, $"--exec=\"install {n.Arg}\"") { UseShellExecute = false })?.Dispose();   // GUESS: Battle.net CLI verb
                     break;
@@ -123,11 +132,20 @@ public static class Launcher
         return Try(what, () => Open(uri));
     }
 
+    private static void StartEpic(string uri)
+    {
+        var psi = new ProcessStartInfo(Epic.LauncherExe) { UseShellExecute = false };
+        psi.ArgumentList.Add(uri);
+        Process.Start(psi)?.Dispose();
+    }
+
     private static void Open(string uri)
     {
         if (App.DemoScene is not null) return;
         if (uri.StartsWith("steam://", StringComparison.OrdinalIgnoreCase) && File.Exists(Steam))
             Process.Start(new ProcessStartInfo(Steam, uri) { UseShellExecute = false });
+        else if (uri.StartsWith("com.epicgames.launcher://", StringComparison.OrdinalIgnoreCase) && Epic.LauncherInstalled)
+            StartEpic(uri);
         else
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
     }

@@ -7,6 +7,9 @@ so nobody has to know a Steam app id or a Battle.net product code.
 Sources, none of which needs an account or an API key:
   Steam      the public store search (in main.py), with appdetails for the rating
   Battle.net a short curated list below: Blizzard's PC catalogue is small and has no public search
+  Epic       a short curated list of Epic's own games, plus the games on each kid's Epic account, which the
+             kid's PC reads from the Epic launcher's library cache and sends with its heartbeat. Epic's store
+             search sits behind bot protection, so the hub doesn't call it.
   Xbox       the PC Game Pass catalogue: Microsoft's public "sigl" list of product ids, plus the
              public display catalogue for titles, art and ratings. Cached for a week.
 """
@@ -52,6 +55,19 @@ BATTLENET = [
 ]
 BATTLENET_BY_CODE = {g["code"].lower(): g for g in BATTLENET}
 
+# Epic games by their launcher "app name", as in com.epicgames.launcher://apps/<app>?action=launch. These are Epic's
+# own games, which an under-13 (cabined) Epic account may download even before a parent has given consent.
+# Fortnite and Sugar (Rocket League) are long-known app names. GUESS: Fall Guys' id, until a PC reports its library.
+EPIC = [
+    {"app": "Fortnite", "title": "Fortnite", "esrb": "T",
+     "aliases": ["lego fortnite", "fortnite festival", "rocket racing", "fortnite battle royale"]},
+    # Rocket League and Fall Guys left the Steam store for new players, so Epic is the default store for them.
+    {"app": "Sugar", "title": "Rocket League", "esrb": "E", "steam": "252950", "prefer": True, "aliases": ["rocket league", "rl"]},
+    {"app": "0a2d9f6403244d12969e11da6713137b", "title": "Fall Guys", "esrb": "E", "steam": "1097150", "prefer": True, "aliases": ["fall guys"]},
+]
+EPIC_BY_APP = {g["app"].lower(): g for g in EPIC}
+EPIC_APP_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
 GAMEPASS_PC_LIST = "fdd9e2a7-0fee-49f6-ad69-4354098401ff"   # Microsoft's public id for the PC Game Pass list
 XBOX_CACHE_SECONDS = 7 * 24 * 3600
 XBOX_KEY = "xbox:gamepass_pc"
@@ -78,6 +94,21 @@ def matches(q: str, title: str, aliases: list[str] = ()) -> bool:
 
 def battlenet_search(q: str) -> list[dict]:
     return [g for g in BATTLENET if matches(q, g["title"], g.get("aliases", []))]
+
+
+def epic_search(q: str, library: list[dict] = ()) -> list[dict]:
+    """The curated Epic games, then games on the kids' Epic accounts (library rows: app, title, image_url)."""
+    out = [dict(g) for g in EPIC if matches(q, g["title"], g.get("aliases", []))]
+    seen = {g["app"].lower() for g in out}
+    for g in library:
+        app = (g.get("app") or "")
+        if not EPIC_APP_RE.match(app) or app.lower() in seen or not matches(q, g.get("title") or ""):
+            continue
+        known = EPIC_BY_APP.get(app.lower(), {})
+        seen.add(app.lower())
+        out.append({"app": app, "title": g["title"], "esrb": known.get("esrb", ""), "image_url": g.get("image_url", ""),
+                    "steam": known.get("steam"), "prefer": known.get("prefer", False), "owned": True})
+    return out[:8]
 
 
 # Xbox / PC Game Pass ---------------------------------------------------------
@@ -146,7 +177,8 @@ def xbox_search(q: str, catalogue: list[dict]) -> list[dict]:
 
 # Merging ---------------------------------------------------------------------
 
-def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], game_pass_enabled: bool, in_catalogue: dict) -> list[dict]:
+def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], game_pass_enabled: bool, in_catalogue: dict,
+          epic: list[dict] = ()) -> list[dict]:
     """One row per game, with every platform it's on. The first addable platform is the default."""
     rows: dict[str, dict] = {}
 
@@ -176,6 +208,15 @@ def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], ga
         if not r["esrb"]:
             r["esrb"] = b["esrb"]
         add_platform(r, "battlenet", "battlenet", b["code"])
+    for e in epic:
+        r = steam_by_id.get(e.get("steam")) or row(e["title"])
+        if not r["esrb"]:
+            r["esrb"] = e.get("esrb", "")
+        if not r["image_url"]:
+            r["image_url"] = e.get("image_url", "")
+        add_platform(r, "epic", "epic", e["app"], note="On his Epic account" if e.get("owned") else "")
+        if e.get("prefer"):
+            r["prefer"] = "epic"
     for x in xbox:
         r = row(x["title"])
         if not r["image_url"]:
@@ -187,7 +228,8 @@ def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], ga
 
     out = []
     for r in rows.values():
-        r["platforms"].sort(key=lambda p: (not p["addable"], ORDER.index(p["platform"])))
+        prefer = r.pop("prefer", None)
+        r["platforms"].sort(key=lambda p: (not p["addable"], p["platform"] != prefer, ORDER.index(p["platform"])))
         r["default"] = 0 if r["platforms"] and r["platforms"][0]["addable"] else None
         out.append(r)
     # Closest title first: exact, then starts-with, then the rest in source order.
@@ -196,5 +238,5 @@ def merge(q: str, steam: list[dict], battlenet: list[dict], xbox: list[dict], ga
     return out[:12]
 
 
-LABELS = {"steam": "Steam", "battlenet": "Battle.net", "xbox": "PC Game Pass"}
-ORDER = ["steam", "battlenet", "xbox"]   # preferred launcher when a game is on several
+LABELS = {"steam": "Steam", "battlenet": "Battle.net", "epic": "Epic Games", "xbox": "PC Game Pass"}
+ORDER = ["steam", "battlenet", "epic", "xbox"]   # preferred launcher when a game is on several

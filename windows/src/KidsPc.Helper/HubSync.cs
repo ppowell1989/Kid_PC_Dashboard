@@ -76,6 +76,19 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
         catch (Exception ex) { log.LogWarning("could not save offline play time: {Msg}", ex.Message); }
     }
 
+    private (string Key, DateTimeOffset At) _epicSent = ("", DateTimeOffset.MinValue);
+
+    /// <summary>The games on the Epic account signed in on this PC, so the hub's game search can offer them. Sent only
+    /// when the list changed or every half hour (it can be a few hundred games), otherwise null.</summary>
+    private (object? List, string Key) EpicLibraryToSend()
+    {
+        if (!Epic.LauncherInstalled) return (null, "");
+        var lib = library.EpicLibrary();
+        var key = string.Join("|", lib.Select(e => e.AppName));
+        if (key == _epicSent.Key && DateTimeOffset.Now - _epicSent.At < TimeSpan.FromMinutes(30)) return (null, key);
+        return (lib.Select(e => new { app = e.AppName, title = e.Title, image_url = e.ImageUrl }).ToList(), key);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         var lastLoop = DateTimeOffset.UtcNow;
@@ -94,8 +107,11 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                 appStates["webfilter"] = new { state = dns.Status.State, detail = dns.Status.Detail };
                 var owed = (int)(_offlineSeconds / 60);
                 var games = deployer.Status.ToDictionary(kv => kv.Key.ToString(), kv => new { state = kv.Value.State, detail = kv.Value.Detail, done_bytes = kv.Value.DoneBytes, total_bytes = kv.Value.TotalBytes, retry = kv.Value.Retry, stage = kv.Value.Stage, store_log = kv.Value.StoreLog });
+                var (epicLib, epicKey) = EpicLibraryToSend();
                 var hb = await http.PostAsJsonAsync("/api/device/heartbeat", new { running = activity.Title, active = activity.Active, apps = appStates, game_id = activity.GameId, voice = kidHere ? cache.Voice : "", offline_minutes = owed, games, disk_free_gb = deployer.FreeGb(), computer = Environment.MachineName,
-                    steam_account = deployer.SteamAccountHere() is { } sa ? new { id = sa.Id, name = sa.Name, login = sa.Login } : null }, ct);
+                    steam_account = deployer.SteamAccountHere() is { } sa ? new { id = sa.Id, name = sa.Name, login = sa.Login } : null,
+                    epic_library = epicLib }, ct);
+                if (epicLib is not null && hb.IsSuccessStatusCode) _epicSent = (epicKey, DateTimeOffset.Now);
                 if (owed > 0 && hb.IsSuccessStatusCode)
                 {
                     log.LogInformation("told the hub about {Minutes} minutes played while it was unreachable", owed);
@@ -111,7 +127,7 @@ public sealed class HubSync(HttpClient http, DeviceConfig cfg, StateCache cache,
                     clock.Apply(rules.Timezone);
                     apps.Ensure(rules.ManagedApps ?? ["steam", "chrome"]);
                     // Approved games go on by themselves. A game the kid is playing is never interrupted for it.
-                    try { deployer.Tick(rules, kidHere, activity.Processes.Any(p => p.Kind is "steam" or "battlenet" or "direct")); }
+                    try { deployer.Tick(rules, kidHere, activity.Processes.Any(p => p.Kind is "steam" or "battlenet" or "epic" or "direct")); }
                     catch (Exception ex) { log.LogWarning("game installs: {Msg}", ex.Message); }
                     await commands.RunAsync(rules.Commands ?? [], ct);
                 }

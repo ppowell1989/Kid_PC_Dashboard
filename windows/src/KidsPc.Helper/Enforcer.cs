@@ -16,7 +16,7 @@ public sealed class Enforcer(EventQueue events, ILogger<Enforcer> log)
         foreach (var p in activity.Processes)
         {
             var reason = locked ? "time is up"
-                : p.Kind is "steam" or "battlenet" && p.Approved is null ? "game not approved"
+                : p.Kind is "steam" or "battlenet" or "epic" && p.Approved is null ? "game not approved"
                 : p.Kind == "browser" ? "only Chrome is allowed"
                 : p.Kind == "tool" ? "not for the kid's account"
                 : null;
@@ -43,7 +43,7 @@ public sealed class Enforcer(EventQueue events, ILogger<Enforcer> log)
             if (_logged.Add(p.Pid))
             {
                 log.LogInformation("stopped {Path} ({Reason})", p.Path, reason);
-                var what = p.Approved?.Title ?? (p.Kind == "chrome" ? "Chrome" : Path.GetFileNameWithoutExtension(p.Path));
+                var what = p.Approved?.Title ?? p.Name ?? (p.Kind == "chrome" ? "Chrome" : Path.GetFileNameWithoutExtension(p.Path));
                 events.Add(reason switch { "time is up" => "stopped_time_up", "only Chrome is allowed" => "browser_blocked", _ => "game_blocked" }, what);
             }
         }

@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using KidsPc.Shared;
 
 namespace KidsPc.Helper;
@@ -8,7 +10,7 @@ namespace KidsPc.Helper;
 public sealed record AppStatus(string State, string Detail = "");
 
 /// <summary>
-/// Installs the launchers the hub says each PC should have (Steam, Chrome, Battle.net), silently and
+/// Installs the launchers the hub says each PC should have (Steam, Chrome, Battle.net, Epic Games), silently and
 /// as SYSTEM, so nobody has to sit at the PC. Reports progress to the hub in every heartbeat.
 /// </summary>
 public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<AppInstaller> log)
@@ -44,7 +46,50 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             f => new ProcessStartInfo(f, $"--lang=enUS --installpath=\"{Path.GetDirectoryName(cfg.BattleNetPath)}\""),
             StaysOpen: true,
             ByHand: "Battle.net would not install by itself. Sign in to an admin account on this PC and install it from battle.net."),
+        // Epic ships a normal Windows installer package, which installs silently for the whole PC. The launcher runs
+        // under x64 emulation on Windows on Arm. Its games then need a folder the kid's account may write to.
+        ["epic"] = new("epic",
+            () => Epic.LauncherExe,
+            () => "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download/EpicGamesLauncherInstaller.msi",
+            "EpicGamesLauncherInstaller.msi",
+            f => new ProcessStartInfo("msiexec.exe", $"/i \"{f}\" /qn /norestart /L*v \"{Path.Combine(Path.GetDirectoryName(f)!, "epic-msi.log")}\""),
+            ByHand: "The Epic Games app would not install by itself. Sign in to an admin account on this PC and install it from store.epicgames.com."),
     };
+
+    private bool _epicFolderReady;
+
+    /// <summary>The Epic launcher runs as the kid, a standard account, and puts games in C:\Program Files\Epic Games,
+    /// which only an admin may create or write to. So the helper makes that folder (and the launcher's records folder
+    /// in ProgramData) and lets the kid's account add game folders there, once per start. GUESS: without this the launcher asks
+    /// for an admin password (a Windows prompt the kid can't answer) when it installs his first game.
+    /// Anything he could put there himself is still closed on sight unless a parent approved it (Enforcer).</summary>
+    private void PrepareEpicFolders()
+    {
+        if (_epicFolderReady) return;
+        _epicFolderReady = true;   // once per helper start, whatever happens: a failure is logged, not retried every poll
+        try
+        {
+            var dirs = new[] { cfg.EpicGamesRoot, Epic.DataDir }.Select(d => Directory.CreateDirectory(d)).ToList();
+            if (string.IsNullOrEmpty(cfg.KidUser)) return;
+            var sid = (SecurityIdentifier)new NTAccount(cfg.KidUser).Translate(typeof(SecurityIdentifier));
+            // The games folder also holds the launcher itself (and its updater, which runs elevated), so the kid gets only
+            // the right to make new folders in it, on that folder alone. Windows makes him the owner of each game folder
+            // he (his launcher) creates, so he can fill it, and the launcher's own folder stays admin-only.
+            var root = dirs[0];
+            var acl = root.GetAccessControl();
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.ReadAndExecute | FileSystemRights.CreateDirectories,
+                InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+            root.SetAccessControl(acl);
+            // The launcher's records (install manifests, library cache) in ProgramData: his to write.
+            var data = dirs[1];
+            acl = data.GetAccessControl();
+            acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            data.SetAccessControl(acl);
+            log.LogInformation("Epic games folder ready for {Kid}", cfg.KidUser);
+        }
+        catch (Exception ex) { log.LogWarning("could not prepare the Epic games folder: {Msg}", ex.Message); }
+    }
 
     private readonly ConcurrentDictionary<string, AppStatus> _status = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastAttempt = new();
@@ -61,7 +106,12 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             // An install in flight is not done when the app's program appears: the installer is still writing,
             // and may have a window to close. InstallAsync sets the result when it is.
             if (_status.TryGetValue(name, out var cur) && cur.State == "installing") continue;
-            if (File.Exists(def.InstalledPath())) { _status[name] = new("installed"); continue; }
+            if (File.Exists(def.InstalledPath()))
+            {
+                _status[name] = new("installed");
+                if (name == "epic") PrepareEpicFolders();   // also for a launcher a parent installed by hand
+                continue;
+            }
             if (_lastAttempt.TryGetValue(name, out var last) && DateTimeOffset.Now - last < TimeSpan.FromMinutes(30)) continue;
 
             _lastAttempt[name] = DateTimeOffset.Now;
@@ -119,8 +169,8 @@ public sealed class AppInstaller(DeviceConfig cfg, EventQueue events, ILogger<Ap
             for (var i = 0; i < 30 && !File.Exists(def.InstalledPath()); i++) await Task.Delay(2000);
             _status[def.Name] = File.Exists(def.InstalledPath())
                 ? new("installed")
-                : new("failed", def.ByHand != "" ? def.ByHand
-                    : $"installer exited {(p.HasExited ? p.ExitCode : -1)} but {Path.GetFileName(def.InstalledPath())} is missing");
+                : new("failed", (def.ByHand != "" ? def.ByHand + " " : "")
+                    + $"(installer exited {(p.HasExited ? p.ExitCode : -1)} but {Path.GetFileName(def.InstalledPath())} is missing)");
             events.Add(_status[def.Name].State == "installed" ? "app_installed" : "app_install_failed", def.Name);
         }
         catch (Exception ex)

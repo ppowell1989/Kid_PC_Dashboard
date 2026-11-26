@@ -24,6 +24,8 @@ public sealed record GameInstallStatus(string State, string Detail = "", long Do
 /// the shell. Steam then downloads it like any update, and its manifest says how far it got.
 /// Battle.net: has no supported way to be told from outside. The shell runs Battle.net's --exec="install CODE" (GUESS)
 /// and the helper watches the game's folder grow.
+/// Epic: the shell opens the Epic launcher's own Install box for the game (its com.epicgames.launcher:// link), where
+/// someone at the PC presses Install once; the helper follows the launcher's install record and the game's folder.
 /// Installer share ("direct" games): the helper runs the installer itself, silently, as SYSTEM.
 /// What a store needs from a person (signing in once, owning the game) is found and reported in plain words.
 /// </summary>
@@ -111,7 +113,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     public List<string> SignInNeeded()
     {
         lock (_gate)
-            return _status.Where(kv => kv.Value.State == "needs_signin" && _launcherOf.ContainsKey(kv.Key))
+            return _status.Where(kv => (kv.Value.State == "needs_signin" || kv.Value.Stage == EpicPress) && _launcherOf.ContainsKey(kv.Key))
                 .Select(kv => _launcherOf[kv.Key]).Distinct().ToList();
     }
 
@@ -148,6 +150,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
                 GameInstallStatus st;
                 if (toRemove) st = Remove(g, at, kidHere, gameRunning);
                 else if (g.Launcher == "battlenet") st = BattleNet(g, at, isWanted, kidHere);   // its folder appears long before it is done
+                else if (g.Launcher == "epic") st = EpicGame(g, at, isWanted, kidHere, gameRunning);
                 else if (installed.Contains(g.Id)) st = new("installed");
                 else if (!isWanted) st = new("not_installed");
                 else st = g.Launcher switch
@@ -471,6 +474,151 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         catch { return true; }
     }
 
+    // ------------------------------------------------------------------ Epic Games
+
+    private const string EpicPress = "Press Install in Epic";
+
+    private GameInstallStatus EpicGame(Game g, Attempt at, bool wanted, bool kidHere, bool gameRunning)
+    {
+        var rec = library.EpicInstalls().FirstOrDefault(e => e.AppName.Equals(g.LaunchRef, StringComparison.OrdinalIgnoreCase));
+        if (rec is { Complete: true })
+        {
+            if (at.KickedAt is not null) { events.Add("game_installed", $"{g.Title} (Epic)"); at.KickedAt = null; }
+            EnsureAntiCheat(g, rec);
+            return new("installed");
+        }
+        if (rec is not null)
+        {
+            // The launcher has started it: follow the game's folder against the size its record gives.
+            if (DateTimeOffset.Now - at.SizedAt > TimeSpan.FromSeconds(30))
+            {
+                at.SizedAt = DateTimeOffset.Now;
+                var size = Directory.Exists(rec.Folder) ? FolderBytes(rec.Folder) : 0;
+                if (size != at.LastSize) { at.LastSize = size; at.SizeSince = DateTimeOffset.Now; }
+            }
+            var done = Math.Max(at.LastSize, 0);
+            var total = rec.Size > done ? rec.Size : 0;
+            if (total > 0 && FreeBytes(rec.Folder) is { } free && total - done > free + (512L << 20))
+                return new("no_space", $"It needs {Gb(total - done)} more and the PC has {Gb(free)} free. Remove a game he no longer plays, then press Try again.", done, total);
+            if (DateTimeOffset.Now - at.SizeSince > StuckAfter && kidHere)
+                return new("stuck", "The Epic Games app stopped downloading it. It may be paused there: open Epic Games on the PC and press Resume, or press Try again.", done, total, Stage: "Paused");
+            return new("installing", "The Epic Games app is downloading it.", done, total, Stage: "Downloading");
+        }
+        if (!wanted) return new("not_installed");
+
+        if (LauncherNotReady("epic", "The Epic Games app") is { } wait) return wait;
+        if (!kidHere) return new("waiting", $"Starts when {_kidName} is signed in on the PC.", Stage: "Waiting for the PC");
+        if (!EpicSignedIn())
+            return new("needs_signin", $"The Epic Games app has to be signed in on {_kidName}'s PC once, with {_kidName}'s Epic account. Tick Remember me. After that, games install from here.", Stage: "Needs Epic sign-in");
+        if (at.KickedAt is null)      // once per attempt; "Try again" on the dashboard starts a new attempt
+        {
+            if (gameRunning) return new("waiting", $"Starts after {_kidName} closes his game, so it doesn't interrupt him.", Stage: "After his game");
+            at.KickedAt = DateTimeOffset.Now;
+            _nudges.Add((new Nudge($"epic-{g.Id}-{at.Retry}-{DateTimeOffset.Now.ToUnixTimeSeconds()}", "epic_install", g.LaunchRef), DateTimeOffset.Now));
+            events.Add("game_install_started", $"{g.Title} (Epic)");
+        }
+        // Epic has no way to be told "install this" without someone pressing Install in its own box. The box stays on
+        // his screen (the shell doesn't tidy it away), and his tile says what to do.
+        if (DateTimeOffset.Now - at.KickedAt > TimeSpan.FromMinutes(30))
+            return new("stuck", $"Nobody pressed Install in the Epic Games app on {_kidName}'s PC. If his Epic account doesn't have {g.Title} yet, add it in the Epic store first " +
+                "(free games too; an under-13 account needs a parent's OK in Epic's parental controls), then press Try again.", Stage: "Stuck");
+        return new("waiting", $"The Epic Games app's Install box was opened on {_kidName}'s screen at {at.KickedAt.Value:h:mm tt}. Pressing Install there once starts the download.", Stage: EpicPress);
+    }
+
+    /// <summary>The Epic launcher remembers a signed-in account ("Remember me") in the kid's GameUserSettings.ini,
+    /// section [RememberMe], Enable=True with a non-empty Data line. GUESS at the file and keys. Can't tell = signed in,
+    /// so a parent isn't sent to the PC for nothing.</summary>
+    private bool EpicSignedIn()
+    {
+        try
+        {
+            var saved = Path.Combine(KidProfile(), "AppData", "Local", "EpicGamesLauncher", "Saved", "Config");
+            var files = new[] { "Windows", "WindowsEditor" }.Select(d => Path.Combine(saved, d, "GameUserSettings.ini")).Where(File.Exists).ToList();
+            if (files.Count == 0) return false;
+            foreach (var f in files)
+            {
+                var text = File.ReadAllText(f);
+                var sec = Regex.Match(text, @"\[RememberMe\](?<body>[^\[]*)", RegexOptions.IgnoreCase);
+                if (sec.Success && Regex.IsMatch(sec.Groups["body"].Value, @"^\s*Data\s*=\s*\S{8,}", RegexOptions.Multiline)) return true;
+            }
+            return false;
+        }
+        catch { return true; }
+    }
+
+    private readonly HashSet<string> _antiCheatDone = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Many Epic games (Fortnite, Fall Guys, Rocket League) use Easy Anti-Cheat, whose service needs an admin
+    /// to install. The kid's account can't, so the game would ask for an admin password on its first start. The helper
+    /// is SYSTEM, so it installs it once per game: EasyAntiCheat_EOS_Setup.exe install PRODUCTID, with the id from the
+    /// Settings.json beside it. GUESS at the arguments and file names. Best effort, in the background.</summary>
+    private void EnsureAntiCheat(Game g, EpicInstall rec)
+    {
+        if (!_antiCheatDone.Add(rec.AppName)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var setup = Directory.EnumerateFiles(rec.Folder, "EasyAntiCheat_EOS_Setup.exe",
+                    new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 6 }).FirstOrDefault();
+                if (setup is null) return;
+                var settings = Path.Combine(Path.GetDirectoryName(setup)!, "Settings.json");
+                if (!File.Exists(settings)) return;
+                var id = Regex.Match(await File.ReadAllTextAsync(settings), "\"productid\"\\s*:\\s*\"([A-Za-z0-9]+)\"", RegexOptions.IgnoreCase).Groups[1].Value;
+                if (id == "") return;
+                using var p = Process.Start(new ProcessStartInfo(setup, $"install {id}") { UseShellExecute = false, CreateNoWindow = true })!;
+                await p.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(3));
+                log.LogInformation("Easy Anti-Cheat for {Title}: exit {Code}", g.Title, p.ExitCode);
+                if (p.ExitCode == 0) events.Add("anticheat_installed", g.Title);
+            }
+            catch (Exception ex) { log.LogWarning("Easy Anti-Cheat for {Title}: {Msg}", g.Title, ex.Message); }
+        });
+    }
+
+    private GameInstallStatus RemoveEpic(Game g, bool gameRunning)
+    {
+        var rec = library.EpicInstalls().FirstOrDefault(e => e.AppName.Equals(g.LaunchRef, StringComparison.OrdinalIgnoreCase));
+        if (rec is null) return new("not_installed");
+        if (gameRunning) return new("removing", $"Comes off after {_kidName} closes his game.", Stage: "After his game");
+        // Only a folder the launcher's own record names, and never a whole drive or the Epic games folder itself.
+        var folder = rec.Folder;
+        var safe = folder.Length > 3 && Path.IsPathFullyQualified(folder)
+                   && !folder.TrimEnd('\\').Equals(cfg.EpicGamesRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                   && Path.GetDirectoryName(folder) is { Length: > 3 };
+        if (!safe) return new("manual", "Remove it in the Epic Games app on the PC.");
+        // The launcher must not be holding its records while they change. GUESS: it copes with a game whose record and
+        // folder are gone (it shows Install again), as with a game deleted by hand.
+        foreach (var proc in Process.GetProcessesByName("EpicGamesLauncher")) { try { proc.Kill(entireProcessTree: true); } catch { } finally { proc.Dispose(); } }
+        try
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+            File.Delete(rec.File);
+            ForgetEpicInstall(rec.AppName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.LogWarning("could not remove {Title}: {Msg}", g.Title, ex.Message);
+            return new("removing", "Some of its files are in use. Trying again in a minute.", Stage: "Removing");
+        }
+        log.LogInformation("removed Epic game {Title} ({App})", g.Title, g.LaunchRef);
+        return new("not_installed");
+    }
+
+    /// <summary>Takes the game off the launcher's list of finished installs (LauncherInstalled.dat), so it doesn't
+    /// think the game is still there.</summary>
+    private void ForgetEpicInstall(string appName)
+    {
+        try
+        {
+            if (!File.Exists(Epic.LauncherInstalledDat)) return;
+            var root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Epic.LauncherInstalledDat));
+            if (root?["InstallationList"] is not System.Text.Json.Nodes.JsonArray list) return;
+            foreach (var n in list.Where(n => string.Equals((string?)n?["AppName"], appName, StringComparison.OrdinalIgnoreCase)).ToList()) list.Remove(n);
+            File.WriteAllText(Epic.LauncherInstalledDat, root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex) { log.LogDebug("LauncherInstalled.dat: {Msg}", ex.Message); }
+    }
+
     // ------------------------------------------------------------------ installer share
 
     private GameInstallStatus Direct(Game g, Attempt at)
@@ -503,6 +651,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
     {
         "steam" => RemoveSteam(g, at, kidHere, gameRunning),
         "battlenet" => RemoveBattleNet(g, gameRunning),
+        "epic" => RemoveEpic(g, gameRunning),
         "gamepass" => new("manual", "Game Pass games are removed in the Xbox app on the PC for now."),
         _ => new("manual", "Remove it on the PC from Windows Settings, Apps (it needs a grown-up's sign-in)."),
     };
@@ -614,6 +763,7 @@ public sealed partial class GameDeployer(DeviceConfig cfg, GameLibrary library, 
         if (st?.State == "installed") return null;
         if (app == "steam" && File.Exists(Path.Combine(cfg.SteamPath, "steam.exe")) && st is null) return null;
         if (app == "battlenet" && File.Exists(cfg.BattleNetPath) && st is null) return null;
+        if (app == "epic" && Epic.LauncherInstalled && st is null) return null;
         return new("waiting", st?.State == "failed" ? $"{name} isn't on this PC and wouldn't install by itself." : $"{name} is being put on this PC first.");
     }
 

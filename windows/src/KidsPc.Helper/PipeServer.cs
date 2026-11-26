@@ -214,6 +214,9 @@ public sealed class PipeServer(HttpClient http, DeviceConfig cfg, StateCache cac
             case "battlenet":
                 if (LauncherMissing("battlenet", "Battle.net", game) is { } noBattleNet) return noBattleNet;
                 return new("exec", cfg.BattleNetPath, "Battle.net will download it.", $"--exec=\"install {game.LaunchRef}\"");   // GUESS: Battle.net CLI verb
+            case "epic":
+                if (LauncherMissing("epic", "Epic Games", game) is { } noEpic) return noEpic;
+                return new("uri", Epic.InstallUri(game.LaunchRef), "The Epic Games app will download it. Press Install there.");
             case "gamepass":
                 return new("uri", $"ms-windows-store://pdp/?ProductId={game.LaunchRef}", "The Xbox app will download it.");
             case "direct":

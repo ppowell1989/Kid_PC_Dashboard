@@ -336,6 +336,7 @@ function gameFacts(h, p) {
   const how = p.platform === "steam"
     ? (d.free ? "Free on Steam" : `${esc(d.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(p.launch_ref)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`)
     : p.platform === "battlenet" ? "Through Battle.net: he signs in to Blizzard's app on his PC, and the game downloads there"
+    : p.platform === "epic" ? `Through the Epic Games app on his PC${p.note ? ` (${esc(p.note.toLowerCase())})` : ""}. Free Epic games still need adding to his Epic account, and an under-13 Epic account needs your OK in Epic's parental controls first`
     : "Included with PC Game Pass, through the Xbox app";
   return [h.esrb ? `<b>Rated ${esc(h.esrb)}</b>${d.esrb_descriptors ? `: ${esc(d.esrb_descriptors)}` : ""}` : "No ESRB rating listed",
     h.adult ? `<span class="tagline bad">Adult content</span>` : "", d.content_notes ? esc(d.content_notes) : "", esc(d.description || ""),
@@ -353,7 +354,7 @@ function gameNote() {
   note.textContent = (shown ? "Tap a store to choose where he gets it." : "Every match is rated above your limit.")
     + (hidden ? ` ${hidden} game${hidden > 1 ? "s" : ""} rated above ${$("#gameMax").selectedOptions[0].textContent.replace(/^Up to |^Rated | only$/g, "")} hidden.` : "");
 }
-const SEARCH_NOTE = "Searches Steam, Battle.net and PC Game Pass together. Pick a game and the hub works out the rest.";
+const SEARCH_NOTE = "Searches Steam, Battle.net, Epic Games and PC Game Pass together. Pick a game and the hub works out the rest.";
 function renderGameHits() {
   $("#gameResults").innerHTML = gameHits.map((h, i) => {
     if (overCap(h)) return "";
@@ -392,7 +393,7 @@ $("#gameMax").onchange = () => { renderGameHits(); gameNote(); };
 
 // PCs: like an IT office's view of its computers, in plain words. Every approved game on every PC, how far
 // along it is, and the one thing to do when it's stuck. The hub writes the words (installs.py).
-const APP_NAME = { steam: "Steam", battlenet: "Battle.net", chrome: "Chrome" };
+const APP_NAME = { steam: "Steam", battlenet: "Battle.net", epic: "Epic Games", chrome: "Chrome" };
 let pcTimer = 0;
 // The hub itself: which version it runs and whether it keeps itself up to date (deploy/hub-autoupdate.sh).
 function hubCard(h) {
@@ -449,7 +450,9 @@ function wireInstalls(root, reload) {
   }));
   root.querySelectorAll("[data-pchow]").forEach((b) => (b.onclick = () => {
     const store = APP_NAME[b.dataset.pchow] || "the store", name = kidName(b.dataset.kid);
-    const text = b.dataset.pchow === "battlenet"
+    const text = b.dataset.pchow === "epic"
+      ? `This is the one step that needs someone at ${name}'s PC, once. On ${name}'s screen, the Epic Games app asks for a sign-in: use ${name}'s own Epic account and tick "Remember me". Then press Try again here. Each new Epic game then opens Epic's Install box on his screen, and pressing Install there once starts it. Because he's under 13, set up Epic's parental controls first (epicgames.com, Account, Parental Controls): give consent, set a PIN, cap the store at his rating, and require the PIN for purchases.`
+      : b.dataset.pchow === "battlenet"
       ? `This is the one step that needs someone at ${name}'s PC, once. Sign in to the parent account on the PC, open Battle.net, sign in with a Blizzard account and tick "Keep me logged in". Then come back here and press Try again. Every game after that installs by itself.`
       : `This is the one step that needs someone at ${name}'s PC, once. On ${name}'s screen, Steam asks for a sign-in: use ${name}'s Steam account (a Steam Family child account is best) and tick "Remember me". Then press Try again here. Every game after that installs by itself.`;
     sheet({ title: `Sign in to ${store} once`, text, cancel: "" });
@@ -562,7 +565,7 @@ $("#kidForm").onsubmit = async (e) => {
     setupDevice(k.id).catch(oops);
 };
 
-const STORE = { steam: "Steam", battlenet: "Battle.net", gamepass: "PC Game Pass", direct: "Installed by hand" };
+const STORE = { steam: "Steam", battlenet: "Battle.net", epic: "Epic Games", gamepass: "PC Game Pass", direct: "Installed by hand" };
 // Where an approved game stands on one kid's PC, in a few words (the PCs tab has the detail and the fix).
 const INSTALL_WORDS = { installed: "On his PC", queued: "Installing soon", downloading: "Installing", installing: "Installing",
   needs_signin: "Needs a sign-in", not_owned: "Not bought yet", no_space: "PC is full", failed: "Didn't install", removing: "Being removed" };
