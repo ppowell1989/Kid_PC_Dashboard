@@ -1,0 +1,681 @@
+{
+ "curated": [
+  {
+   "key": "steam:413150",
+   "title": "Stardew Valley",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "413150",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/413150/header.jpg",
+   "problem": "",
+   "steam_name": "Stardew Valley",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:220200",
+   "title": "Kerbal Space Program",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "220200",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/220200/header.jpg",
+   "problem": "",
+   "steam_name": "Kerbal Space Program",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:493340",
+   "title": "Planet Coaster",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "493340",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/493340/header.jpg",
+   "problem": "",
+   "steam_name": "Planet Coaster",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:703080",
+   "title": "Planet Zoo",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "703080",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/703080/header.jpg",
+   "problem": "",
+   "steam_name": "Planet Zoo",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1291340",
+   "title": "Townscaper",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "1291340",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1291340/header.jpg",
+   "problem": "",
+   "steam_name": "Townscaper",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:433340",
+   "title": "Slime Rancher",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "433340",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/433340/header.jpg",
+   "problem": "",
+   "steam_name": "Slime Rancher",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:427520",
+   "title": "Factorio",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "427520",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/427520/header.jpg",
+   "problem": "",
+   "steam_name": "Factorio",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:105600",
+   "title": "Terraria",
+   "where": "idea shelf: Build and create",
+   "launcher": "steam",
+   "ref": "105600",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/105600/header.jpg",
+   "problem": "",
+   "steam_name": "Terraria",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:728880",
+   "title": "Overcooked! 2",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "728880",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/728880/header.jpg",
+   "problem": "",
+   "steam_name": "Overcooked! 2",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:996770",
+   "title": "Moving Out",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "996770",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/996770/header.jpg",
+   "problem": "",
+   "steam_name": "Moving Out",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:477160",
+   "title": "Human: Fall Flat",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "477160",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/477160/header.jpg",
+   "problem": "",
+   "steam_name": "Human Fall Flat",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1016920",
+   "title": "Unrailed!",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "1016920",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1016920/header.jpg",
+   "problem": "",
+   "steam_name": "Unrailed!",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:431240",
+   "title": "Golf With Your Friends",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "431240",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/431240/header.jpg",
+   "problem": "",
+   "steam_name": "Golf With Your Friends",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1097150",
+   "title": "Fall Guys",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "1097150",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1097150/header.jpg",
+   "problem": "",
+   "steam_name": "Fall Guys",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:291550",
+   "title": "Brawlhalla",
+   "where": "idea shelf: Play together",
+   "launcher": "steam",
+   "ref": "291550",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/291550/header.jpg",
+   "problem": "",
+   "steam_name": "Brawlhalla",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:620",
+   "title": "Portal 2",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "620",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/620/header.jpg",
+   "problem": "",
+   "steam_name": "Portal 2",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1055540",
+   "title": "A Short Hike",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "1055540",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1055540/header.jpg",
+   "problem": "",
+   "steam_name": "A Short Hike",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:837470",
+   "title": "Untitled Goose Game",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "837470",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/837470/header.jpg",
+   "problem": "",
+   "steam_name": "Untitled Goose Game",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:736260",
+   "title": "Baba Is You",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "736260",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/736260/header.jpg",
+   "problem": "",
+   "steam_name": "Baba Is You",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:387290",
+   "title": "Ori and the Blind Forest: Definitive Edition",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "387290",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/387290/header.jpg",
+   "problem": "",
+   "steam_name": "Ori and the Blind Forest: Definitive Edition",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1135690",
+   "title": "Unpacking",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "1135690",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1135690/header.jpg",
+   "problem": "",
+   "steam_name": "Unpacking",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:504230",
+   "title": "Celeste",
+   "where": "idea shelf: Puzzles and adventures",
+   "launcher": "steam",
+   "ref": "504230",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/504230/header.jpg",
+   "problem": "",
+   "steam_name": "Celeste",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1271700",
+   "title": "Hot Wheels Unleashed",
+   "where": "idea shelf: Racing and sports",
+   "launcher": "steam",
+   "ref": "1271700",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1271700/header.jpg",
+   "problem": "",
+   "steam_name": "HOT WHEELS UNLEASHED\u2122",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:389140",
+   "title": "Horizon Chase Turbo",
+   "where": "idea shelf: Racing and sports",
+   "launcher": "steam",
+   "ref": "389140",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/389140/header.jpg",
+   "problem": "",
+   "steam_name": "Horizon Chase Turbo",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:711540",
+   "title": "Lonely Mountains: Downhill",
+   "where": "idea shelf: Racing and sports",
+   "launcher": "steam",
+   "ref": "711540",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/711540/header.jpg",
+   "problem": "",
+   "steam_name": "Lonely Mountains: Downhill",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "steam:1378990",
+   "title": "Crash Bandicoot 4: It's About Time",
+   "where": "idea shelf: Racing and sports",
+   "launcher": "steam",
+   "ref": "1378990",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1378990/header.jpg",
+   "problem": "",
+   "steam_name": "Crash Bandicoot\u2122 4: It\u2019s About Time",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "battlenet:RTRO",
+   "title": "Blizzard Arcade Collection",
+   "where": "idea shelf: On Battle.net",
+   "launcher": "battlenet",
+   "ref": "RTRO",
+   "steam": null,
+   "url": "",
+   "problem": "no art",
+   "steam_name": "",
+   "size": null
+  },
+  {
+   "key": "battlenet:Pro",
+   "title": "Overwatch 2",
+   "where": "idea shelf: On Battle.net",
+   "launcher": "battlenet",
+   "ref": "Pro",
+   "steam": "2357570",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/2357570/header.jpg",
+   "problem": "",
+   "steam_name": "Overwatch\u00ae",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "battlenet:WTCG",
+   "title": "Hearthstone",
+   "where": "idea shelf: On Battle.net",
+   "launcher": "battlenet",
+   "ref": "WTCG",
+   "steam": null,
+   "url": "https://d39zum0jwvcigt.cloudfront.net/_next/static/images/default-475d770302527dbab7708dca2af05afd.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1200,
+    628
+   ]
+  },
+  {
+   "key": "battlenet:S2",
+   "title": "StarCraft II",
+   "where": "idea shelf: On Battle.net",
+   "launcher": "battlenet",
+   "ref": "S2",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltbe2068a317e02d9f/6966bac0fb2fd910dbda4a26/og_image.webp?format=jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1200,
+    630
+   ]
+  },
+  {
+   "key": "epic:Sugar",
+   "title": "Rocket League",
+   "where": "idea shelf: On Epic Games",
+   "launcher": "epic",
+   "ref": "Sugar",
+   "steam": "252950",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/252950/header.jpg",
+   "problem": "",
+   "steam_name": "Rocket League\u00ae",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "epic:0a2d9f6403244d12969e11da6713137b",
+   "title": "Fall Guys",
+   "where": "idea shelf: On Epic Games",
+   "launcher": "epic",
+   "ref": "0a2d9f6403244d12969e11da6713137b",
+   "steam": "1097150",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1097150/header.jpg",
+   "problem": "",
+   "steam_name": "Fall Guys",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "epic:Fortnite",
+   "title": "Fortnite",
+   "where": "idea shelf: On Epic Games",
+   "launcher": "epic",
+   "ref": "Fortnite",
+   "steam": null,
+   "url": "https://store-images.s-microsoft.com/image/apps.21491.70702278257994163.f7265b8a-f10e-49c4-8115-73c4d800af63.a3060383-ea77-4eac-8882-c5c52237b18b?w=460",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    460,
+    259
+   ]
+  },
+  {
+   "key": "battlenet:WoW",
+   "title": "World of Warcraft (Midnight, current)",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WoW",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1600,
+    900
+   ]
+  },
+  {
+   "key": "battlenet:WoWF",
+   "title": "World of Warcraft: Forever",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WoWF",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1600,
+    900
+   ]
+  },
+  {
+   "key": "battlenet:WoWC",
+   "title": "World of Warcraft: Mists of Pandaria Classic",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WoWC",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1600,
+    900
+   ]
+  },
+  {
+   "key": "battlenet:WoWCE",
+   "title": "World of Warcraft Classic Era (Hardcore, Season of Discovery)",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WoWCE",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1600,
+    900
+   ]
+  },
+  {
+   "key": "battlenet:WoWA",
+   "title": "World of Warcraft: Burning Crusade Classic Anniversary",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WoWA",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/bltb5a24e5ab1e2cfb0/6a88e3589b942efdb6f74110/wow-thumbnail-homepage.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1600,
+    900
+   ]
+  },
+  {
+   "key": "battlenet:Hero",
+   "title": "Heroes of the Storm",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "Hero",
+   "steam": null,
+   "url": "https://store-images.s-microsoft.com/image/apps.38378.14113515594390646.9e638c04-e7d6-468d-8441-ec0f6cc4f7b7.674600de-b6eb-4b18-8c64-ad133a32434e?w=460",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    460,
+    259
+   ]
+  },
+  {
+   "key": "battlenet:S1",
+   "title": "StarCraft: Remastered",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "S1",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt9cbae43d0642e6ba/6a9b42028102310ecb81e0e3/OG_Image.png",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    2400,
+    1254
+   ]
+  },
+  {
+   "key": "battlenet:W3",
+   "title": "Warcraft III: Reforged",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "W3",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt806d59ff0b4e0508/6aa88158ad9209ba7f5629ef/rebirth_og.png",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    1920,
+    1080
+   ]
+  },
+  {
+   "key": "battlenet:D3",
+   "title": "Diablo III",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "D3",
+   "steam": null,
+   "url": "https://store-images.s-microsoft.com/image/apps.46364.64140138686919815.d9e5eb6a-300a-42c9-ad36-95f5a7005152.86c286a6-7528-42fe-bf96-c6d007f180f4?w=460",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    460,
+    259
+   ]
+  },
+  {
+   "key": "battlenet:OSI",
+   "title": "Diablo II: Resurrected",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "OSI",
+   "steam": null,
+   "url": "https://store-images.s-microsoft.com/image/apps.36735.13762945046819896.a6fd9d59-7e4a-4d04-9ffd-42dcbbe9a791.7ecac3c2-f946-4316-90f8-c3fba6772ca2?w=460",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    460,
+    259
+   ]
+  },
+  {
+   "key": "battlenet:Fen",
+   "title": "Diablo IV",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "Fen",
+   "steam": "2344520",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/2344520/header.jpg",
+   "problem": "",
+   "steam_name": "Diablo\u00ae IV",
+   "size": [
+    460,
+    215
+   ]
+  },
+  {
+   "key": "battlenet:ANBS",
+   "title": "Diablo Immortal",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "ANBS",
+   "steam": null,
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt47deaa9e2be4b752/6a1f4beaeb54a6907d694fb8/DI_Warlock_OG-Image@2x_enUS.jpg",
+   "problem": "",
+   "steam_name": "",
+   "size": [
+    2400,
+    1254
+   ]
+  },
+  {
+   "key": "battlenet:WLBY",
+   "title": "Crash Bandicoot 4: It's About Time",
+   "where": "Battle.net list",
+   "launcher": "battlenet",
+   "ref": "WLBY",
+   "steam": "1378990",
+   "url": "https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/1378990/header.jpg",
+   "problem": "",
+   "steam_name": "Crash Bandicoot\u2122 4: It\u2019s About Time",
+   "size": [
+    460,
+    215
+   ]
+  }
+ ],
+ "gamepass": {
+  "count": 515,
+  "broken": []
+ },
+ "candidates": [
+  {
+   "key": "battlenet:RTRO",
+   "title": "Blizzard Arcade Collection",
+   "url": "https://blz-contentstack-images.akamaized.net/v3/assets/bltf408a0557f4e4998/bltc2737ca8175c8330/620d7693f2a06e30446fa9c7/BCO_PR_Shop_Assets_prod-thumb_TS01.jpg",
+   "problem": "",
+   "size": [
+    960,
+    540
+   ]
+  }
+ ]
+}
