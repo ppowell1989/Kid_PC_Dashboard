@@ -95,7 +95,7 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
     """One game on one PC, in parent words.
 
     Returns label (a few words for the pill), text (one sentence on what is happening and what, if anything,
-    the parent can do), tone (ok, busy, needs, bad, off) and fix (retry, install, signin, remove or ""). can_remove marks an installed game the PCs page can take off."""
+    the parent can do), tone (ok, busy, needs, bad, off) and fix (retry, install, signin, remove, buy, bought or ""). can_remove marks an installed game the PCs page can take off."""
     state, detail = row.get("state") or "queued", (row.get("detail") or "").strip()
     store = STORE.get(row.get("launcher", ""), "its store")
     pc = f"{kid_name}'s PC"
@@ -121,6 +121,11 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
                 f"{(launcher_app or {}).get('detail', '')}".strip(), "tone": "bad", "fix": "retry"}
     if state != "installing" and not online:
         return {"label": "Waiting for the PC", "text": f"Starts by itself the next time {pc} is on.", "tone": "busy", "fix": ""}
+    if row.get("buying") and state not in ("installing",):
+        b = row["buying"]
+        return {"label": "Being bought", "text": f"{b.get('started_by') or 'A parent'} pressed Buy. It installs on {pc} by itself as soon as "
+                f"it's on {kid_name}'s {store} account. Already paid? Press I bought it.", "tone": "busy", "fix": "bought",
+                "purchase_id": b.get("id")}
     if (owned_words := ownership(row, state, kid_name, pc)) is not None:
         return owned_words
     if state == "queued":
@@ -149,7 +154,7 @@ def plain(row: dict, kid_name: str, online: bool, launcher_app: dict | None) -> 
     if state == "not_owned":
         who = f"{kid_name}'s Steam account ({row['steam_name']})" if row.get("steam_name") else f"{kid_name}'s account"
         return {"label": "Not on his account", "text": detail or f"{store} says {who} doesn't have this game. "
-                f"Buy it or add it (free games too) on that account, then press Try again.", "tone": "needs", "fix": "retry"}
+                f"Press Buy to get it for him, or add it (free games too) on that account, then press Try again.", "tone": "needs", "fix": "buy"}
     if state == "no_space":
         return {"label": "PC is full", "text": detail or f"There isn't enough room on {pc}. Remove a game he no longer plays, then press Try again.",
                 "tone": "bad", "fix": "retry"}
@@ -176,9 +181,9 @@ def ownership(row: dict, state: str, kid_name: str, pc: str) -> dict | None:
         return {"label": "Add it on Steam", "text": f"{title} is free, but it isn't on {who} yet, and Steam won't download a game "
                 f"the account hasn't got. {pc} opens Steam's Install box by itself: press Install there once (anyone at the PC can). "
                 f"Or add it from the Steam store while signed in as him, then press Try again.", "tone": "needs", "fix": "retry"}
-    return {"label": "Not on his account", "text": f"{who} doesn't own {title}, so Steam won't download it. Buy it on that "
-            "account, or share it to him with Steam Family, then press Try again. (A Family-shared game still installs; "
-            "this goes away when it starts.)", "tone": "needs", "fix": "retry"}
+    return {"label": "Not on his account", "text": f"{who} doesn't own {title}, so Steam won't download it. Press Buy to get it "
+            "for him (a gift, or Steam Family sharing), and it installs by itself once it's there. (A Family-shared game still "
+            "installs; this goes away when it starts.)", "tone": "needs", "fix": "buy"}
 
 
 def removing(row: dict, state: str, detail: str, stage: str, pc: str, online: bool) -> dict:

@@ -60,6 +60,7 @@
     <h2 class="sub">Asked by the kids</h2>
     <div id="requests"></div>
     <div id="heldBox"></div>
+    <div id="buyingBox"></div>
     <h2 class="sub">Stuck installs</h2>
     <div id="stuck"></div>
   </section>
@@ -171,6 +172,12 @@
       <input id="gameFilter" type="search" placeholder="Find a game" autocomplete="off" aria-label="Find a game in the catalogue">
     </div>
     <ul id="games" class="gamegrid"></ul>
+    <!-- Games a parent bought (or is buying) for a kid on the store's own checkout. No payment details live here. -->
+    <div class="card" id="boughtCard" hidden>
+      <h2>Bought for the kids</h2>
+      <p class="muted">Press Buy on a request or a game and you pay on the store's own page. The hub only notes what you bought, and installs it once it's on the kid's account.</p>
+      <ul id="bought" class="list bought"></ul>
+    </div>
     <!-- Ideas: the same shelves the kids browse on "Get more games", with a rating limit per kid -->
     <div class="card ideas">
       <h2>Ideas for the kids</h2>
@@ -237,6 +244,23 @@
     <div class="actions rev">
       <button value="ok" id="sheetOk">OK</button>
       <button value="cancel" id="sheetCancel" class="ghost" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+<!-- Buying a game: the store's own page and the steps to get it onto the right kid's account. -->
+<dialog id="buySheet" class="tall">
+  <form method="dialog">
+    <h2 id="buyTitle"></h2>
+    <div id="buyPrice" class="price"></div>
+    <ol id="buySteps" class="steps"></ol>
+    <p id="buyDetects" class="muted"></p>
+    <div class="actions rev">
+      <a id="buyGo" class="button" target="_blank" rel="noopener noreferrer">Open the store</a>
+      <button value="cancel" class="ghost">Close</button>
+    </div>
+    <div class="actions buymore">
+      <button value="bought" id="buyDone" class="ghost small">I bought it</button>
+      <button value="cancelbuy" id="buyCancel" class="ghost small">Didn't buy it</button>
     </div>
   </form>
 </dialog>
