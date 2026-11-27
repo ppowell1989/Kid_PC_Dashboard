@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, retention, rules, steamlink, updates, xbox
+from . import adguard, chat, media, consoles, discover, gamesearch, skylight, installs, purchases, retention, rules, steamlink, updates, xbox
 from .config import Kid, Settings, get_settings
 from .db import DB
 from .security import (SESSION_COOKIE, SESSION_SECONDS, current_device, current_extension, current_parent, livekit_admin_token, livekit_token,
@@ -69,6 +69,7 @@ async def lifespan(app: FastAPI):
     if pollers_on:
         tasks.append(asyncio.create_task(skylight.refresh_forever(app.state.db)))
         tasks.append(asyncio.create_task(steamlink.keep_fresh(app.state.db, lambda: [k.id for k in settings.kids])))
+        tasks.append(asyncio.create_task(purchases_forever(app.state.db)))
     yield
     for t in tasks:
         t.cancel()
@@ -459,6 +460,7 @@ def device_heartbeat(hb: Heartbeat, kid: Kid = Depends(current_device), db: DB =
             lib.append({"app": g.app, "title": g.title, "image_url": g.image_url if g.image_url.startswith("https://") else ""})
         db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
              (f"epic_library:{kid.id}", json.dumps(lib)))
+    sweep_purchases(db)   # a game a parent was buying that is now in his library or downloading: that purchase is done
     if hb.disk_free_gb is not None:
         db.x("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
              (f"disk_free_gb:{kid.id}", f"{hb.disk_free_gb:.1f}"))
@@ -1276,8 +1278,10 @@ def installs_for(db: DB, settings: Settings, kid: Kid, now: datetime) -> dict:
     games = []
     acct = steamlink.account(db, kid.id)
     owns = steamlink.owned(db, kid.id)
+    buying = {p["game_id"]: p for p in db.q("SELECT id, game_id, started_by, started_at FROM purchases WHERE kid_id=? AND state='started'", (kid.id,))}
     for r in rows:
         r = with_art(r)
+        r["buying"] = buying.get(r["game_id"])
         r["install"] = bool(r["install"])
         r["remove"] = bool(r["remove"])
         if r["launcher"] == "steam":
@@ -1439,11 +1443,26 @@ def parent_games(parent: str = Depends(current_parent), db: DB = Depends(get_db)
     appr = db.q("SELECT * FROM approvals")
     inst = {(r["kid_id"], r["game_id"]): r["state"] for r in db.q("SELECT kid_id, game_id, state FROM game_installs")}
     play = {(r["kid_id"], r["game_id"]): r for r in db.q("SELECT kid_id, game_id, minutes, last_at FROM game_play")}
+    buying = {(r["kid_id"], r["game_id"]) for r in db.q("SELECT kid_id, game_id FROM purchases WHERE state='started'")}
+    owns: dict[str, set[str] | None] = {}
+
+    def owned(kid_id: str, g: dict) -> bool | None:
+        """Whether his account has it, where the hub can tell (Steam with the API key; his Epic library)."""
+        if g["launcher"] == "steam":
+            if kid_id not in owns:
+                owns[kid_id] = steamlink.owned(db, kid_id)
+            return None if owns[kid_id] is None else g["launch_ref"] in owns[kid_id]
+        if g["launcher"] == "epic" and g["launch_ref"].lower() in epic_apps(db, kid_id):
+            return True
+        return None
     for g in games:
         g["approved_for"] = [a["kid_id"] for a in appr if a["game_id"] == g["id"]]
         g["kids"] = {k: {"install": inst.get((k, g["id"]), ""),
                          "minutes": (play.get((k, g["id"])) or {}).get("minutes", 0),
-                         "last_played": (play.get((k, g["id"])) or {}).get("last_at", "")} for k in g["approved_for"]}
+                         "last_played": (play.get((k, g["id"])) or {}).get("last_at", ""),
+                         "owned": owned(k, g), "buying": (k, g["id"]) in buying,
+                         "free": g["launcher"] == "steam" and bool(steam_app_cached(db, g["launch_ref"]).get("free"))}
+                     for k in g["approved_for"]}
         with_art(g)
     return games
 
@@ -1696,6 +1715,150 @@ def approve(db: DB, kid_id: str, gid: int) -> None:
 def parent_delete_game(gid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db)):
     db.x("DELETE FROM games WHERE id=?", (gid,))
     return {}
+
+
+# Buying games: the store's own checkout, the hub around it (see purchases.py) -----------------
+
+def epic_apps(db: DB, kid_id: str) -> set[str]:
+    return {g["app"].lower() for g in epic_library(db, [kid_id])}
+
+
+def sweep_purchases(db: DB) -> list[int]:
+    if not db.one("SELECT 1 FROM purchases WHERE state='started' LIMIT 1"):
+        return []
+    return purchases.sweep(db, lambda k: steamlink.owned(db, k), lambda k: epic_apps(db, k))
+
+
+PURCHASE_CHECK_SECONDS = 90
+
+
+async def purchases_forever(db: DB, every: int = PURCHASE_CHECK_SECONDS) -> None:
+    """Background: while a parent is buying a Steam game, read that kid's Steam games every minute or two (the usual
+    read is every 20 minutes), so the install starts soon after the purchase goes through."""
+    while True:
+        try:
+            for r in db.q("""SELECT DISTINCT p.kid_id FROM purchases p JOIN games g ON g.id=p.game_id
+                             WHERE p.state='started' AND g.launcher='steam'"""):
+                info = steamlink.owned_info(db, r["kid_id"])
+                if time.time() - (info.get("at") or 0) >= every:
+                    await steamlink.refresh(db, r["kid_id"], force=True)
+            sweep_purchases(db)
+        except Exception:
+            pass
+        await asyncio.sleep(every)
+
+
+async def buy_guide(db: DB, kid: Kid, game: dict) -> dict:
+    """How to buy this game for this kid, with Steam's price and whether he already has it."""
+    owned, free, price = None, False, ""
+    if game["launcher"] == "steam":
+        owns = steamlink.owned(db, kid.id)
+        owned = None if owns is None else game["launch_ref"] in owns
+        try:
+            info = await asyncio.wait_for(steam_app(game["launch_ref"], db), 6)
+        except Exception:
+            info = {}
+        info = info or steam_app_cached(db, game["launch_ref"])
+        free, price = bool(info.get("free")), info.get("price", "")
+    elif game["launcher"] == "epic":
+        owned = True if game["launch_ref"].lower() in epic_apps(db, kid.id) else None
+    inst = db.one("SELECT state FROM game_installs WHERE kid_id=? AND game_id=?", (kid.id, game["id"]))
+    if inst and inst["state"] == "installed":
+        owned = True
+    return purchases.guide(game, kid.name, owned=owned, free=free, price=price, steam_account=steamlink.account(db, kid.id))
+
+
+def purchase_view(db: DB, settings: Settings, p: dict) -> dict:
+    g = db.one("SELECT id, title, launcher, launch_ref, image_url FROM games WHERE id=?", (p["game_id"],)) or {}
+    kid = settings.kid(p["kid_id"])
+    out = {**p, "title": g.get("title", ""), "image_url": with_art(dict(g)).get("image_url", "") if g else "",
+           "kid_name": kid.name if kid else p["kid_id"], "words": purchases.describe(p)}
+    if p["state"] == "started" and g:
+        out["url"] = purchases.store_url(g["launcher"], g["launch_ref"], g["title"])
+    return out
+
+
+@app.get("/api/parent/buy/{kid_id}/{gid}")
+async def parent_buy_guide(kid_id: str, gid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """What Buy would show for this game and kid: the store page, the price, the steps. Changes nothing."""
+    kid = kid_or_404(settings, kid_id)
+    g = db.one("SELECT * FROM games WHERE id=?", (gid,))
+    if not g:
+        raise HTTPException(404, "no such game")
+    open_p = purchases.open_purchase(db, kid.id, gid)
+    return {"guide": await buy_guide(db, kid, g), "purchase": purchase_view(db, settings, open_p) if open_p else None}
+
+
+class BuyIn(BaseModel):
+    kid_id: str
+    game_id: int | None = None
+    ref: str = Field(default="", pattern=r"^((steam|battlenet|gamepass|epic):[A-Za-z0-9_-]{1,64})?$")   # a search result instead
+    request_id: int | None = None   # the kid's game request this answers: it is approved too
+
+
+@app.post("/api/parent/purchases", status_code=201)
+async def parent_buy(body: BuyIn, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Buy: approve the game for him (so it installs as soon as it's on his account) and open a purchase the hub
+    watches. Returns the store page and the steps. The paying happens on the store's own site; the hub never sees it."""
+    kid = kid_or_404(settings, body.kid_id)
+    req = None
+    if body.request_id is not None:
+        req = db.one("SELECT * FROM requests WHERE id=?", (body.request_id,))
+        if not req or req["kind"] != "game" or req["kid_id"] != kid.id:
+            raise HTTPException(404, "no such game request for him")
+        if req["state"] != "pending":
+            raise HTTPException(409, f"already {req['state']}")
+    gid = body.game_id
+    if gid is None and body.ref:
+        gid = await add_game_from_ref(db, settings, body.ref)
+    if gid is None:
+        raise HTTPException(422, "pick the game to buy")
+    g = db.one("SELECT * FROM games WHERE id=?", (gid,))
+    if not g:
+        raise HTTPException(404, "no such game")
+    guide = await buy_guide(db, kid, g)
+    if guide["kind"] == "none":
+        raise HTTPException(400, guide["steps"][0])
+    approve(db, kid.id, gid)
+    p = None
+    if guide["kind"] in ("buy", "subscription"):
+        p = purchases.start(db, kid.id, gid, g["launcher"], guide["price"], parent, body.request_id)
+    if req:
+        db.x("UPDATE requests SET state='approved', decided_by=?, decided_at=datetime('now') WHERE id=?", (parent, req["id"]))
+        later = (f" {parent} is getting it for you now. It installs on your PC by itself as soon as it arrives."
+                 if p else " It's installing on your PC now. Look for it on your home screen.")
+        db.x("INSERT INTO commands(kid_id,kind,arg,created_by) VALUES(?,?,?,?)",
+             (kid.id, "message", f"Yes! {g['title']} is approved.{later}"[:300], parent))
+    sweep_purchases(db)   # already there (Steam had it after all)? Then it closes now.
+    if p:
+        p = db.one("SELECT * FROM purchases WHERE id=?", (p["id"],))
+    return {"game_id": gid, "guide": guide, "purchase": purchase_view(db, settings, p) if p else None}
+
+
+@app.get("/api/parent/purchases")
+def parent_purchases(parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Games being bought (waiting to arrive) and the ones bought in the last 90 days, newest first."""
+    sweep_purchases(db)
+    rows = db.q("""SELECT * FROM purchases WHERE state='started' OR started_at >= ? ORDER BY id DESC LIMIT 100""",
+                ((datetime.now(timezone.utc) - timedelta(days=90)).isoformat(timespec="seconds"),))
+    views = [purchase_view(db, settings, p) for p in rows]
+    return {"open": [v for v in views if v["state"] == "started"], "done": [v for v in views if v["state"] != "started"]}
+
+
+@app.post("/api/parent/purchases/{pid}/bought")
+def parent_purchase_bought(pid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """I bought it: for stores the hub can't look into (Battle.net), or to start the install without waiting."""
+    if not purchases.close(db, pid, "parent", parent):
+        raise HTTPException(409, "that purchase isn't open")
+    return purchase_view(db, settings, db.one("SELECT * FROM purchases WHERE id=?", (pid,)))
+
+
+@app.post("/api/parent/purchases/{pid}/cancel")
+def parent_purchase_cancel(pid: int, parent: str = Depends(current_parent), db: DB = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """Didn't buy it after all. The game stays approved; unapprove it in Games to take it off his list."""
+    if not purchases.cancel(db, pid):
+        raise HTTPException(409, "that purchase isn't open")
+    return purchase_view(db, settings, db.one("SELECT * FROM purchases WHERE id=?", (pid,)))
 
 
 # Sites ----------------------------------------------------------------------

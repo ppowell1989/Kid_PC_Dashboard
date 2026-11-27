@@ -587,3 +587,23 @@ button.linkish { display: block; margin: 10px auto 0; }
 .storelog { margin-top: 4px; font-size: 12px; }
 .storelog summary { cursor: pointer; color: var(--muted, #667); }
 .storelog code { display: block; white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
+
+/* ---------------------------------------------------------------- buying a game (the store's own checkout) */
+a.button {
+  display: inline-flex; align-items: center; justify-content: center; flex: 1; box-sizing: border-box;
+  padding: 10px 16px; min-height: 44px; border-radius: 12px; color: #fff; background: var(--accent);
+  font-weight: 600; text-decoration: none; text-align: center;
+}
+a.button:hover { filter: brightness(.95); }
+#buySheet .price { font-size: 1.4rem; font-weight: 700; margin: 2px 0 8px; }
+#buySheet .price:empty { display: none; }
+#buySheet ol.steps { margin: 0 0 12px; padding-left: 1.3em; text-align: left; }
+#buySheet ol.steps li { margin: 0 0 8px; line-height: 1.4; }
+#buySheet .actions.buymore { margin-top: 8px; }
+#buySheet .actions.buymore button[hidden] { display: none; }
+.list.bought li { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; padding: 10px 12px; margin-bottom: 8px; }
+a.button.small { flex: none; min-height: 34px; padding: 5px 12px; font-size: .82rem; border-radius: 10px; }
+.list.bought img, .list.bought .noart { width: 72px; height: 34px; object-fit: cover; border-radius: 8px; flex: none; background: var(--well); }
+.list.bought .what { flex: 1 1 180px; min-width: 0; }
+.list.bought .do { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.list.bought .do:empty { display: none; }

@@ -242,6 +242,20 @@ CREATE TABLE IF NOT EXISTS chat_members (    -- people a parent added to a chat 
     added_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (conv, kind, who)
 );
+CREATE TABLE IF NOT EXISTS purchases (       -- a parent buying a game for a kid on the store's own checkout (see purchases.py)
+    id           INTEGER PRIMARY KEY,
+    kid_id       TEXT NOT NULL,
+    game_id      INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    store        TEXT NOT NULL,                   -- steam / battlenet / epic / gamepass
+    price        TEXT DEFAULT '',                 -- what the hub showed (Steam's price, e.g. "$19.99"); never card details
+    state        TEXT NOT NULL DEFAULT 'started' CHECK (state IN ('started','bought','cancelled')),
+    started_by   TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    bought_at    TEXT DEFAULT '',
+    confirmed    TEXT DEFAULT '',                 -- how the hub knew it arrived: steam, epic, pc or parent
+    confirmed_by TEXT DEFAULT '',                 -- the parent, when confirmed = parent
+    request_id   INTEGER                          -- the kid's request it answers, if any
+);
 CREATE TABLE IF NOT EXISTS chat_names (      -- a parent's name for a chat ("Minecraft crew")
     conv TEXT PRIMARY KEY,
     name TEXT NOT NULL

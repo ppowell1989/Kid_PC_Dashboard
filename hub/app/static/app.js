@@ -208,6 +208,7 @@ async function loadHeld() {
 const convTitle = (id) => id === "family" ? "the family chat" : id === "kids" ? "Kids at home" : ((chat.convs.find((c) => c.id === id) || {}).title || "a friend's chat");
 async function loadRequests() {
   loadStuck().catch(() => { $("#stuck").innerHTML = ""; });
+  loadBuying().catch(() => { $("#buyingBox").innerHTML = ""; });
   loadHeld().catch(() => { $("#heldBox").innerHTML = ""; });
   const [reqs, games] = await Promise.all([api("/api/parent/requests"), api("/api/parent/games")]);
   state.shownSig = "";   // the next check takes the page as it is now
@@ -221,7 +222,7 @@ async function loadRequests() {
     return `<div class="card req"><div class="who">${esc(kidName(r.kid_id))} asks for</div><div class="what">${what}</div>
       ${r.note ? `<div class="note">"${esc(r.note)}"</div>` : ""}
       <div class="muted">${esc(localTime(r.created_at))}</div>${gamePick}
-      <div class="actions even"><button class="good" data-decide="${r.id}" data-ok="1">Approve</button><button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
+      <div class="actions even"><button class="good" data-decide="${r.id}" data-ok="1">Approve</button>${r.kind === "game" ? `<button class="hot" data-buyreq="${r.id}" data-kid="${esc(r.kid_id)}">Approve &amp; buy</button>` : ""}<button class="bad" data-decide="${r.id}" data-ok="0">Decline</button></div></div>`;
   }).join("") : `<p class="muted">No requests waiting. When a kid asks for more time, a game or a site, it shows here.</p>`;
   // Fill each game request with matches from every store and preselect the best one.
   reqs.filter((r) => r.kind === "game").forEach(async (r) => {
@@ -273,6 +274,85 @@ async function loadRequests() {
     try { await api(`/api/parent/requests/${b.dataset.decide}`, { method: "POST", body }); } catch (err) { return oops(err); }
     loadRequests(); refresh();
   }));
+  document.querySelectorAll("[data-buyreq]").forEach((b) => (b.onclick = async () => {
+    const pick = $(`[data-gamefor="${b.dataset.buyreq}"]`);
+    if (!pick || !pick.value) return sheet({ title: "Choose the game first", cancel: "" });
+    const body = { kid_id: b.dataset.kid, request_id: +b.dataset.buyreq };
+    if (pick.value.includes(":")) body.ref = pick.value; else body.game_id = +pick.value;
+    await buy(body, b);
+    loadRequests(); refresh();
+  }));
+}
+
+// Buying a game. No store lets the hub pay, so Buy approves the game, opens the store's own page with the steps to get
+// it onto the right kid's account, and the hub watches for it to arrive (purchases.py). No payment details pass through here.
+async function buy(body, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Opening…"; }
+  let d;
+  try { d = await api("/api/parent/purchases", { method: "POST", body }); }
+  catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Buy"; } return oops(err); }
+  await buySheet(d.guide, d.purchase);
+}
+async function buyGuide(kid, gid) {
+  let d;
+  try { d = await api(`/api/parent/buy/${encodeURIComponent(kid)}/${gid}`); } catch (err) { return oops(err); }
+  return buySheet(d.guide, d.purchase);
+}
+function buySheet(g, p) {
+  return new Promise((resolve) => {
+    const d = $("#buySheet");
+    $("#buyTitle").textContent = g.title;
+    $("#buyPrice").textContent = g.price || "";
+    $("#buySteps").innerHTML = g.steps.map((x) => `<li>${esc(x)}</li>`).join("");
+    $("#buyDetects").textContent = p ? g.detects : "";
+    const go = $("#buyGo");
+    go.hidden = !g.url; go.href = g.url || "#";
+    go.textContent = g.kind === "included" ? "Open Xbox" : g.kind === "free" || g.kind === "owned" ? `Open ${g.store}` : `Open ${g.store}`;
+    $("#buyDone").hidden = $("#buyCancel").hidden = !p;
+    d.returnValue = "cancel";
+    d.onclose = async () => {
+      const v = d.returnValue;
+      try {
+        if (p && v === "bought") await api(`/api/parent/purchases/${p.id}/bought`, { method: "POST" });
+        if (p && v === "cancelbuy") await api(`/api/parent/purchases/${p.id}/cancel`, { method: "POST" });
+      } catch (err) { oops(err); }
+      if (v !== "cancel") reloadBuyViews();
+      resolve(v);
+    };
+    d.showModal();
+  });
+}
+function reloadBuyViews() {
+  if (!$('[data-panel="requests"]').hidden) loadRequests().catch(() => {});
+  if (!$('[data-panel="games"]').hidden) loadGames();
+  if (!$('[data-panel="family"]').hidden) loadPcs();
+}
+function boughtRow(p) {
+  const art = p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'), { className: 'noart' }))">` : `<span class="noart" aria-hidden="true"></span>`;
+  const when = p.state === "bought" ? (p.bought_at || p.started_at) : p.started_at;
+  const btns = p.state === "started"
+    ? `${p.url ? `<a class="button small" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Store</a>` : ""}<button class="ghost small" data-bought="${p.id}">I bought it</button>` : "";
+  return `<li>${art}<div class="what"><b>${esc(p.title)}</b> for ${esc(p.kid_name)}${p.price ? ` · ${esc(p.price)}` : ""}
+      <div class="muted">${esc(p.words)} ${esc(p.started_by)} pressed Buy ${esc(ago(p.started_at))}${p.state === "bought" && when !== p.started_at ? `, arrived ${esc(ago(when))}` : ""}.</div></div>
+    <div class="do">${btns}</div></li>`;
+}
+function wireBought(root) {
+  root.querySelectorAll("[data-bought]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    try { await api(`/api/parent/purchases/${b.dataset.bought}/bought`, { method: "POST" }); } catch (err) { oops(err); }
+    reloadBuyViews();
+  }));
+}
+async function loadBuying() {
+  const d = await api("/api/parent/purchases");
+  $("#buyingBox").innerHTML = d.open.length ? `<h2 class="sub">Being bought</h2><ul class="list bought">${d.open.map(boughtRow).join("")}</ul>` : "";
+  wireBought($("#buyingBox"));
+}
+async function loadBought() {
+  const d = await api("/api/parent/purchases"), all = [...d.open, ...d.done.filter((p) => p.state === "bought")];
+  $("#boughtCard").hidden = !all.length;
+  $("#bought").innerHTML = all.map(boughtRow).join("");
+  wireBought($("#bought"));
 }
 
 // Activity: one feed of what the kids did, in plain words (portal.py builds the lines) --------------
@@ -334,7 +414,7 @@ function gameFacts(h, p) {
   const d = h.details || {};
   const others = h.platforms.filter((x) => x !== p).map((x) => x.label);
   const how = p.platform === "steam"
-    ? (d.free ? "Free on Steam" : `${esc(d.price || "Paid")} · <a href="https://store.steampowered.com/app/${esc(p.launch_ref)}" target="_blank" rel="noopener">Buy on Steam</a> (gift it to his account, or buy it on yours and share it through Steam Family)`)
+    ? (d.free ? "Free on Steam" : `${esc(d.price || "Paid")} · Approve &amp; buy takes you to Steam's checkout (<a href="https://store.steampowered.com/app/${esc(p.launch_ref)}" target="_blank" rel="noopener">store page</a>)`)
     : p.platform === "battlenet" ? "Through Battle.net: he signs in to Blizzard's app on his PC, and the game downloads there"
     : p.platform === "epic" ? `Through the Epic Games app on his PC${p.note ? ` (${esc(p.note.toLowerCase())})` : ""}. Free Epic games still need adding to his Epic account, and an under-13 Epic account needs your OK in Epic's parental controls first`
     : "Included with PC Game Pass, through the Xbox app";
@@ -417,7 +497,9 @@ function gb(n) { return n == null ? "" : n >= 100 ? `${Math.round(n)} GB free` :
 // One approved game on one PC: where it stands, and the one thing to do when it's stuck (installs.py writes the words).
 function installRow(g, p) {
   const t = g.plain, pct = t.percent ?? null;
-  const btn = t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
+  const btn = t.fix === "buy" ? `<button class="small hot" data-pcbuy="${g.game_id}" data-kid="${p.id}">Buy</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
+    : t.fix === "bought" ? `<button class="small" data-bought="${t.purchase_id}">I bought it</button><button class="ghost small" data-pcsteps="${g.game_id}" data-kid="${p.id}">Steps</button>`
+    : t.fix === "retry" ? `<button class="small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
     : t.fix === "install" ? `<button class="small" data-pcinstall="${g.game_id}" data-kid="${p.id}">Install</button>`
     : t.fix === "signin" ? `<button class="small" data-pchow="${esc(g.launcher)}" data-kid="${p.id}">How</button><button class="ghost small" data-pcretry="${g.game_id}" data-kid="${p.id}">Try again</button>`
     : t.fix === "remove" || t.can_remove ? `<button class="ghost small" data-pcremove="${g.game_id}" data-kid="${p.id}" data-title="${esc(g.title)}">Remove from PC</button>` : "";
@@ -430,6 +512,9 @@ function installRow(g, p) {
     <div class="do">${btn}</div></li>`;
 }
 function wireInstalls(root, reload) {
+  root.querySelectorAll("[data-pcbuy]").forEach((b) => (b.onclick = () => buy({ kid_id: b.dataset.kid, game_id: +b.dataset.pcbuy }, b).then(reload)));
+  root.querySelectorAll("[data-pcsteps]").forEach((b) => (b.onclick = () => buyGuide(b.dataset.kid, +b.dataset.pcsteps)));
+  wireBought(root);
   root.querySelectorAll("[data-pcretry]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Starting…";
     try { await api(`/api/parent/installs/${b.dataset.kid}/${b.dataset.pcretry}/retry`, { method: "POST" }); } catch (err) { oops(err); }
@@ -586,6 +671,7 @@ async function loadGames() {
   games.all = await api("/api/parent/games");
   renderGames();
   loadIdeas().catch(() => {});
+  loadBought().catch(() => { $("#boughtCard").hidden = true; });
 }
 function renderGames() {
   $("#gameWho").innerHTML = [["", "Everyone"], ...state.kids.map((k) => [k.id, k.name])]
@@ -596,10 +682,11 @@ function renderGames() {
   if (games.who) list = [...list].sort((a, b) => (b.kids[games.who].last_played || "").localeCompare(a.kids[games.who].last_played || "") || a.title.localeCompare(b.title));
   const kidRow = (g, k) => {
     const on = g.approved_for.includes(k.id), st = g.kids[k.id] || {};
-    const words = !on ? "Not approved" : [INSTALL_WORDS[st.install] || "", st.minutes ? `${fmtMin(st.minutes)} played` : "Not played yet",
+    const words = !on ? "Not approved" : [st.buying && st.install !== "installed" ? "Being bought" : INSTALL_WORDS[st.install] || "", st.minutes ? `${fmtMin(st.minutes)} played` : "Not played yet",
       st.last_played ? `last ${ago(st.last_played)}` : ""].filter(Boolean).join(" · ");
     const tone = !on ? "off" : ["needs_signin", "not_owned", "no_space", "failed"].includes(st.install) ? "attn" : "";
-    return `<li class="${tone}"><label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${on ? "checked" : ""}> ${esc(k.name)}</label><span>${esc(words)}</span></li>`;
+    const buyBtn = on && !st.buying && st.install !== "installed" && (st.install === "not_owned" || (st.owned === false && !st.free)) && g.launcher !== "direct" ? ` <button class="small hot" data-gbuy="${g.id}" data-kid="${k.id}">Buy</button>` : "";
+    return `<li class="${tone}"><label><input type="checkbox" data-appr="${g.id}" data-kid="${k.id}" ${on ? "checked" : ""}> ${esc(k.name)}</label><span>${esc(words)}${buyBtn}</span></li>`;
   };
   $("#games").innerHTML = list.map((g) => `<li class="game">${cover(g)}
       <div class="gbody"><b class="gtitle">${esc(g.title)}</b>
@@ -607,6 +694,7 @@ function renderGames() {
         <ul class="perkid">${state.kids.map((k) => kidRow(g, k)).join("")}</ul>
         <button class="ghost small" data-delgame="${g.id}" data-title="${esc(g.title)}">Remove from catalogue</button></div></li>`).join("")
     || `<li class="muted">${games.all.length ? "No games match." : "No games yet. Search for one, or pick from the ideas below."}</li>`;
+  document.querySelectorAll("[data-gbuy]").forEach((b) => (b.onclick = () => buy({ kid_id: b.dataset.kid, game_id: +b.dataset.gbuy }, b).then(loadGames)));
   document.querySelectorAll("[data-appr]").forEach((c) => (c.onchange = async () => {
     try { await api(`/api/parent/games/${c.dataset.appr}/kids/${c.dataset.kid}`, { method: "PUT", body: { approved: c.checked } }); } catch (err) { oops(err); }
     loadGames();
