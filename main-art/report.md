@@ -53,7 +53,7 @@
 
 ## PC Game Pass
 
-515 games in the catalogue, 0 without working art.
+516 games in the catalogue, 0 without working art.
 
 
 ## Candidates
